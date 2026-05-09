@@ -1,0 +1,96 @@
+/* @particle-academy/agent-integrations — minimal styles, host app provides tailwind/theme. */
+
+.fai-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: white;
+  color: #18181b;
+  border-radius: 12px;
+  border: 1px solid #e4e4e7;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+@media (prefers-color-scheme: dark) {
+  .fai-panel { background: #18181b; color: #fafafa; border-color: #3f3f46; }
+}
+.fai-panel__header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-bottom: 1px solid #e4e4e7;
+}
+@media (prefers-color-scheme: dark) { .fai-panel__header { border-color: #3f3f46; } }
+.fai-panel__avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: white; font-weight: 600; font-size: 14px;
+}
+.fai-panel__title { display: flex; flex-direction: column; line-height: 1.1; flex: 1; }
+.fai-panel__subtitle { font-size: 11px; opacity: 0.6; }
+.fai-panel__actions { display: flex; gap: 6px; }
+.fai-panel__stream {
+  flex: 1; overflow: auto; padding: 8px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.fai-panel__empty { font-size: 12px; opacity: 0.5; margin: auto; }
+.fai-row {
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: rgba(244, 244, 245, 0.6);
+}
+@media (prefers-color-scheme: dark) { .fai-row { background: rgba(63, 63, 70, 0.4); } }
+.fai-row--tool { border-left: 3px solid #a855f7; }
+.fai-row--message { border-left: 3px solid #3b82f6; }
+.fai-row--info { border-left: 3px solid #71717a; }
+.fai-row--error { border-left: 3px solid #ef4444; background: rgba(254, 226, 226, 0.4); }
+.fai-row__meta { display: flex; justify-content: space-between; opacity: 0.6; font-size: 10px; }
+.fai-row__source { font-family: ui-monospace, monospace; }
+.fai-row__text { white-space: pre-wrap; }
+.fai-row__detail summary { cursor: pointer; opacity: 0.7; font-size: 11px; margin-top: 4px; }
+.fai-row__detail pre {
+  font-size: 11px; margin: 4px 0 0; padding: 6px;
+  background: rgba(0,0,0,0.06); border-radius: 4px; overflow: auto;
+  max-height: 200px;
+}
+.fai-panel__composer {
+  display: flex; gap: 6px; padding: 8px;
+  border-top: 1px solid #e4e4e7;
+}
+@media (prefers-color-scheme: dark) { .fai-panel__composer { border-color: #3f3f46; } }
+.fai-panel__input {
+  flex: 1;
+  resize: none;
+  border-radius: 6px;
+  border: 1px solid #d4d4d8;
+  padding: 6px 8px;
+  font: inherit;
+  background: transparent;
+  color: inherit;
+}
+.fai-panel__input:focus { outline: 2px solid #a855f7; outline-offset: -1px; }
+.fai-panel__send {
+  align-self: stretch;
+  padding: 0 14px;
+  border: 0; border-radius: 6px;
+  background: #a855f7; color: white;
+  cursor: pointer; font-weight: 500;
+}
+.fai-panel__send:disabled { opacity: 0.5; cursor: default; }
+
+/* Cursor */
+.fai-cursor__tag {
+  position: absolute; left: 18px; top: 14px;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px; font-family: system-ui, sans-serif;
+  white-space: nowrap;
+}
+.fai-cursor__status { font-style: normal; opacity: 0.85; }
+
+/* Highlight pulse */
+@keyframes fai-pulse {
+  0%   { opacity: 0; transform: scale(0.96); }
+  20%  { opacity: 1; transform: scale(1.03); }
+  100% { opacity: 0; transform: scale(1); }
+}
