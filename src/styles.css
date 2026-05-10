@@ -124,3 +124,49 @@
 .fai-share__pre { flex: 1; margin: 0; padding: 8px 10px; background: rgba(0,0,0,0.05); border-radius: 6px; font-family: ui-monospace, monospace; font-size: 11px; white-space: nowrap; overflow: auto; }
 .fai-share__pre.is-multi { white-space: pre; max-height: 240px; }
 .fai-share__copy-btn { border: 1px solid #d4d4d8; background: transparent; cursor: pointer; border-radius: 6px; padding: 0 12px; color: inherit; font-size: 12px; }
+
+/* === Cross-package agent presence === */
+/*
+ * Apply `.agent-focused-element` to any DOM node that's currently being
+ * touched by an agent. The CSS variables let hosts override the agent's
+ * accent without touching the rule. Bridges typically apply this class
+ * via a brief side-effect when their tools fire.
+ */
+.agent-focused-element {
+  --agent-color: #a855f7;
+  position: relative;
+  outline: 2px solid var(--agent-color);
+  outline-offset: 2px;
+  border-radius: 4px;
+  animation: agent-focus-pulse 1500ms ease-out forwards;
+}
+@keyframes agent-focus-pulse {
+  0%   { box-shadow: 0 0 0 0 var(--agent-color); }
+  40%  { box-shadow: 0 0 0 6px rgba(168, 85, 247, 0.18); }
+  100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); outline-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-focused-element { animation: none; }
+}
+
+/* Small badge hosts can drop next to an element to label "Agent active". */
+.agent-active-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--agent-color, #a855f7);
+  color: white;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px; font-weight: 500;
+  padding: 2px 6px; border-radius: 999px;
+  vertical-align: middle;
+}
+.agent-active-badge::before {
+  content: "";
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: white;
+  animation: agent-active-blink 1.4s ease-in-out infinite;
+}
+@keyframes agent-active-blink {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}

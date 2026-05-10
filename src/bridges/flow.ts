@@ -25,6 +25,8 @@ import { textResult, errorResult } from "../mcp/server";
 import type { MicroMcpServer } from "../mcp/server";
 import type { JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
+import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
+import type { AgentTarget as FlAgentTarget } from "../presence/types";
 
 /**
  * Adapter the host provides — same shape as the editor's local state plus
@@ -74,13 +76,36 @@ export function registerFlowBridge(
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
 
+  // Activity-target resolver shared by every mutation tool. Pulls element id
+  // from the freshly-added node/edge (structuredContent), falling back to args.
+  const flTarget = (args: any, result: any): FlAgentTarget => ({
+    kind: "flow",
+    elementId: (result?.structuredContent?.id as string | undefined) ?? (args?.id as string | undefined),
+  });
+
   const reg = (
     name: string,
     description: string,
     properties: Record<string, unknown>,
     required: string[],
     handler: (args: JsonObject) => Promise<any> | any,
+    resolveTarget?: (args: JsonObject, result: any) => FlAgentTarget | null,
   ) => {
+    const wrapped = async (args: JsonObject) => {
+      try {
+        return await handler(args);
+      } catch (e) {
+        return errorResult(e instanceof Error ? e.message : String(e));
+      }
+    };
+    const final = resolveTarget
+      ? wrapToolWithActivity(wrapped, {
+          toolName: name,
+          agent: { id: agent.id, name: agent.name, color: agent.color },
+          kind: "flow",
+          resolveTarget: ({ args, result }) => resolveTarget(args, result),
+        })
+      : wrapped;
     disposers.push(
       server.registerTool(
         {
@@ -88,13 +113,7 @@ export function registerFlowBridge(
           description,
           inputSchema: { type: "object", properties: properties as any, required, additionalProperties: false },
         },
-        async (args) => {
-          try {
-            return await handler(args);
-          } catch (e) {
-            return errorResult(e instanceof Error ? e.message : String(e));
-          }
-        },
+        final as any,
       ),
     );
   };
@@ -248,6 +267,7 @@ export function registerFlowBridge(
       adapter.setNodes((all) => [...all, node]);
       return textResult(`Added ${kindName} ${id} ("${str(args.label)}")`, node);
     },
+    flTarget,
   );
 
   reg(
@@ -289,6 +309,7 @@ export function registerFlowBridge(
       if (!updated) return errorResult(`No node with id ${id}`);
       return textResult(`Updated node ${id}`, updated);
     },
+    flTarget,
   );
 
   reg(
@@ -308,6 +329,7 @@ export function registerFlowBridge(
       adapter.setEdges((all) => all.filter((e) => e.source !== id && e.target !== id));
       return textResult(`Deleted node ${id}`);
     },
+    flTarget,
   );
 
   // ───────────── Edges ─────────────
@@ -340,6 +362,7 @@ export function registerFlowBridge(
       adapter.setEdges((existing) => [...existing, edge]);
       return textResult(`Connected ${source}${edge.sourceHandle ? `:${edge.sourceHandle}` : ""} → ${target}${edge.targetHandle ? `:${edge.targetHandle}` : ""}`, edge);
     },
+    flTarget,
   );
 
   reg(
@@ -355,6 +378,7 @@ export function registerFlowBridge(
       adapter.setEdges((all) => all.filter((e) => e.id !== id));
       return textResult(`Disconnected ${id}`);
     },
+    flTarget,
   );
 
   // ───────────── Status / run ─────────────
@@ -388,6 +412,7 @@ export function registerFlowBridge(
       }
       return textResult(`${id} → ${status}${text ? ` (${text})` : ""}`);
     },
+    flTarget,
   );
 
   reg(
@@ -400,6 +425,7 @@ export function registerFlowBridge(
       const result = await adapter.run();
       return textResult(result.ok ? "Run complete" : `Run failed: ${result.error ?? "unknown"}`, result);
     },
+    flTarget,
   );
 
   reg(
@@ -412,6 +438,7 @@ export function registerFlowBridge(
       adapter.cancel();
       return textResult("Run cancelled");
     },
+    flTarget,
   );
 
   return {

@@ -145,5 +145,28 @@ export function attachSseRelay(server: MicroMcpServer, options: SseRelayOptions)
   transport.bindServer(server);
   server.attach(transport);
   transport.start();
+
+  // Forward in-process agent activity events out over the relay so external
+  // subscribers can render presence indicators in real time. Uses a dynamic
+  // import so the relay doesn't hard-depend on the presence module if it's
+  // tree-shaken out.
+  import("../presence/registry").then(({ onActivity }) => {
+    const off = onActivity((event) => {
+      transport.send({
+        jsonrpc: "2.0",
+        method: "notifications/agent_activity",
+        params: event as unknown as Record<string, unknown>,
+      });
+    });
+    // Tear down the subscription when the transport closes.
+    const origClose = transport.close.bind(transport);
+    transport.close = () => {
+      off();
+      origClose();
+    };
+  }).catch(() => {
+    // Presence module unavailable — silently no-op (relay still works).
+  });
+
   return transport;
 }

@@ -12,6 +12,10 @@ import { textResult, errorResult } from "../mcp/server";
 import type { MicroMcpServer } from "../mcp/server";
 import type { JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
+import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
+import type { AgentTarget } from "../presence/types";
+import { pushUndoEntry } from "../undo/undo-stack";
+import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 
 /**
  * State accessors / mutators the bridge needs from the host. The host owns
@@ -63,9 +67,20 @@ export function registerWhiteboardBridge(
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
 
+  // Register agent_undo / agent_redo / agent_history once per server. Idempotent.
+  ensureUndoToolsRegistered(server, { defaultAgentId: agent.id });
+
   // Cursor narration is the agent's responsibility — call
   // whiteboard_set_agent_cursor as a separate prerequisite before any
   // mutation. This keeps the protocol honest: each tool does one thing.
+
+  // Activity-target resolver shared by every mutation tool. Pulls the id
+  // from the freshly-created item (structuredContent) when present, falls
+  // back to the args id (for update/delete tools).
+  const wbTarget = (args: any, result: any): AgentTarget => ({
+    kind: "whiteboard",
+    elementId: (result?.structuredContent?.id as string | undefined) ?? (args?.id as string | undefined),
+  });
 
 
   const reg = (
@@ -74,7 +89,25 @@ export function registerWhiteboardBridge(
     inputProperties: Record<string, unknown>,
     required: string[],
     handler: (args: JsonObject) => Promise<any> | any,
+    /** Optional: resolve the activity target so the presence layer can render
+     *  a focus indicator on the touched element. Read tools omit this. */
+    resolveTarget?: (args: JsonObject, result: any) => AgentTarget | null,
   ) => {
+    const wrapped = async (args: JsonObject) => {
+      try {
+        return await handler(args);
+      } catch (e) {
+        return errorResult(e instanceof Error ? e.message : String(e));
+      }
+    };
+    const final = resolveTarget
+      ? wrapToolWithActivity(wrapped, {
+          toolName: name,
+          agent: { id: agent.id, name: agent.name, color: agent.color },
+          kind: "whiteboard",
+          resolveTarget: ({ args, result }) => resolveTarget(args, result),
+        })
+      : wrapped;
     disposers.push(
       server.registerTool(
         {
@@ -87,13 +120,7 @@ export function registerWhiteboardBridge(
             additionalProperties: false,
           },
         },
-        async (args) => {
-          try {
-            return await handler(args);
-          } catch (e) {
-            return errorResult(e instanceof Error ? e.message : String(e));
-          }
-        },
+        final as any,
       ),
     );
   };
@@ -176,8 +203,17 @@ export function registerWhiteboardBridge(
         authorId: agent.id,
       };
       adapter.setNotes((all) => [...all, note]);
+      pushUndoEntry(agent.id, {
+        timestamp: Date.now(),
+        bridgeId: "whiteboard",
+        action: "whiteboard_add_sticky",
+        label: `Added sticky ${note.id}`,
+        undo: () => adapter.setNotes((all) => all.filter((n) => n.id !== note.id)),
+        redo: () => adapter.setNotes((all) => [...all, note]),
+      });
       return textResult(`Added sticky ${note.id}`, note);
     },
+    wbTarget,
   );
 
   reg(
@@ -245,6 +281,7 @@ export function registerWhiteboardBridge(
       );
       return textResult(`Updated sticky ${id}`, updated);
     },
+    wbTarget,
   );
 
   // ───────────── Shape CRUD ─────────────
@@ -287,6 +324,7 @@ export function registerWhiteboardBridge(
       adapter.setShapes((all) => [...all, shape]);
       return textResult(`Added ${kind} ${shape.id}`, shape);
     },
+    wbTarget,
   );
 
   reg(
@@ -328,6 +366,7 @@ export function registerWhiteboardBridge(
       );
       return textResult(`Updated shape ${id}`, updated);
     },
+    wbTarget,
   );
 
   // ───────────── Connectors ─────────────
@@ -352,6 +391,7 @@ export function registerWhiteboardBridge(
       adapter.setConnectors((all) => [...all, c]);
       return textResult(`Added connector ${c.id}`, c);
     },
+    wbTarget,
   );
 
   // ───────────── Drawing ─────────────
@@ -384,6 +424,7 @@ export function registerWhiteboardBridge(
       adapter.setStrokes((all) => [...all, stroke]);
       return textResult(`Added stroke ${stroke.id} (${points.length} points)`, stroke);
     },
+    wbTarget,
   );
 
   // ───────────── Generic delete ─────────────
@@ -395,29 +436,38 @@ export function registerWhiteboardBridge(
     ["id"],
     (args) => {
       const id = str(args.id);
-      let removed = false;
-      adapter.setNotes((all) => {
-        const next = all.filter((x) => x.id !== id);
-        if (next.length !== all.length) removed = true;
-        return next;
+      // Snapshot the items being removed so undo can re-insert them.
+      const removedNotes = adapter.getNotes().filter((x) => x.id === id);
+      const removedShapes = adapter.getShapes().filter((x) => x.id === id);
+      const removedConnectors = adapter.getConnectors().filter((x) => x.id === id);
+      const removedStrokes = adapter.getStrokes().filter((x) => x.id === id);
+      const removed = removedNotes.length + removedShapes.length + removedConnectors.length + removedStrokes.length > 0;
+      if (!removed) return errorResult(`No item with id ${id}`);
+      adapter.setNotes((all) => all.filter((x) => x.id !== id));
+      adapter.setShapes((all) => all.filter((x) => x.id !== id));
+      adapter.setConnectors((all) => all.filter((x) => x.id !== id));
+      adapter.setStrokes((all) => all.filter((x) => x.id !== id));
+      pushUndoEntry(agent.id, {
+        timestamp: Date.now(),
+        bridgeId: "whiteboard",
+        action: "whiteboard_delete_item",
+        label: `Deleted ${id}`,
+        undo: () => {
+          if (removedNotes.length) adapter.setNotes((all) => [...all, ...removedNotes]);
+          if (removedShapes.length) adapter.setShapes((all) => [...all, ...removedShapes]);
+          if (removedConnectors.length) adapter.setConnectors((all) => [...all, ...removedConnectors]);
+          if (removedStrokes.length) adapter.setStrokes((all) => [...all, ...removedStrokes]);
+        },
+        redo: () => {
+          adapter.setNotes((all) => all.filter((x) => x.id !== id));
+          adapter.setShapes((all) => all.filter((x) => x.id !== id));
+          adapter.setConnectors((all) => all.filter((x) => x.id !== id));
+          adapter.setStrokes((all) => all.filter((x) => x.id !== id));
+        },
       });
-      adapter.setShapes((all) => {
-        const next = all.filter((x) => x.id !== id);
-        if (next.length !== all.length) removed = true;
-        return next;
-      });
-      adapter.setConnectors((all) => {
-        const next = all.filter((x) => x.id !== id);
-        if (next.length !== all.length) removed = true;
-        return next;
-      });
-      adapter.setStrokes((all) => {
-        const next = all.filter((x) => x.id !== id);
-        if (next.length !== all.length) removed = true;
-        return next;
-      });
-      return removed ? textResult(`Deleted ${id}`) : errorResult(`No item with id ${id}`);
+      return textResult(`Deleted ${id}`);
     },
+    wbTarget,
   );
 
   // ───────────── Viewport / agent presence ─────────────
@@ -437,6 +487,7 @@ export function registerWhiteboardBridge(
       adapter.setViewport(next);
       return textResult(`Viewport → ${JSON.stringify(next)}`, next);
     },
+    wbTarget,
   );
 
   reg(
@@ -464,6 +515,7 @@ export function registerWhiteboardBridge(
       adapter.setAgentCursor(cursor);
       return textResult(`Cursor → (${cursor.x}, ${cursor.y})`, cursor);
     },
+    wbTarget,
   );
 
   return {
