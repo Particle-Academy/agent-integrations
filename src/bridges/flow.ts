@@ -1,13 +1,26 @@
-import type {
-  ExecutorRegistry,
-  FlowEdge,
-  FlowGraph,
-  FlowNode,
-  FlowNodeData,
-  FlowNodeKind,
-  NodeRunStatus,
-  RunResult,
-} from "@particle-academy/fancy-flow";
+// Loose types so this bridge builds standalone without a hard dep on
+// fancy-flow. Hosts that have fancy-flow installed get full editor
+// integration via the runtime dynamic imports below.
+type FlowNode = {
+  id: string;
+  type?: string;
+  position: { x: number; y: number };
+  data: { kind?: string; label?: string; description?: string; status?: string; statusText?: string; config?: Record<string, unknown>; [k: string]: unknown };
+};
+type FlowEdge = {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+  label?: string;
+  [k: string]: unknown;
+};
+type FlowGraph = { nodes: FlowNode[]; edges: FlowEdge[] };
+type NodeRunStatus = "idle" | "queued" | "running" | "done" | "error";
+type ExecutorRegistry = Record<string, unknown>;
+type RunResult = { ok: boolean; outputs: Record<string, unknown>; error?: string };
+
 import { textResult, errorResult } from "../mcp/server";
 import type { MicroMcpServer } from "../mcp/server";
 import type { JsonObject } from "../mcp/types";
@@ -38,7 +51,7 @@ export type FlowBridgeOptions = {
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
-const KINDS: FlowNodeKind[] = ["trigger", "action", "decision", "output", "note", "subgraph"];
+const KINDS: string[] = ["trigger", "action", "decision", "output", "note", "subgraph"];
 
 const num = (v: unknown, fallback?: number): number =>
   typeof v === "number" && Number.isFinite(v) ? v : fallback ?? 0;

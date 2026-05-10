@@ -1,6 +1,6 @@
 {
   "name": "@particle-academy/agent-integrations",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP-driven agent presence in collab sessions: per-session micro-MCP server, pluggable bridges to fancy-* packages, and agent UX components (panel + on-canvas cursor).",
   "repository": {
     "type": "git",
@@ -39,10 +39,12 @@
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",
-    "@particle-academy/fancy-whiteboard": "^0.1.0"
+    "@particle-academy/fancy-whiteboard": "^0.1.0",
+    "@particle-academy/fancy-flow": "^0.2.0"
   },
   "peerDependenciesMeta": {
-    "@particle-academy/fancy-whiteboard": { "optional": true }
+    "@particle-academy/fancy-whiteboard": { "optional": true },
+    "@particle-academy/fancy-flow": { "optional": true }
   },
   "devDependencies": {
     "@particle-academy/fancy-whiteboard": "^0.1.5",
