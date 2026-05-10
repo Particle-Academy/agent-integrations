@@ -157,7 +157,7 @@ export function registerSheetsBridge(
       if (!cell) {
         return textResult(`(empty)`, { sheet: sheetId, address, value: null });
       }
-      return textResult(`${address} = ${JSON.stringify(cell.computedValue ?? cell.value)}`, { sheet: sheetId, address, ...cell });
+      return textResult(`${address} = ${JSON.stringify(cell.computedValue ?? cell.value)}`, { ...cell, sheet: sheetId, address });
     },
     false,
   );
