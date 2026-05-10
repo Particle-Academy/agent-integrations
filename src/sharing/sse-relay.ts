@@ -155,7 +155,7 @@ export function attachSseRelay(server: MicroMcpServer, options: SseRelayOptions)
       transport.send({
         jsonrpc: "2.0",
         method: "notifications/agent_activity",
-        params: event as unknown as Record<string, unknown>,
+        params: event as any,
       });
     });
     // Tear down the subscription when the transport closes.
