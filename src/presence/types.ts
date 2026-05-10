@@ -46,7 +46,7 @@ export type AgentActivityEvent = {
   ttlMs?: number;
 };
 
-export type AgentActivityListener = (event: AgentActivity) => void;
+export type AgentActivityListener = (event: AgentActivityEvent) => void;
 
 export type ActivityFilter = {
   agentId?: string;
