@@ -101,7 +101,7 @@ export {
   wrapToolWithActivity,
   useAgentActivity,
   useAgentActivityForScreen,
-  type AgentActivity,
+  type AgentActivityEvent,
   type AgentActivityListener,
   type AgentTarget,
   type AgentTargetKind,

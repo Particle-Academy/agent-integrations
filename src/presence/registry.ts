@@ -1,4 +1,4 @@
-import type { ActivityFilter, AgentActivity, AgentActivityListener } from "./types";
+import type { ActivityFilter, AgentActivityEvent, AgentActivityListener } from "./types";
 
 /**
  * In-process registry of agent activity events. Bridges call `emitActivity`
@@ -13,10 +13,10 @@ import type { ActivityFilter, AgentActivity, AgentActivityListener } from "./typ
 const HISTORY_CAP = 200;
 
 const listeners = new Set<AgentActivityListener>();
-const history: AgentActivity[] = [];
+const history: AgentActivityEvent[] = [];
 
 /** Emit an activity event. All current listeners receive it synchronously. */
-export function emitActivity(event: AgentActivity): void {
+export function emitActivity(event: AgentActivityEvent): void {
   history.push(event);
   if (history.length > HISTORY_CAP) history.splice(0, history.length - HISTORY_CAP);
   for (const l of listeners) l(event);
@@ -36,7 +36,7 @@ export function onActivity(listener: AgentActivityListener, filter?: ActivityFil
 }
 
 /** Read the recent history (newest last). Optional filter. */
-export function readActivityHistory(filter?: ActivityFilter): AgentActivity[] {
+export function readActivityHistory(filter?: ActivityFilter): AgentActivityEvent[] {
   if (!filter) return history.slice();
   return history.filter((e) => matches(e, filter));
 }
@@ -47,7 +47,7 @@ export function resetActivityRegistry(): void {
   history.length = 0;
 }
 
-function matches(e: AgentActivity, f: ActivityFilter): boolean {
+function matches(e: AgentActivityEvent, f: ActivityFilter): boolean {
   if (f.agentId !== undefined && e.agentId !== f.agentId) return false;
   if (f.screenId !== undefined && e.target.screenId !== f.screenId) return false;
   if (f.kind !== undefined && e.target.kind !== f.kind) return false;

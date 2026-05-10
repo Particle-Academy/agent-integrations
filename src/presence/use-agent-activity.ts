@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { onActivity, readActivityHistory } from "./registry";
-import type { ActivityFilter, AgentActivity } from "./types";
+import type { ActivityFilter, AgentActivityEvent } from "./types";
 
 /**
  * useAgentActivity — React subscription to the in-process activity stream.
@@ -12,9 +12,9 @@ import type { ActivityFilter, AgentActivity } from "./types";
 export function useAgentActivity(
   filter?: ActivityFilter,
   options: { capacity?: number } = {},
-): { events: AgentActivity[]; latest: AgentActivity | null } {
+): { events: AgentActivityEvent[]; latest: AgentActivityEvent | null } {
   const cap = options.capacity ?? 50;
-  const [events, setEvents] = useState<AgentActivity[]>(() => readActivityHistory(filter).slice(-cap));
+  const [events, setEvents] = useState<AgentActivityEvent[]>(() => readActivityHistory(filter).slice(-cap));
 
   useEffect(() => {
     setEvents(readActivityHistory(filter).slice(-cap));
@@ -38,7 +38,7 @@ export function useAgentActivity(
 export function useAgentActivityForScreen(
   screenId: string,
   options: { capacity?: number } = {},
-): { events: AgentActivity[]; latest: AgentActivity | null; isAgentActive: boolean } {
+): { events: AgentActivityEvent[]; latest: AgentActivityEvent | null; isAgentActive: boolean } {
   const { events, latest } = useAgentActivity({ screenId }, options);
   const fadeAfter = latest?.ttlMs ?? 1500;
   const [isAgentActive, setActive] = useState(false);

@@ -31,7 +31,7 @@ export type ToolHandler<TArgs = Record<string, unknown>> = (
 
 /**
  * wrapToolWithActivity — decorate a bridge tool handler so every successful
- * call emits an `AgentActivity`. Returns a new handler with the same shape.
+ * call emits an `AgentActivityEvent`. Returns a new handler with the same shape.
  *
  * Usage in a bridge:
  *

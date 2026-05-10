@@ -26,7 +26,7 @@ export type AgentTarget = {
   label?: string;
 };
 
-export type AgentActivity = {
+export type AgentActivityEvent = {
   /** Stable identifier for the acting agent. */
   agentId: string;
   /** Human-friendly name (used by indicators / activity log). */

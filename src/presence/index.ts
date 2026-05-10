@@ -1,5 +1,5 @@
 export type {
-  AgentActivity,
+  AgentActivityEvent,
   AgentActivityListener,
   AgentTarget,
   AgentTargetKind,
