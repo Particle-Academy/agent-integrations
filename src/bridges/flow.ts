@@ -140,7 +140,8 @@ export function registerFlowBridge(
     async () => {
       // Dynamic import keeps the bridge usable even when fancy-flow isn't loaded.
       try {
-        const { listNodeKinds } = await import("@particle-academy/fancy-flow");
+        // @ts-ignore — optional peer dep, may not be installed
+        const { listNodeKinds } = await import("@particle-academy/fancy-flow" as any);
         const cat = adapter ? undefined : undefined; // placeholder
         const all = (cat ? listNodeKinds(cat) : listNodeKinds()).map((k: any) => ({
           name: k.name,
@@ -168,7 +169,8 @@ export function registerFlowBridge(
     ["name"],
     async (args) => {
       try {
-        const { getNodeKind } = await import("@particle-academy/fancy-flow");
+        // @ts-ignore — optional peer dep
+        const { getNodeKind } = await import("@particle-academy/fancy-flow" as any);
         const k: any = getNodeKind(str(args.name));
         if (!k) return errorResult(`No kind registered: ${args.name}`);
         const summary = {
@@ -218,7 +220,8 @@ export function registerFlowBridge(
       // legacy 6-pack so old graphs keep working.
       let kindDef: any = null;
       try {
-        const { getNodeKind, defaultConfigFor } = await import("@particle-academy/fancy-flow");
+        // @ts-ignore — optional peer dep
+        const { getNodeKind, defaultConfigFor } = await import("@particle-academy/fancy-flow" as any);
         kindDef = getNodeKind(kindName);
         var defaults: Record<string, unknown> = kindDef ? defaultConfigFor(kindDef) : {};
       } catch {
