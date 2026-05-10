@@ -154,7 +154,7 @@ export function registerFlowBridge(
           outputs: k.outputs ?? [],
           configFields: (k.configSchema ?? []).map((f: any) => ({ key: f.key, type: f.type, label: f.label, required: !!f.required })),
         }));
-        const text = all.map((k) => `${k.category}/${k.name}: ${k.label}${k.description ? " — " + k.description : ""}`).join("\n");
+        const text = all.map((k: any) => `${k.category}/${k.name}: ${k.label}${k.description ? " — " + k.description : ""}`).join("\n");
         return textResult(text || "(no kinds registered)", all);
       } catch (e) {
         return errorResult(`fancy-flow registry not available: ${e instanceof Error ? e.message : String(e)}`);
