@@ -63,6 +63,11 @@ export function registerWhiteboardBridge(
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
 
+  // Cursor narration is the agent's responsibility — call
+  // whiteboard_set_agent_cursor as a separate prerequisite before any
+  // mutation. This keeps the protocol honest: each tool does one thing.
+
+
   const reg = (
     name: string,
     description: string,
@@ -156,20 +161,50 @@ export function registerWhiteboardBridge(
       color: { type: "string", description: "CSS color, e.g. #fde68a" },
     },
     ["x", "y"],
-    (args) => {
+    async (args) => {
+      const x = num(args.x);
+      const y = num(args.y);
+      const width = num(args.width, 180);
+      const height = num(args.height, 140);
+// (cursor narration is now an explicit separate tool call)
       const note: StickyNoteItem = {
         id: newId("n"),
         kind: "sticky",
-        x: num(args.x),
-        y: num(args.y),
-        width: num(args.width, 180),
-        height: num(args.height, 140),
+        x, y, width, height,
         text: str(args.text),
         color: typeof args.color === "string" ? args.color : "#fde68a",
         authorId: agent.id,
       };
       adapter.setNotes((all) => [...all, note]);
       return textResult(`Added sticky ${note.id}`, note);
+    },
+  );
+
+  reg(
+    "whiteboard_stream_text",
+    "Type text into a sticky note character-by-character so the human can read it forming. The tool returns once streaming finishes.",
+    {
+      id: { type: "string" },
+      text: { type: "string" },
+      cps: { type: "number", description: "Characters per second. Default 25." },
+      append: { type: "boolean", description: "Append to existing text instead of replacing. Default false." },
+    },
+    ["id", "text"],
+    async (args) => {
+      const id = str(args.id);
+      const target = str(args.text);
+      const cps = Math.max(1, num(args.cps, 25));
+      const append = bool(args.append);
+      const startNote = adapter.getNotes().find((n) => n.id === id);
+      if (!startNote) return errorResult(`No sticky with id ${id}`);
+      const base = append ? (startNote.text ?? "") : "";
+      const interval = Math.max(8, Math.round(1000 / cps));
+      for (let i = 0; i <= target.length; i++) {
+        const nextText = base + target.slice(0, i);
+        adapter.setNotes((all) => all.map((n) => (n.id === id ? { ...n, text: nextText } : n)));
+        if (i < target.length) await new Promise((r) => setTimeout(r, interval));
+      }
+      return textResult(`Streamed ${target.length} chars to ${id}`, { id, text: base + target });
     },
   );
 
@@ -186,25 +221,28 @@ export function registerWhiteboardBridge(
       color: { type: "string" },
     },
     ["id"],
-    (args) => {
+    async (args) => {
       const id = str(args.id);
+      const existing = adapter.getNotes().find((n) => n.id === id);
+      if (!existing) return errorResult(`No sticky with id ${id}`);
+      const nextX = args.x !== undefined ? num(args.x) : existing.x;
+      const nextY = args.y !== undefined ? num(args.y) : existing.y;
+      const nextW = args.width !== undefined ? num(args.width) : existing.width;
+      const nextH = args.height !== undefined ? num(args.height) : existing.height;
+// (cursor narration is now an explicit separate tool call)
       let updated: StickyNoteItem | null = null;
       adapter.setNotes((all) =>
         all.map((n) => {
           if (n.id !== id) return n;
           updated = {
             ...n,
-            ...(args.x !== undefined ? { x: num(args.x) } : {}),
-            ...(args.y !== undefined ? { y: num(args.y) } : {}),
-            ...(args.width !== undefined ? { width: num(args.width) } : {}),
-            ...(args.height !== undefined ? { height: num(args.height) } : {}),
+            x: nextX, y: nextY, width: nextW, height: nextH,
             ...(args.text !== undefined ? { text: str(args.text) } : {}),
             ...(args.color !== undefined ? { color: str(args.color) } : {}),
           };
           return updated;
         }),
       );
-      if (!updated) return errorResult(`No sticky with id ${id}`);
       return textResult(`Updated sticky ${id}`, updated);
     },
   );
@@ -227,17 +265,19 @@ export function registerWhiteboardBridge(
       flipY: { type: "boolean" },
     },
     ["shape", "x", "y", "width", "height"],
-    (args) => {
+    async (args) => {
       const kind = str(args.shape) as ShapeKind;
       if (!VALID_SHAPES.includes(kind)) return errorResult(`Invalid shape kind: ${kind}`);
+      const x = num(args.x);
+      const y = num(args.y);
+      const width = num(args.width);
+      const height = num(args.height);
+// (cursor narration is now an explicit separate tool call)
       const shape: ShapeItem = {
         id: newId("s"),
         kind: "shape",
         shape: kind,
-        x: num(args.x),
-        y: num(args.y),
-        width: num(args.width),
-        height: num(args.height),
+        x, y, width, height,
         ...(args.text !== undefined ? { text: str(args.text) } : {}),
         ...(args.fill !== undefined ? { fill: str(args.fill) } : {}),
         ...(args.stroke !== undefined ? { stroke: str(args.stroke) } : {}),
@@ -263,18 +303,22 @@ export function registerWhiteboardBridge(
       stroke: { type: "string" },
     },
     ["id"],
-    (args) => {
+    async (args) => {
       const id = str(args.id);
+      const existing = adapter.getShapes().find((s) => s.id === id);
+      if (!existing) return errorResult(`No shape with id ${id}`);
+      const nextX = args.x !== undefined ? num(args.x) : existing.x;
+      const nextY = args.y !== undefined ? num(args.y) : existing.y;
+      const nextW = args.width !== undefined ? num(args.width) : existing.width;
+      const nextH = args.height !== undefined ? num(args.height) : existing.height;
+// (cursor narration is now an explicit separate tool call)
       let updated: ShapeItem | null = null;
       adapter.setShapes((all) =>
         all.map((s) => {
           if (s.id !== id) return s;
           updated = {
             ...s,
-            ...(args.x !== undefined ? { x: num(args.x) } : {}),
-            ...(args.y !== undefined ? { y: num(args.y) } : {}),
-            ...(args.width !== undefined ? { width: num(args.width) } : {}),
-            ...(args.height !== undefined ? { height: num(args.height) } : {}),
+            x: nextX, y: nextY, width: nextW, height: nextH,
             ...(args.text !== undefined ? { text: str(args.text) } : {}),
             ...(args.fill !== undefined ? { fill: str(args.fill) } : {}),
             ...(args.stroke !== undefined ? { stroke: str(args.stroke) } : {}),
@@ -282,7 +326,6 @@ export function registerWhiteboardBridge(
           return updated;
         }),
       );
-      if (!updated) return errorResult(`No shape with id ${id}`);
       return textResult(`Updated shape ${id}`, updated);
     },
   );

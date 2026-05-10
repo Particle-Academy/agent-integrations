@@ -78,6 +78,11 @@
 .fai-panel__send:disabled { opacity: 0.5; cursor: default; }
 
 /* Cursor */
+.fai-cursor {
+  transition: left 500ms cubic-bezier(0.22, 1, 0.36, 1),
+              top 500ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) { .fai-cursor { transition: none; } }
 .fai-cursor__tag {
   position: absolute; left: 18px; top: 14px;
   color: white;
@@ -94,3 +99,28 @@
   20%  { opacity: 1; transform: scale(1.03); }
   100% { opacity: 0; transform: scale(1); }
 }
+
+/* ShareControls */
+.fai-share {
+  border: 1px solid #e4e4e7; border-radius: 12px; padding: 12px;
+  background: white; color: #18181b;
+  font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px;
+}
+@media (prefers-color-scheme: dark) { .fai-share { background: #18181b; color: #fafafa; border-color: #3f3f46; } }
+.fai-share--idle { display: flex; flex-direction: column; gap: 6px; }
+.fai-share__start { align-self: flex-start; padding: 8px 14px; border: 0; border-radius: 6px; background: #a855f7; color: white; font-weight: 500; cursor: pointer; }
+.fai-share__hint { margin: 0; opacity: 0.7; font-size: 12px; }
+.fai-share__header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.fai-share__id { display: block; opacity: 0.7; font-size: 11px; margin-top: 2px; }
+.fai-share__id code { font-family: ui-monospace, monospace; }
+.fai-share__header-actions { display: flex; gap: 8px; align-items: center; }
+.fai-share__status { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: rgba(34, 197, 94, 0.15); color: #16a34a; }
+.fai-share__stop { border: 1px solid #d4d4d8; background: transparent; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; color: inherit; }
+.fai-share__tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.fai-share__tab { border: 0; background: transparent; cursor: pointer; padding: 4px 10px; border-radius: 4px; color: inherit; font-size: 12px; }
+.fai-share__tab.is-active { background: rgba(168, 85, 247, 0.12); color: #a855f7; }
+.fai-share__panel-label { font-size: 11px; opacity: 0.7; margin-bottom: 4px; }
+.fai-share__copy { display: flex; gap: 6px; align-items: stretch; }
+.fai-share__pre { flex: 1; margin: 0; padding: 8px 10px; background: rgba(0,0,0,0.05); border-radius: 6px; font-family: ui-monospace, monospace; font-size: 11px; white-space: nowrap; overflow: auto; }
+.fai-share__pre.is-multi { white-space: pre; max-height: 240px; }
+.fai-share__copy-btn { border: 1px solid #d4d4d8; background: transparent; cursor: pointer; border-radius: 6px; padding: 0 12px; color: inherit; font-size: 12px; }

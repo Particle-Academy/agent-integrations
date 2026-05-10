@@ -39,6 +39,11 @@ export {
   type WhiteboardBridgeAdapter,
   type WhiteboardBridgeOptions,
 } from "./bridges/whiteboard";
+export {
+  registerFlowBridge,
+  type FlowBridgeAdapter,
+  type FlowBridgeOptions,
+} from "./bridges/flow";
 
 // Components
 export { AgentPanel } from "./components/AgentPanel";
@@ -47,3 +52,21 @@ export { AgentCursor } from "./components/AgentCursor";
 export type { AgentCursorProps } from "./components/AgentCursor";
 export { AgentActivityHighlight } from "./components/AgentActivityHighlight";
 export type { AgentActivityHighlightProps } from "./components/AgentActivityHighlight";
+export { ShareControls } from "./components/ShareControls";
+export type { ShareControlsProps } from "./components/ShareControls";
+export { SharedWhiteboard } from "./components/SharedWhiteboard";
+export type { SharedWhiteboardProps } from "./components/SharedWhiteboard";
+
+// Sharing — token utilities + SSE relay transport
+export {
+  createSessionDescriptor,
+  describeSession,
+  buildShareUrl,
+  buildShareConfig,
+  readSessionFromUrl,
+  SseRelayTransport,
+  attachSseRelay,
+  type SessionDescriptor,
+  type SseRelayOptions,
+  type RelayState,
+} from "./sharing";
