@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SheetsBridgeAdapter } from "./bridges/sheets";
-import {
-  onActivity,
-  type AgentActivityEvent,
-} from "./presence/registry";
+import { onActivity } from "./presence/registry";
+import type { AgentActivityEvent } from "./presence/types";
 
 /**
  * Shared-session helpers for `@particle-academy/fancy-sheets`.
@@ -107,7 +105,7 @@ export function useSheetsAdapter<W extends WorkbookLike>(
   const adapter = useMemo<SheetsBridgeAdapter>(
     () => ({
       screenId: options.screenId,
-      getWorkbook: () => workbookRef.current,
+      getWorkbook: () => workbookRef.current as unknown as ReturnType<SheetsBridgeAdapter["getWorkbook"]>,
       setWorkbook: (next) => setWorkbookRef.current(next as unknown as W),
       setActiveCell,
     }),
