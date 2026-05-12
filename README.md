@@ -16,6 +16,26 @@ npm install @particle-academy/agent-integrations
 import "@particle-academy/agent-integrations/styles.css";
 ```
 
+## When you don't need an MCP server
+
+If your agent runs in the same JS process as the surfaces it drives (an embedded chat widget, an in-page worker, an SSR-time tool loop), you don't need any of MCP's JSON-RPC framing. Use **`ToolRegistry`** — a plain in-memory tool host that the bridges register against. Agents drive the surface with `host.callTool("sheet_set_cell", { … })` directly.
+
+```ts
+import {
+  ToolRegistry,
+  registerSheetsBridge,
+  useSheetsAdapter,
+} from "@particle-academy/agent-integrations";
+
+const host = new ToolRegistry();
+registerSheetsBridge(host, { adapter });
+
+// in-process agent:
+await host.callTool("sheet_set_cell", { address: "B3", value: 42 });
+```
+
+Need both? `MicroMcpServer` extends `ToolRegistry`, so the same instance serves direct in-process calls **and** SSE-relayed remote agents at the same time. Bridges accept either — every `register*Bridge(host, …)` signature takes a `ToolHost`.
+
 ## Architecture
 
 ```

@@ -1,5 +1,5 @@
 import { textResult, errorResult } from "../mcp/server";
-import type { MicroMcpServer } from "../mcp/server";
+import type { ToolHost } from "../mcp/tool-host";
 import { readHistory, redoOne, undoOne } from "./undo-stack";
 
 export type UndoToolsOptions = {
@@ -11,30 +11,30 @@ export type UndoToolsOptions = {
  * Idempotent tracker so multiple bridges on the same server only register
  * agent_undo / agent_redo / agent_history once.
  */
-const installedServers = new WeakSet<MicroMcpServer>();
+const installedHosts = new WeakSet<ToolHost>();
 
 /**
  * ensureUndoToolsRegistered — bridges call this on construction. Safe to
  * call repeatedly with the same server; subsequent calls are no-ops.
  */
-export function ensureUndoToolsRegistered(server: MicroMcpServer, options: UndoToolsOptions = {}): void {
-  if (installedServers.has(server)) return;
-  installedServers.add(server);
-  registerUndoTools(server, options);
+export function ensureUndoToolsRegistered(host: ToolHost, options: UndoToolsOptions = {}): void {
+  if (installedHosts.has(host)) return;
+  installedHosts.add(host);
+  registerUndoTools(host, options);
 }
 
 /**
  * registerUndoTools — add agent_undo / agent_redo / agent_history to the
  * server. Returns a disposer that unregisters all three.
  */
-export function registerUndoTools(server: MicroMcpServer, options: UndoToolsOptions = {}): () => void {
+export function registerUndoTools(host: ToolHost, options: UndoToolsOptions = {}): () => void {
   const defaultAgent = options.defaultAgentId ?? "agent";
   const disposers: Array<() => void> = [];
   const agentOf = (args: any): string =>
     typeof args?.agentId === "string" ? args.agentId : defaultAgent;
 
   disposers.push(
-    server.registerTool(
+    host.registerTool(
       {
         name: "agent_undo",
         description: "Undo the most recent action on the agent's stack. Optional agentId targets a specific agent.",
@@ -53,7 +53,7 @@ export function registerUndoTools(server: MicroMcpServer, options: UndoToolsOpti
   );
 
   disposers.push(
-    server.registerTool(
+    host.registerTool(
       {
         name: "agent_redo",
         description: "Redo the most recently undone action.",
@@ -72,7 +72,7 @@ export function registerUndoTools(server: MicroMcpServer, options: UndoToolsOpti
   );
 
   disposers.push(
-    server.registerTool(
+    host.registerTool(
       {
         name: "agent_history",
         description: "List the agent's undo stack (oldest first). Useful for understanding what's reversible.",

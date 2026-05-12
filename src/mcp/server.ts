@@ -14,6 +14,7 @@ import {
   JSONRPC_METHOD_NOT_FOUND,
   MCP_PROTOCOL_VERSION,
 } from "./types";
+import { ToolRegistry } from "./tool-host";
 
 export type McpServerOptions = {
   info: ServerInfo;
@@ -44,8 +45,7 @@ export type Transport = {
  * The same server can serve multiple transports (e.g. an in-process agent
  * AND a relayed external client) by attaching each one.
  */
-export class MicroMcpServer {
-  private tools = new Map<string, RegisteredTool>();
+export class MicroMcpServer extends ToolRegistry {
   private transports = new Set<Transport>();
   private notifyListChangedScheduled = false;
 
@@ -54,6 +54,7 @@ export class MicroMcpServer {
   readonly instructions?: string;
 
   constructor(options: McpServerOptions) {
+    super();
     this.info = options.info;
     this.capabilities = options.capabilities ?? { tools: { listChanged: true } };
     this.instructions = options.instructions;
@@ -70,20 +71,14 @@ export class MicroMcpServer {
     }
   }
 
-  registerTool(definition: ToolDefinition, handler: ToolHandler): () => void {
-    this.tools.set(definition.name, { definition, handler });
-    this.scheduleListChangedNotification();
-    return () => this.unregisterTool(definition.name);
-  }
-
   unregisterTool(name: string): void {
     if (this.tools.delete(name)) {
       this.scheduleListChangedNotification();
     }
   }
 
-  listTools(): ToolDefinition[] {
-    return Array.from(this.tools.values()).map((t) => t.definition);
+  protected onToolsChanged(): void {
+    this.scheduleListChangedNotification();
   }
 
   /**

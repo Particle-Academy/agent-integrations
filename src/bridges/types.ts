@@ -1,4 +1,4 @@
-import type { MicroMcpServer } from "../mcp/server";
+import type { ToolHost } from "../mcp/tool-host";
 
 /**
  * Bridge — registers a cohesive set of MCP tools/resources for a single
@@ -15,6 +15,6 @@ export type Bridge = {
 };
 
 export type BridgeFactory<TOptions> = (
-  server: MicroMcpServer,
+  host: ToolHost,
   options: TOptions,
 ) => Bridge;

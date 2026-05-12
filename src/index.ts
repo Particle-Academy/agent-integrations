@@ -9,6 +9,7 @@ export {
   type Transport,
   type McpServerOptions,
 } from "./mcp/server";
+export { ToolRegistry, type ToolHost } from "./mcp/tool-host";
 export {
   InProcessTransport,
   attachInProcess,
@@ -56,6 +57,16 @@ export {
   type SheetsBridgeOptions,
 } from "./bridges/sheets";
 export {
+  useSheetsAdapter,
+  useSheetsActivityHighlights,
+  type WorkbookLike,
+  type UseSheetsAdapterResult,
+  type SheetsAdapterOptions,
+  type SheetsCellHighlight,
+  type SheetsCellHighlightMap,
+  type SheetsHighlightOptions,
+} from "./sheets-adapter";
+export {
   registerCodeBridge,
   type CodeBridgeAdapter,
   type CodeBridgeOptions,
@@ -74,6 +85,12 @@ export {
   type SceneCamera,
   type SceneState,
 } from "./bridges/scene";
+export {
+  registerScreensBridge,
+  type ScreensBridgeAdapter,
+  type ScreensBridgeOptions,
+  type ScreenSnapshot,
+} from "./bridges/screens";
 
 // Components
 export { AgentPanel } from "./components/AgentPanel";

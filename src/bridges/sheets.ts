@@ -1,5 +1,5 @@
 import { textResult, errorResult } from "../mcp/server";
-import type { MicroMcpServer } from "../mcp/server";
+import type { ToolHost } from "../mcp/tool-host";
 import type { JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
@@ -50,7 +50,7 @@ const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
  * to the active sheet when omitted) so an agent can author multi-sheet docs.
  */
 export function registerSheetsBridge(
-  server: MicroMcpServer,
+  host: ToolHost,
   options: SheetsBridgeOptions,
 ): Bridge {
   const { adapter } = options;
@@ -91,7 +91,7 @@ export function registerSheetsBridge(
         })
       : wrapped;
     disposers.push(
-      server.registerTool(
+      host.registerTool(
         {
           name,
           description,

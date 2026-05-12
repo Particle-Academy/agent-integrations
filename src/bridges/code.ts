@@ -1,5 +1,5 @@
 import { textResult, errorResult } from "../mcp/server";
-import type { MicroMcpServer } from "../mcp/server";
+import type { ToolHost } from "../mcp/tool-host";
 import type { JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
@@ -46,7 +46,7 @@ const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
  * editor over time" UX.
  */
 export function registerCodeBridge(
-  server: MicroMcpServer,
+  host: ToolHost,
   options: CodeBridgeOptions,
 ): Bridge {
   const { adapter } = options;
@@ -85,7 +85,7 @@ export function registerCodeBridge(
         })
       : wrapped;
     disposers.push(
-      server.registerTool(
+      host.registerTool(
         {
           name,
           description,
