@@ -203,11 +203,11 @@ export function useSheetsActivityHighlights(
     const idx = elementId.indexOf("!");
     const address = elementId.slice(idx + 1);
     if (!address) continue;
-    const color = event.agent?.color ?? "#a855f7";
+    const color = event.agentColor ?? "#a855f7";
     out[address] = {
       color,
       background: color + "33",
-      label: event.agent?.name ?? "agent",
+      label: event.agentName ?? event.agentId ?? "agent",
     };
   }
   return out;
