@@ -68,7 +68,7 @@ export function registerWhiteboardBridge(
   const disposers: Array<() => void> = [];
 
   // Register agent_undo / agent_redo / agent_history once per server. Idempotent.
-  ensureUndoToolsRegistered(server, { defaultAgentId: agent.id });
+  ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
   // Cursor narration is the agent's responsibility — call
   // whiteboard_set_agent_cursor as a separate prerequisite before any
