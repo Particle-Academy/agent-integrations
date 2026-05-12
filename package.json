@@ -1,6 +1,6 @@
 {
   "name": "@particle-academy/agent-integrations",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "MCP-driven agent presence in collab sessions: per-session micro-MCP server, pluggable bridges to fancy-* packages, and agent UX components (panel + on-canvas cursor).",
   "repository": {
     "type": "git",
@@ -18,12 +18,60 @@
       "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
     },
     "./mcp": {
-      "import": { "types": "./dist/mcp.d.ts", "default": "./dist/mcp.js" },
-      "require": { "types": "./dist/mcp.d.cts", "default": "./dist/mcp.cjs" }
+      "import": { "types": "./dist/mcp/index.d.ts", "default": "./dist/mcp.js" },
+      "require": { "types": "./dist/mcp/index.d.cts", "default": "./dist/mcp.cjs" }
     },
     "./bridges/whiteboard": {
-      "import": { "types": "./dist/bridges-whiteboard.d.ts", "default": "./dist/bridges-whiteboard.js" },
-      "require": { "types": "./dist/bridges-whiteboard.d.cts", "default": "./dist/bridges-whiteboard.cjs" }
+      "import": { "types": "./dist/bridges/whiteboard.d.ts", "default": "./dist/bridges-whiteboard.js" },
+      "require": { "types": "./dist/bridges/whiteboard.d.cts", "default": "./dist/bridges-whiteboard.cjs" }
+    },
+    "./bridges/flow": {
+      "import": { "types": "./dist/bridges/flow.d.ts", "default": "./dist/bridges-flow.js" },
+      "require": { "types": "./dist/bridges/flow.d.cts", "default": "./dist/bridges-flow.cjs" }
+    },
+    "./bridges/forms": {
+      "import": { "types": "./dist/bridges/forms.d.ts", "default": "./dist/bridges-forms.js" },
+      "require": { "types": "./dist/bridges/forms.d.cts", "default": "./dist/bridges-forms.cjs" }
+    },
+    "./bridges/sheets": {
+      "import": { "types": "./dist/bridges/sheets.d.ts", "default": "./dist/bridges-sheets.js" },
+      "require": { "types": "./dist/bridges/sheets.d.cts", "default": "./dist/bridges-sheets.cjs" }
+    },
+    "./bridges/code": {
+      "import": { "types": "./dist/bridges/code.d.ts", "default": "./dist/bridges-code.js" },
+      "require": { "types": "./dist/bridges/code.d.cts", "default": "./dist/bridges-code.cjs" }
+    },
+    "./bridges/charts": {
+      "import": { "types": "./dist/bridges/charts.d.ts", "default": "./dist/bridges-charts.js" },
+      "require": { "types": "./dist/bridges/charts.d.cts", "default": "./dist/bridges-charts.cjs" }
+    },
+    "./bridges/scene": {
+      "import": { "types": "./dist/bridges/scene.d.ts", "default": "./dist/bridges-scene.js" },
+      "require": { "types": "./dist/bridges/scene.d.cts", "default": "./dist/bridges-scene.cjs" }
+    },
+    "./bridges/screens": {
+      "import": { "types": "./dist/bridges/screens.d.ts", "default": "./dist/bridges-screens.js" },
+      "require": { "types": "./dist/bridges/screens.d.cts", "default": "./dist/bridges-screens.cjs" }
+    },
+    "./sheets-adapter": {
+      "import": { "types": "./dist/sheets-adapter.d.ts", "default": "./dist/sheets-adapter.js" },
+      "require": { "types": "./dist/sheets-adapter.d.cts", "default": "./dist/sheets-adapter.cjs" }
+    },
+    "./components/shared-whiteboard": {
+      "import": { "types": "./dist/components/SharedWhiteboard/index.d.ts", "default": "./dist/components-shared-whiteboard.js" },
+      "require": { "types": "./dist/components/SharedWhiteboard/index.d.cts", "default": "./dist/components-shared-whiteboard.cjs" }
+    },
+    "./presence": {
+      "import": { "types": "./dist/presence/index.d.ts", "default": "./dist/presence.js" },
+      "require": { "types": "./dist/presence/index.d.cts", "default": "./dist/presence.cjs" }
+    },
+    "./undo": {
+      "import": { "types": "./dist/undo/index.d.ts", "default": "./dist/undo.js" },
+      "require": { "types": "./dist/undo/index.d.cts", "default": "./dist/undo.cjs" }
+    },
+    "./sharing": {
+      "import": { "types": "./dist/sharing/index.d.ts", "default": "./dist/sharing.js" },
+      "require": { "types": "./dist/sharing/index.d.cts", "default": "./dist/sharing.cjs" }
     },
     "./styles.css": "./dist/styles.css"
   },
@@ -40,11 +88,13 @@
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",
     "@particle-academy/fancy-whiteboard": "^0.1.0",
-    "@particle-academy/fancy-flow": "^0.2.0"
+    "@particle-academy/fancy-flow": "^0.2.0",
+    "@particle-academy/fancy-sheets": "^0.1.0"
   },
   "peerDependenciesMeta": {
     "@particle-academy/fancy-whiteboard": { "optional": true },
-    "@particle-academy/fancy-flow": { "optional": true }
+    "@particle-academy/fancy-flow": { "optional": true },
+    "@particle-academy/fancy-sheets": { "optional": true }
   },
   "devDependencies": {
     "@particle-academy/fancy-whiteboard": "^0.1.5",

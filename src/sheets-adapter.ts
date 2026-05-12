@@ -36,11 +36,14 @@ import type { AgentActivityEvent } from "./presence/types";
  *   />
  */
 
-// Loose type mirror of fancy-sheets' WorkbookData — kept local so this
-// helper doesn't pull a runtime dep on the package. Apps using the helper
-// import the real `WorkbookData` from fancy-sheets and pass it through.
+// Loose structural mirror of fancy-sheets' WorkbookData — kept local so
+// this helper doesn't pull a runtime dep on the package. The constraint
+// only names the fields the hook itself reads (`sheets` + `activeSheetId`);
+// it does NOT add a `[k: string]: unknown` index signature, so consumers
+// can pass the real `WorkbookData` from fancy-sheets through without
+// triggering an "index signature missing" error.
 export type WorkbookLike = {
-  sheets: Array<{ id: string; name: string; [k: string]: unknown }>;
+  sheets: Array<{ id: string; name: string }>;
   activeSheetId: string;
 };
 
@@ -123,17 +126,22 @@ export function useSheetsAdapter<W extends WorkbookLike>(
 }
 
 /**
- * Loose mirror of fancy-sheets' `CellHighlightMap`. Each key is a cell
- * address (`"B12"`); each value is the visual treatment to apply.
+ * Mirror of fancy-sheets' `CellHighlight` — structurally identical so the
+ * map returned from {@link useSheetsActivityHighlights} can be passed
+ * straight into `<SheetWorkbook highlights={…} />` without any casts.
+ *
+ * Fields match `@particle-academy/fancy-sheets` exactly:
+ *   - `color: string` (required) — border/outline color
+ *   - `backgroundColor?: string` — auto-derived from `color` if omitted
+ *   - `label?: string` — small badge in the cell's top-left corner
  */
 export type SheetsCellHighlight = {
-  color?: string;
+  /** Border/outline color (any CSS color value). Required. */
+  color: string;
   /** Background tint; if omitted, derived from `color` at low alpha. */
-  background?: string;
+  backgroundColor?: string;
   /** Optional label rendered in a chip on the cell. */
   label?: string;
-  /** Optional className appended to the cell. */
-  className?: string;
 };
 
 export type SheetsCellHighlightMap = Record<string, SheetsCellHighlight>;
@@ -206,7 +214,7 @@ export function useSheetsActivityHighlights(
     const color = event.agentColor ?? "#a855f7";
     out[address] = {
       color,
-      background: color + "33",
+      backgroundColor: color + "33",
       label: event.agentName ?? event.agentId ?? "agent",
     };
   }

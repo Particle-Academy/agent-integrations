@@ -34,17 +34,19 @@ export type {
 export { MCP_PROTOCOL_VERSION } from "./mcp/types";
 
 // Bridges
+//
+// Bridges that depend on optional peer packages (fancy-whiteboard, fancy-flow)
+// are NOT re-exported from the root barrel. Eager re-exports break bundlers
+// (Vite/rolldown) when the optional peer isn't installed. Reach them via the
+// subpath imports instead:
+//
+//   import { registerWhiteboardBridge } from "@particle-academy/agent-integrations/bridges/whiteboard";
+//   import { registerFlowBridge }       from "@particle-academy/agent-integrations/bridges/flow";
+//
+// The root barrel stays core-only: MCP, presence, undo, sharing, sheets,
+// forms, code, charts, scene, screens — none of which depend on optional
+// peers.
 export type { Bridge, BridgeFactory } from "./bridges/types";
-export {
-  registerWhiteboardBridge,
-  type WhiteboardBridgeAdapter,
-  type WhiteboardBridgeOptions,
-} from "./bridges/whiteboard";
-export {
-  registerFlowBridge,
-  type FlowBridgeAdapter,
-  type FlowBridgeOptions,
-} from "./bridges/flow";
 export {
   registerFormBridge,
   type FormBridgeAdapter,
@@ -106,8 +108,9 @@ export {
 } from "./components/ScreensActivityBridge";
 export { ShareControls } from "./components/ShareControls";
 export type { ShareControlsProps } from "./components/ShareControls";
-export { SharedWhiteboard } from "./components/SharedWhiteboard";
-export type { SharedWhiteboardProps } from "./components/SharedWhiteboard";
+// SharedWhiteboard is NOT re-exported from the root barrel — it imports
+// fancy-whiteboard eagerly. Reach it via the subpath instead:
+//   import { SharedWhiteboard } from "@particle-academy/agent-integrations/components/shared-whiteboard";
 
 // Presence — cross-package "what is the agent doing right now" layer
 export {

@@ -16,6 +16,51 @@ npm install @particle-academy/agent-integrations
 import "@particle-academy/agent-integrations/styles.css";
 ```
 
+## Tree-shake-safe imports
+
+The root barrel is **core-only** — MCP server, presence, undo, sharing,
+plus the bridges and components that don't depend on optional peer
+packages (`fancy-sheets`, `fancy-forms`, `fancy-code`, `fancy-charts`,
+`fancy-scene`, `fancy-screens`).
+
+Bridges whose peer is optional (`fancy-whiteboard`, `fancy-flow`) and
+the `SharedWhiteboard` component are reachable **only via subpath
+imports** so a consumer that hasn't installed those peers bundles
+cleanly:
+
+```ts
+// Core — always safe:
+import {
+  MicroMcpServer,
+  attachInProcess,
+  registerSheetsBridge,
+  useSheetsAdapter,
+  useSheetsActivityHighlights,
+} from "@particle-academy/agent-integrations";
+
+// Optional peers — subpath imports:
+import { registerWhiteboardBridge } from "@particle-academy/agent-integrations/bridges/whiteboard";
+import { registerFlowBridge }       from "@particle-academy/agent-integrations/bridges/flow";
+import { SharedWhiteboard }         from "@particle-academy/agent-integrations/components/shared-whiteboard";
+```
+
+Every bridge has a matching subpath if you'd rather import surgically:
+
+| Bridge              | Subpath                                                |
+| ------------------- | ------------------------------------------------------ |
+| whiteboard          | `…/bridges/whiteboard`                                 |
+| flow                | `…/bridges/flow`                                       |
+| sheets              | `…/bridges/sheets`                                     |
+| forms               | `…/bridges/forms`                                      |
+| code                | `…/bridges/code`                                       |
+| charts              | `…/bridges/charts`                                     |
+| scene               | `…/bridges/scene`                                      |
+| screens             | `…/bridges/screens`                                    |
+| sheets adapter hook | `…/sheets-adapter`                                     |
+| presence            | `…/presence`                                           |
+| undo                | `…/undo`                                               |
+| sharing             | `…/sharing`                                            |
+
 ## When you don't need an MCP server
 
 If your agent runs in the same JS process as the surfaces it drives (an embedded chat widget, an in-page worker, an SSR-time tool loop), you don't need any of MCP's JSON-RPC framing. Use **`ToolRegistry`** — a plain in-memory tool host that the bridges register against. Agents drive the surface with `host.callTool("sheet_set_cell", { … })` directly.
