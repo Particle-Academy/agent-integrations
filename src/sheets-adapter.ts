@@ -108,7 +108,7 @@ export function useSheetsAdapter<W extends WorkbookLike>(
     () => ({
       screenId: options.screenId,
       getWorkbook: () => workbookRef.current,
-      setWorkbook: (next) => setWorkbookRef.current(next as W),
+      setWorkbook: (next) => setWorkbookRef.current(next as unknown as W),
       setActiveCell,
     }),
     [options.screenId, setActiveCell],
@@ -198,22 +198,19 @@ export function useSheetsActivityHighlights(
     return () => window.clearInterval(t);
   }, []);
 
-  return useMemo<SheetsCellHighlightMap>(() => {
-    const out: SheetsCellHighlightMap = {};
-    for (const [elementId, { event }] of hitsRef.current) {
-      const idx = elementId.indexOf("!");
-      const address = elementId.slice(idx + 1);
-      if (!address) continue;
-      const color = event.agent?.color ?? "#a855f7";
-      out[address] = {
-        color,
-        background: color + "33",
-        label: event.agent?.name ?? "agent",
-      };
-    }
-    return out;
-    // hitsRef is mutated outside React; we re-derive on every render
-    // triggered by `force` above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  });
+  // Re-derived on every render — the listener + GC timer above call
+  // `force` so renders happen exactly when the map changes.
+  const out: SheetsCellHighlightMap = {};
+  for (const [elementId, { event }] of hitsRef.current) {
+    const idx = elementId.indexOf("!");
+    const address = elementId.slice(idx + 1);
+    if (!address) continue;
+    const color = event.agent?.color ?? "#a855f7";
+    out[address] = {
+      color,
+      background: color + "33",
+      label: event.agent?.name ?? "agent",
+    };
+  }
+  return out;
 }
