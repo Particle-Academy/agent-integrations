@@ -158,7 +158,20 @@ For an end-to-end runnable, see the sandbox demo at `/whiteboard-agent` (added i
 
 ## External agent via relay
 
-The relay is host-implemented — this package only defines the JSON envelope. See `docs/relay-protocol.md`.
+External MCP agents (Claude Code, Cursor, Claude Desktop, custom clients)
+reach a browser-hosted `MicroMcpServer` via a relay broker. The relay just
+shuttles JSON-RPC frames — it doesn't run tools or hold state.
+
+**Three ways to wire one up:**
+
+- **`docs/agent-hookable-demos.md`** — full end-to-end workflow (browser →
+  relay → external agent), including a complete drop-in **Laravel 10+**
+  reference implementation (~200 LOC controller + routes + CSRF entry).
+- **`docs/relay-server.md`** — the bundled Node relay (`agent-integrations-relay`
+  bin, `createNodeRelay()` factory, Dockerfile). Use this when your site is
+  not a Laravel/Rails/PHP app and you want a one-command deploy.
+- **`docs/relay-protocol.md`** — the on-the-wire JSON envelope, with notes on
+  the three transports the protocol supports (Reverb, WebRTC, SSE+POST).
 
 Pattern (Reverb):
 
