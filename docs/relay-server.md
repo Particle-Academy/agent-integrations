@@ -75,12 +75,232 @@ docker build -t agent-integrations-relay .
 docker run -p 8787:8787 agent-integrations-relay
 ```
 
-Deploy targets that just want a container:
+## Deployment recipes
 
-- **Fly.io:** `fly launch --image agent-integrations-relay --internal-port 8787`
-- **Railway:** `railway up` after committing the Dockerfile
-- **Render:** point a Web Service at the Dockerfile, expose 8787
-- **Cloud Run:** `gcloud run deploy --image agent-integrations-relay --port 8787 --allow-unauthenticated`
+The relay is a tiny stateless Node HTTP server. Any platform that can host a
+long-running Node process works. Pick whichever matches the rest of your
+infrastructure — verification steps are at the bottom of each recipe.
+
+### Laravel Forge (Node site or daemon)
+
+Forge supports both Node sites and standalone daemons, either fits.
+
+**Option A — Forge "Static" site running Node:**
+
+1. In Forge, create a new site on your server. Set **Project Type** to
+   *Static / Node*. Web directory: `/public` (unused — we'll serve from the
+   relay port).
+2. Add a domain (e.g. `relay.particle.academy`) and an LE SSL cert.
+3. Connect the site to a deploy repo — point it at this package's git URL or
+   a thin wrapper repo containing just:
+   ```
+   .
+   ├── package.json   (just "scripts": { "start": "agent-integrations-relay --port 8787" }
+   │                   and "dependencies": { "@particle-academy/agent-integrations": "^0.6.1" })
+   └── README.md
+   ```
+4. Deploy script:
+   ```bash
+   cd $FORGE_SITE_PATH
+   npm install --omit=dev
+   ```
+5. In **Daemons** (sidebar), add:
+   - **Command:** `npx agent-integrations-relay --port 8787 --cors https://your-site.example`
+   - **Directory:** `$FORGE_SITE_PATH`
+   - **User:** `forge`
+   Daemon auto-restarts on crash.
+6. In the site's **Nginx config**, replace the upstream block with:
+   ```nginx
+   location / {
+       proxy_pass http://127.0.0.1:8787;
+       proxy_http_version 1.1;
+       proxy_set_header Host $host;
+       proxy_set_header X-Real-IP $remote_addr;
+
+       # SSE needs these — otherwise the stream is buffered and never reaches the agent.
+       proxy_buffering off;
+       proxy_cache off;
+       proxy_read_timeout 6h;
+       proxy_send_timeout 6h;
+       chunked_transfer_encoding on;
+   }
+   ```
+7. Restart Nginx via the Forge UI button or `sudo nginx -s reload`.
+
+**Option B — daemon alongside an existing Laravel app on the same server:**
+
+If you'd rather not give it its own subdomain, run it as a Forge daemon on
+an internal port and proxy from an existing site's Nginx config:
+
+```nginx
+# Inside an existing Forge Laravel site
+location /mcp-relay/ {
+    proxy_pass http://127.0.0.1:8787/;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_read_timeout 6h;
+    chunked_transfer_encoding on;
+}
+```
+
+**Verify:**
+
+```bash
+curl https://relay.particle.academy/                  # → {"ok":true,"service":"…"}
+curl -X POST -H 'content-type: application/json' \
+  -d '{"session":"smoke-001","token":"abcdef0123456789abcdef0123456789"}' \
+  https://relay.particle.academy/register             # → {"ok":true}
+```
+
+### Fly.io
+
+```bash
+git clone https://github.com/Particle-Academy/agent-integrations
+cd agent-integrations
+npm install && npm run build
+docker build -t agent-integrations-relay .
+
+# Init + deploy (first time only):
+fly launch \
+  --name relay-particle-academy \
+  --no-deploy \
+  --copy-config \
+  --image agent-integrations-relay \
+  --internal-port 8787 \
+  --region iad
+fly deploy
+```
+
+Public URL prints at the end, e.g. `https://relay-particle-academy.fly.dev`.
+
+### Railway
+
+```bash
+# Commit the Dockerfile to your relay repo, then:
+railway login
+railway init
+railway up
+```
+
+In the Railway dashboard, enable a public domain on the service; copy the
+generated `*.up.railway.app` URL.
+
+### Render
+
+1. New → **Web Service**
+2. Connect a git repo containing the Dockerfile
+3. Runtime: **Docker**
+4. Port: `8787`
+5. Add `Header: Cache-Control: no-cache` on the service so Render's CDN
+   doesn't buffer SSE
+
+### Google Cloud Run
+
+```bash
+gcloud builds submit --tag gcr.io/$PROJECT/agent-integrations-relay
+gcloud run deploy agent-integrations-relay \
+  --image gcr.io/$PROJECT/agent-integrations-relay \
+  --port 8787 \
+  --allow-unauthenticated \
+  --min-instances 1 \
+  --timeout 3600
+```
+
+Cloud Run's default request timeout is 60s — bump it via `--timeout 3600`
+(max 3600s on managed Cloud Run) so SSE streams aren't cut off. For longer
+sessions, use **Cloud Run for Anthos / GKE** or a Compute Engine VM.
+
+### Bare server (systemd)
+
+If the relay is going on a VM you already own, `systemd`:
+
+```ini
+# /etc/systemd/system/mcp-relay.service
+[Unit]
+Description=MCP relay broker
+After=network.target
+
+[Service]
+Type=simple
+User=relay
+WorkingDirectory=/opt/relay
+ExecStart=/usr/bin/npx agent-integrations-relay --port 8787 --cors https://your-site.example
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now mcp-relay
+sudo systemctl status mcp-relay
+```
+
+Front with Nginx using the same SSE-friendly proxy block as the Forge
+recipe.
+
+## Smoke testing any deploy
+
+After you have a public URL, regardless of host:
+
+```bash
+RELAY=https://relay.example.com
+
+# 1. Health
+curl $RELAY/
+
+# 2. Register a session
+curl -X POST -H 'content-type: application/json' \
+  -d '{"session":"smoke-001","token":"abcdef0123456789abcdef0123456789"}' \
+  $RELAY/register
+
+# 3. POST a frame
+curl -X POST -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  "$RELAY/smoke-001/inbox?token=abcdef0123456789abcdef0123456789"
+
+# 4. SSE stream — should hang open + emit keepalive comments every 15s
+curl -N "$RELAY/smoke-001/events?token=abcdef0123456789abcdef0123456789&direction=inbound"
+```
+
+If `curl -N` returns immediately, your proxy is buffering. Re-check
+`proxy_buffering off` (Nginx) or the equivalent on your edge.
+
+## Hooking into your demo site
+
+Set the relay base URL in your demo's environment. For a Laravel host (like
+particle.academy):
+
+```env
+# .env on the demo site
+MCP_RELAY_BASE_URL=https://relay.particle.academy
+```
+
+Bind it to a config and read it from your Livewire/Blade layer:
+
+```php
+// config/mcp.php
+return [
+    'relay_base_url' => env('MCP_RELAY_BASE_URL', ''),
+];
+```
+
+Then pass it to the React mount placeholder:
+
+```blade
+<div
+    data-fancy-demo="composer"
+    data-relay-base="{{ config('mcp.relay_base_url') }}"
+></div>
+```
+
+The React side reads `node.dataset.relayBase`, passes it to the demo
+component, and the component uses it for `attachSseRelay({ baseUrl: ... })`.
+See [agent-hookable-demos.md](./agent-hookable-demos.md) for the
+end-to-end pattern.
 
 ## Wire protocol
 
