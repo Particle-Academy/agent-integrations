@@ -93,6 +93,11 @@ export {
   type ScreensBridgeOptions,
   type ScreenSnapshot,
 } from "./bridges/screens";
+export {
+  registerSlidesBridge,
+  type SlidesBridgeAdapter,
+  type SlidesBridgeOptions,
+} from "./bridges/slides";
 
 // Components
 export { AgentPanel } from "./components/AgentPanel";

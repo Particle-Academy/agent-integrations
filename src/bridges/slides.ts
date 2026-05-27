@@ -1,4 +1,7 @@
-import type { Deck, DeckOp, Slide, SlideElement, Theme } from "@particle-academy/fancy-slides";
+// `Slide` is a React component in @particle-academy/fancy-slides; the slide
+// *data* type is exported as `SlideData`. Same naming convention applies to
+// other element data shapes.
+import type { Deck, DeckOp, SlideData, SlideElement, Theme } from "@particle-academy/fancy-slides";
 import { reduceDeck, slideId as newSlideId, elementId as newElementId } from "@particle-academy/fancy-slides";
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
@@ -89,22 +92,22 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         required: string[],
         handler: (args: JsonObject) => Promise<unknown> | unknown,
         isMutation: boolean,
-        resolveTarget?: () => AgentTarget,
+        resolveTarget?: (args: JsonObject) => AgentTarget,
     ) => {
-        const wrapped = async (args: JsonObject) => {
+        const wrapped = (async (args: JsonObject) => {
             try {
                 return await handler(args);
             } catch (e) {
                 return errorResult(e instanceof Error ? e.message : String(e));
             }
-        };
+        }) as never;
         const final = isMutation && resolveTarget
             ? wrapToolWithActivity(wrapped, {
                   toolName: name,
                   agent,
                   kind: "deck",
                   screenId: adapter.screenId,
-                  resolveTarget,
+                  resolveTarget: (ctx) => resolveTarget(ctx.args as JsonObject),
               })
             : wrapped;
         disposers.push(
@@ -222,7 +225,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             if (typeof t === "string") {
                 theme = { name: t };
             } else if (t && typeof t === "object" && "name" in (t as Record<string, unknown>)) {
-                theme = t as Theme;
+                theme = t as unknown as Theme;
             } else {
                 return errorResult("theme must be a string name or an object with a `name` field.");
             }
@@ -245,8 +248,8 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         [],
         (args) => {
             const deck = adapter.getDeck();
-            const incoming = (args.slide && typeof args.slide === "object" ? args.slide : {}) as Partial<Slide>;
-            const slide: Slide = {
+            const incoming = (args.slide && typeof args.slide === "object" ? args.slide : {}) as Partial<SlideData>;
+            const slide: SlideData = {
                 id: incoming.id ?? newSlideId(),
                 layout: incoming.layout ?? "blank",
                 elements: incoming.elements ?? [],
@@ -299,7 +302,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         ["id", "layout"],
         (args) => {
             const id = str(args.id);
-            const layout = str(args.layout) as Slide["layout"];
+            const layout = str(args.layout) as SlideData["layout"];
             adapter.apply({ kind: "slide_set_layout", id, layout: layout ?? "blank" });
             return textResult(`Slide ${id} layout → ${layout}`, { id, layout });
         },
@@ -332,7 +335,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         ["id"],
         (args) => {
             const id = str(args.id);
-            const bg = (args.background && typeof args.background === "object" ? args.background : undefined) as Slide["background"];
+            const bg = (args.background && typeof args.background === "object" ? args.background : undefined) as SlideData["background"];
             adapter.apply({ kind: "slide_set_background", id, background: bg });
             return textResult(`Background set on slide ${id}`, { id });
         },
@@ -445,6 +448,8 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
     );
 
     return {
+        id: "slides",
+        title: "Slides",
         dispose: () => {
             for (const d of disposers.splice(0)) d();
         },
@@ -465,7 +470,7 @@ function clamp(v: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, v));
 }
 
-function firstTextContent(slide: Slide): string | undefined {
+function firstTextContent(slide: SlideData): string | undefined {
     for (const e of slide.elements) {
         if (e.type === "text") {
             const t = (e as { content?: string }).content;

@@ -12,6 +12,7 @@ export default defineConfig({
     "bridges-charts": "src/bridges/charts.ts",
     "bridges-scene": "src/bridges/scene.ts",
     "bridges-screens": "src/bridges/screens.ts",
+    "bridges-slides": "src/bridges/slides.ts",
     "sheets-adapter": "src/sheets-adapter.ts",
     "components-shared-whiteboard": "src/components/SharedWhiteboard/index.ts",
     sharing: "src/sharing/index.ts",
@@ -34,6 +35,7 @@ export default defineConfig({
       "src/bridges/charts.ts",
       "src/bridges/scene.ts",
       "src/bridges/screens.ts",
+      "src/bridges/slides.ts",
       "src/sheets-adapter.ts",
       "src/components/SharedWhiteboard/index.ts",
       "src/sharing/index.ts",
@@ -50,6 +52,7 @@ export default defineConfig({
     "@particle-academy/fancy-whiteboard",
     "@particle-academy/fancy-flow",
     "@particle-academy/fancy-sheets",
+    "@particle-academy/fancy-slides",
   ],
   treeshake: true,
 });
