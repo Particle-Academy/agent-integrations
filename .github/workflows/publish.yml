@@ -21,7 +21,11 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Install
-        run: npm install
+        # --legacy-peer-deps: fancy-slides peers on react-fancy ^3.0 but
+        # this package doesn't directly depend on react-fancy, so strict
+        # peer resolution refuses to install. The actual runtime is fine
+        # since react-fancy IS a peer of consumers (the showcase, etc.).
+        run: npm install --legacy-peer-deps
 
       - name: Build
         run: npm run build
