@@ -1,7 +1,7 @@
 // `Slide` is a React component in @particle-academy/fancy-slides; the slide
 // *data* type is exported as `SlideData`. Same naming convention applies to
 // other element data shapes.
-import type { Deck, DeckOp, SlideData, SlideElement, Theme } from "@particle-academy/fancy-slides";
+import type { Deck, DeckOp, ElementAnimation, SlideData, SlideElement, Theme } from "@particle-academy/fancy-slides";
 import { reduceDeck, slideId as newSlideId, elementId as newElementId } from "@particle-academy/fancy-slides";
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
@@ -59,6 +59,7 @@ const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
  *   element_update             patch an element's fields
  *   element_move               set element x/y
  *   element_resize             set element w/h
+ *   element_set_animation      set/clear an element's entrance build (fade/fly-in/zoom/wipe)
  */
 export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOptions): Bridge {
     const { adapter } = options;
@@ -464,6 +465,29 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             const h = clamp(num(args.h, 0), 0, 1);
             adapter.apply({ kind: "element_resize", slideId, elementId, w, h });
             return textResult(`Resized element ${elementId} → (${w}, ${h})`, { w, h });
+        },
+        true,
+        (args) => elementTarget(str(args?.slideId), str(args?.elementId)),
+    );
+
+    reg(
+        "element_set_animation",
+        "Set or clear an element's entrance animation (build step).",
+        {
+            slideId: { type: "string" },
+            elementId: { type: "string" },
+            animation: {
+                description:
+                    "Animation `{ effect: 'fade'|'fly-in'|'zoom'|'wipe', trigger?: 'on-click'|'with-prev'|'after-prev', direction?: 'left'|'right'|'up'|'down', duration?: ms, delay?: ms, order?: number }` — pass null to clear.",
+            },
+        },
+        ["slideId", "elementId"],
+        (args) => {
+            const slideId = str(args.slideId);
+            const elementId = str(args.elementId);
+            const animation = (args.animation && typeof args.animation === "object" ? args.animation : undefined) as ElementAnimation | undefined;
+            adapter.apply({ kind: "element_set_animation", slideId, elementId, animation });
+            return textResult(`Animation ${animation ? "set on" : "cleared from"} element ${elementId}`, { elementId });
         },
         true,
         (args) => elementTarget(str(args?.slideId), str(args?.elementId)),
