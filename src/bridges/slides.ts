@@ -53,6 +53,7 @@ const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
  *   slide_set_layout           change layout preset
  *   slide_set_notes            update speaker notes
  *   slide_set_background       background color / image / gradient
+ *   slide_set_transition       entrance transition (fade / slide / zoom)
  *   element_add                insert an element onto a slide
  *   element_remove             delete an element
  *   element_update             patch an element's fields
@@ -338,6 +339,27 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             const bg = (args.background && typeof args.background === "object" ? args.background : undefined) as SlideData["background"];
             adapter.apply({ kind: "slide_set_background", id, background: bg });
             return textResult(`Background set on slide ${id}`, { id });
+        },
+        true,
+        (args) => slideTarget(str(args?.id)),
+    );
+
+    reg(
+        "slide_set_transition",
+        "Set or clear a slide's entrance transition.",
+        {
+            id: { type: "string" },
+            transition: {
+                description:
+                    "Transition object `{ kind: 'none'|'fade'|'slide'|'zoom', duration?: number(ms), direction?: 'left'|'right'|'up'|'down' }` — pass null to clear.",
+            },
+        },
+        ["id"],
+        (args) => {
+            const id = str(args.id);
+            const transition = (args.transition && typeof args.transition === "object" ? args.transition : undefined) as SlideData["transition"];
+            adapter.apply({ kind: "slide_set_transition", id, transition });
+            return textResult(`Transition set on slide ${id}`, { id });
         },
         true,
         (args) => slideTarget(str(args?.id)),
