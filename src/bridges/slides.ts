@@ -2,7 +2,7 @@
 // *data* type is exported as `SlideData`. Same naming convention applies to
 // other element data shapes.
 import type { Deck, DeckOp, ElementAnimation, SlideData, SlideElement, Theme } from "@particle-academy/fancy-slides";
-import { reduceDeck, slideId as newSlideId, elementId as newElementId } from "@particle-academy/fancy-slides";
+import { reduceDeck, parseDeck, slideId as newSlideId, elementId as newElementId } from "@particle-academy/fancy-slides";
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
 import type { JsonObject } from "../mcp/types";
@@ -43,6 +43,7 @@ const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
  *
  *   deck_describe              read-only deck summary
  *   deck_get                   full deck JSON
+ *   deck_set                   replace the whole deck (stream a presentation in)
  *   deck_set_title             rename
  *   deck_apply_theme           swap theme
  *   slide_list                 ordered list of slide ids + titles
@@ -233,6 +234,30 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             }
             adapter.apply({ kind: "deck_apply_theme", theme });
             return textResult(`Applied theme: ${theme.name}`, { theme });
+        },
+        true,
+        deckTarget,
+    );
+
+    reg(
+        "deck_set",
+        "Replace the entire deck atomically — stream a full presentation in. Pass a complete Deck object ({ id, title, theme, slides }). Validated + migrated before it lands; the prior deck is the undo snapshot.",
+        { deck: { description: "A complete Deck object." } },
+        ["deck"],
+        (args) => {
+            const incoming = args.deck;
+            if (!incoming || typeof incoming !== "object") {
+                return errorResult("deck must be a complete Deck object ({ id, title, theme, slides }).");
+            }
+            let deck: Deck;
+            try {
+                // parseDeck validates structure + migrates forward; throws on bad input.
+                deck = parseDeck(incoming as unknown);
+            } catch (e) {
+                return errorResult(e instanceof Error ? e.message : String(e));
+            }
+            adapter.apply({ kind: "deck_set", deck });
+            return textResult(`Loaded deck "${deck.title}" (${deck.slides.length} slides)`, { id: deck.id, slides: deck.slides.length });
         },
         true,
         deckTarget,
