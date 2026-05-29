@@ -41,6 +41,7 @@ export { MCP_PROTOCOL_VERSION } from "./mcp/types";
 // subpath imports instead:
 //
 //   import { registerWhiteboardBridge } from "@particle-academy/agent-integrations/bridges/whiteboard";
+//   import { registerArtboardBridge }   from "@particle-academy/agent-integrations/bridges/artboard";
 //   import { registerFlowBridge }       from "@particle-academy/agent-integrations/bridges/flow";
 //
 // The root barrel stays core-only: MCP, presence, undo, sharing, sheets,
