@@ -1,6 +1,6 @@
 {
   "name": "@particle-academy/agent-integrations",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "MCP-driven agent presence in collab sessions: per-session micro-MCP server, pluggable bridges to fancy-* packages, and agent UX components (panel + on-canvas cursor).",
   "repository": {
     "type": "git",
@@ -263,5 +263,8 @@
   "license": "MIT",
   "sideEffects": [
     "**/*.css"
-  ]
+  ],
+  "dependencies": {
+    "@particle-academy/fancy-auto-common": "^0.1.0"
+  }
 }
