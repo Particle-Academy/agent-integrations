@@ -1,5 +1,7 @@
 # @particle-academy/agent-integrations
 
+[![Fancified](art/fancified.svg)](https://particle.academy)
+
 MCP-driven agent presence in collab sessions. Each open session gets a **micro-MCP server** running in-page; agents (in-browser or external via relay) connect to it and act as participants — adding sticky notes, drawing, moving items, leaving cursor trails.
 
 Also ships the **agent UX surface**: a chat-and-tool-log panel, an on-canvas presence cursor, and a brief activity highlight for items the agent just touched.
