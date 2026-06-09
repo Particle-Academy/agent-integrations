@@ -175,6 +175,12 @@ shuttles JSON-RPC frames — it doesn't run tools or hold state.
 - **`docs/relay-protocol.md`** — the on-the-wire JSON envelope, with notes on
   the three transports the protocol supports (Reverb, WebRTC, SSE+POST).
 
+The agent at the far end needs an MCP client. Beyond pasting the session URL
+into an existing one (Claude Code, Cursor, …), there's
+**[`mcp-relay-client`](https://github.com/Particle-Academy/mcp-relay-client)** —
+a single-file, zero-dependency client (bash / Python / TS / Go) built for these
+relay sessions: `curl -O …/connect.sh && bash connect.sh "<session-url>" tools`.
+
 Pattern (Reverb):
 
 ```ts

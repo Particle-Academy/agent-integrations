@@ -41,7 +41,10 @@ Three pieces. You write zero of them yourself if you follow this guide:
    complete Laravel controller).
 
 3. **The agent's client.** Out of your control — visitors paste your session
-   URL into whatever MCP client they already use.
+   URL into whatever MCP client they already use. If they don't have one, point
+   them at [`mcp-relay-client`](https://github.com/Particle-Academy/mcp-relay-client):
+   a single-file, zero-dependency client (bash / Python / TS / Go) they download
+   and aim at the session URL.
 
 ## End-user UX
 
@@ -54,7 +57,9 @@ This is what visitors actually experience. Every demo follows the same shape:
 4. The page mints a per-session token, registers it with the relay, and shows
    a copyable share URL.
 5. Visitor pastes the URL into their MCP client (`.mcp.json` for Claude Code,
-   Cursor's MCP settings, etc.). The client connects to the relay.
+   Cursor's MCP settings, etc.), or downloads
+   [`mcp-relay-client`](https://github.com/Particle-Academy/mcp-relay-client)
+   and aims it at the URL. The client connects to the relay.
 6. Agent calls tools → tools mutate the host page's React state → visitor
    watches the surface change in real time. Optional: agent cursor + tool-call
    feed render alongside.

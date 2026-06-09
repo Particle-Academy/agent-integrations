@@ -18,6 +18,27 @@ across restarts.
   Code → the relay is hosted somewhere reachable from both the browser and the
   agent's machine.
 
+## Connecting a client to a session
+
+This doc covers running the **broker**. The agent connects from the other end
+with an MCP **client** pointed at a session URL. Two options:
+
+- **A generic MCP client you already have** — paste the session URL into Claude
+  Code's `.mcp.json`, Cursor's MCP settings, Claude Desktop, etc.
+- **[`mcp-relay-client`](https://github.com/Particle-Academy/mcp-relay-client)** —
+  a super-lite, **single-file, zero-dependency** client in bash / Python / TS /
+  Go, purpose-built for these relay sessions. Grab the one you have a runtime for
+  and point it at the session URL:
+
+  ```bash
+  curl -O https://raw.githubusercontent.com/Particle-Academy/mcp-relay-client/main/connect.sh
+  bash connect.sh "https://host/agent-playground?session=ABC&token=XYZ" tools
+  bash connect.sh "<session-url>" call whiteboard_add_sticky '{"x":300,"y":200,"text":"hi"}'
+  ```
+
+  It derives the relay endpoints, session id, and token from the URL and runs the
+  full `initialize` → `tools/list` → `tools/call` handshake for you.
+
 ## Three ways to run it
 
 ### 1. `npx` — local dev / one-off prod
