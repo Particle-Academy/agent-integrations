@@ -99,6 +99,12 @@ export {
   type SlidesBridgeAdapter,
   type SlidesBridgeOptions,
 } from "./bridges/slides";
+export {
+  registerTerminalBridge,
+  type TerminalBridgeAdapter,
+  type TerminalBridgeOptions,
+  type TerminalBridge,
+} from "./bridges/terminal";
 
 // Components
 export { AgentPanel } from "./components/AgentPanel";
