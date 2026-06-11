@@ -104,6 +104,7 @@ export {
   type TerminalBridgeAdapter,
   type TerminalBridgeOptions,
   type TerminalBridge,
+  type TerminalShell,
 } from "./bridges/terminal";
 
 // Components

@@ -7,6 +7,12 @@ import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 import type { AgentTarget } from "../presence/types";
 
 /**
+ * A shell/profile an agent can switch the terminal to. Mirrors fancy-term's
+ * `ShellProfile` (kept local so the bridge never imports fancy-term).
+ */
+export type TerminalShell = { id: string; label: string; icon?: string };
+
+/**
  * Host-provided window into a terminal surface (e.g. a fancy-term `<Terminal>`'s
  * `TerminalHandle`). The bridge never touches the DOM — it reads + writes through
  * these functions, so it works with any terminal the host wires up.
@@ -22,6 +28,12 @@ export type TerminalBridgeAdapter = {
   runCommand?: (command: string) => void | Promise<void>;
   /** Optional: clear the terminal viewport (wire to `TerminalHandle.clear`). */
   clear?: () => void;
+  /** Optional: the shells the host offers (cmd, powershell, git-bash, …). Enables `terminal_list_shells`. */
+  listShells?: () => TerminalShell[];
+  /** Optional: switch the active shell by id (wire to `TerminalHandle.setShell` + a host backend reconnect). Enables `terminal_set_shell`. */
+  setShell?: (id: string) => void | Promise<void>;
+  /** Optional: the currently active shell id (wire to `TerminalHandle.getShell`). */
+  getShell?: () => string | undefined;
 };
 
 type StagedKind = "write" | "run";
@@ -60,7 +72,9 @@ const truncate = (s: string, n = 60): string => (s.length > n ? s.slice(0, n) + 
  * commands (`terminal_run`) through the host adapter; every mutation broadcasts
  * an `AgentActivity` event. With `pendingMode`, destructive actions are staged
  * for human confirmation (`terminal_confirm` / `terminal_reject` /
- * `terminal_pending`). Tool prefix `terminal_*`.
+ * `terminal_pending`). When the adapter offers shells, the agent can also list
+ * (`terminal_list_shells`) and switch (`terminal_set_shell`) the active shell —
+ * cmd, PowerShell, Git Bash, etc. Tool prefix `terminal_*`.
  */
 export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOptions): TerminalBridge {
   const { adapter } = options;
@@ -231,6 +245,45 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
         return textResult("cleared");
       },
       true,
+    );
+  }
+
+  // ── Shells ──────────────────────────────────────────────────────────────────
+  if (adapter.listShells) {
+    reg(
+      "terminal_list_shells",
+      "List the shells the host can switch to (cmd, PowerShell, Git Bash, …) — id + label, with the active one marked.",
+      {},
+      [],
+      () => {
+        const shells = adapter.listShells!();
+        const active = adapter.getShell?.();
+        const text = shells.length
+          ? shells.map((s) => `${s.id === active ? "* " : "  "}${s.id} — ${s.label}`).join("\n")
+          : "(none)";
+        return textResult(text, { shells, active });
+      },
+      false,
+    );
+  }
+
+  if (adapter.setShell) {
+    reg(
+      "terminal_set_shell",
+      "Switch the active shell by id (e.g. 'powershell', 'git-bash'). Call terminal_list_shells first for valid ids. The host reconnects its backend to the chosen shell.",
+      { id: { type: "string", description: "Shell id to switch to." } },
+      ["id"],
+      async (args) => {
+        const id = String(args.id);
+        const shells = adapter.listShells?.();
+        if (shells && shells.length && !shells.some((s) => s.id === id)) {
+          return errorResult(`Unknown shell '${id}'. Use terminal_list_shells for valid ids.`);
+        }
+        await adapter.setShell!(id);
+        return textResult(`Switched shell to ${id}`, { shell: id });
+      },
+      true,
+      (args) => target(`shell:${String(args.id ?? "")}`),
     );
   }
 
