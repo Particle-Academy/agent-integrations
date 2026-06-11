@@ -30,10 +30,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      # First publish needs NPM_TOKEN bootstrap (see root CLAUDE.md
-      # "Bootstrapping a brand-new package"). Once Trusted Publisher is
-      # configured on npmjs, remove the env line — OIDC takes over.
+      # Trusted Publishing (OIDC) — no token. Trusted Publisher configured on
+      # npmjs.com; the bootstrap NPM_TOKEN has been revoked.
       - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npx -y npm@latest publish --provenance --access public
