@@ -7,40 +7,67 @@ import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 import type { AgentTarget } from "../presence/types";
 
 /**
- * A shell/profile an agent can switch the terminal to. Mirrors fancy-term's
+ * A shell/profile an agent can switch a terminal to. Mirrors fancy-term's
  * `ShellProfile` (kept local so the bridge never imports fancy-term).
  */
 export type TerminalShell = { id: string; label: string; icon?: string };
 
 /**
- * Host-provided window into a terminal surface (e.g. a fancy-term `<Terminal>`'s
- * `TerminalHandle`). The bridge never touches the DOM — it reads + writes through
- * these functions, so it works with any terminal the host wires up.
+ * One terminal the bridge can drive. A Human+ app often hosts **several**
+ * terminals on a screen (a build pane, a server pane, an agent scratch shell);
+ * each is a `TerminalRef` with a stable `id` so an agent can read/write any of
+ * them — not just "its own". Wire the function fields to that terminal's
+ * fancy-term `TerminalHandle`.
  */
-export type TerminalBridgeAdapter = {
-  /** fancy-screens screen id (optional) so activity events know which screen the terminal lives in. */
-  screenId?: string;
-  /** Read the visible terminal buffer as text (wire to `TerminalHandle.getBuffer`). */
+export type TerminalRef = {
+  /** Stable id used to address this terminal (`terminal_list` enumerates them). */
+  id: string;
+  /** Human label, e.g. "Build", "Server". Defaults to the id. */
+  label?: string;
+  /** True for the focused terminal — the default target when no id is passed. */
+  active?: boolean;
+  /** Read the visible buffer as text (wire to `TerminalHandle.getBuffer`). */
   getBuffer: () => string;
-  /** Write raw data / keystrokes to the terminal (wire to `TerminalHandle.write`). */
+  /** Write raw data / keystrokes (wire to `TerminalHandle.write`). */
   write: (data: string) => void;
-  /** Run a command. Defaults to writing `${command}\r` (submit to a PTY); override to call a real command runner. */
+  /** Run a command. Defaults to writing `${command}\r`; override for a real runner. */
   runCommand?: (command: string) => void | Promise<void>;
-  /** Optional: clear the terminal viewport (wire to `TerminalHandle.clear`). */
+  /** Clear the viewport (wire to `TerminalHandle.clear`). */
   clear?: () => void;
-  /** Optional: the shells the host offers (cmd, powershell, git-bash, …). Enables `terminal_list_shells`. */
+  /** Current text selection (wire to `TerminalHandle.getSelection`). */
+  getSelection?: () => string;
+  /** Shells this terminal offers (cmd, PowerShell, …). */
   listShells?: () => TerminalShell[];
-  /** Optional: switch the active shell by id (wire to `TerminalHandle.setShell` + a host backend reconnect). Enables `terminal_set_shell`. */
+  /** Switch this terminal's active shell by id. */
   setShell?: (id: string) => void | Promise<void>;
-  /** Optional: the currently active shell id (wire to `TerminalHandle.getShell`). */
+  /** This terminal's active shell id. */
   getShell?: () => string | undefined;
 };
 
+/**
+ * Single-terminal adapter (back-compat). A `TerminalRef` without the
+ * `id`/`label`/`active` bookkeeping — pass it as `{ adapter }` and the bridge
+ * treats it as the one (active) terminal. Use `{ terminals }` for multiple.
+ */
+export type TerminalBridgeAdapter = Omit<TerminalRef, "id" | "label" | "active"> & {
+  /** fancy-screens screen id (optional) so activity events know which screen the terminal lives in. */
+  screenId?: string;
+};
+
 type StagedKind = "write" | "run";
-type Staged = { id: string; kind: StagedKind; data: string };
+type Staged = { id: string; kind: StagedKind; data: string; terminalId: string };
 
 export type TerminalBridgeOptions = {
-  adapter: TerminalBridgeAdapter;
+  /** A single terminal (back-compat). Mutually exclusive with `terminals`. */
+  adapter?: TerminalBridgeAdapter;
+  /**
+   * The live list of terminals on the screen. Use this when the app hosts more
+   * than one terminal so an agent can `terminal_list` then target any of them by
+   * id — i.e. reach into another terminal in the same screen.
+   */
+  terminals?: () => TerminalRef[];
+  /** fancy-screens screen id for activity events (defaults to `adapter.screenId`). */
+  screenId?: string;
   agent?: { id: string; name?: string; color?: string };
   /**
    * Trust-but-verify (Human+ contract for inhabited surfaces). When on,
@@ -67,19 +94,24 @@ const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
 const truncate = (s: string, n = 60): string => (s.length > n ? s.slice(0, n) + "…" : s);
 
 /**
- * registerTerminalBridge — MCP access to a terminal surface. An agent reads the
- * visible buffer (`terminal_read`), writes input (`terminal_write`), and runs
- * commands (`terminal_run`) through the host adapter; every mutation broadcasts
- * an `AgentActivity` event. With `pendingMode`, destructive actions are staged
- * for human confirmation (`terminal_confirm` / `terminal_reject` /
- * `terminal_pending`). When the adapter offers shells, the agent can also list
- * (`terminal_list_shells`) and switch (`terminal_set_shell`) the active shell —
- * cmd, PowerShell, Git Bash, etc. Tool prefix `terminal_*`.
+ * registerTerminalBridge — MCP access to one **or many** terminal surfaces on a
+ * screen. An agent reads the visible buffer (`terminal_read`), writes input
+ * (`terminal_write`), and runs commands (`terminal_run`) through the host; every
+ * mutation broadcasts an `AgentActivity` event. With `pendingMode`, destructive
+ * actions are staged for human confirmation (`terminal_confirm` / `terminal_reject`
+ * / `terminal_pending`).
+ *
+ * **Multi-terminal:** pass `{ terminals }` (vs a single `{ adapter }`) and every
+ * tool takes an optional `terminal` id; `terminal_list` enumerates them. This is
+ * how an agent **reaches into another terminal in the same screen** rather than
+ * being stuck in one. When a terminal offers shells, the agent can also list
+ * (`terminal_list_shells`) and switch (`terminal_set_shell`) its shell. Tool
+ * prefix `terminal_*`.
  */
 export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOptions): TerminalBridge {
-  const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const pendingMode = options.pendingMode ?? false;
+  const screenId = options.screenId ?? options.adapter?.screenId;
   const disposers: Array<() => void> = [];
   const staged = new Map<string, Staged>();
   let seq = 0;
@@ -87,12 +119,41 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
   // Enables agent_history (a log of what agents did across every bridge).
   ensureUndoToolsRegistered(host);
 
-  const target = (label?: string): AgentTarget => ({
+  // The live terminal list — from `terminals()` (multi) or the single `adapter`
+  // normalized to one active ref with the id "terminal".
+  const listTerminals = (): TerminalRef[] => {
+    if (options.terminals) return options.terminals();
+    if (options.adapter) return [{ id: "terminal", label: "Terminal", active: true, ...options.adapter }];
+    return [];
+  };
+
+  /** Resolve a terminal by id; with no id, the active one, else the first. */
+  const resolve = (id?: unknown): TerminalRef | undefined => {
+    const list = listTerminals();
+    if (typeof id === "string" && id !== "") return list.find((t) => t.id === id);
+    return list.find((t) => t.active) ?? list[0];
+  };
+
+  // Whether any host config can offer these capabilities (gates tool registration;
+  // per-call we still check the *resolved* terminal supports it).
+  const anyMulti = !!options.terminals;
+  const canClear = anyMulti || !!options.adapter?.clear;
+  const canShells = anyMulti || !!options.adapter?.listShells;
+  const canSetShell = anyMulti || !!options.adapter?.setShell;
+
+  const target = (label?: string, terminalId?: string): AgentTarget => ({
     kind: "terminal",
-    screenId: adapter.screenId,
-    elementId: adapter.screenId ?? "terminal",
+    screenId,
+    elementId: terminalId ?? screenId ?? "terminal",
     label: label ?? "terminal",
   });
+
+  const TERMINAL_ARG = {
+    terminal: {
+      type: "string",
+      description: "Terminal id to target (call terminal_list for ids). Omit for the active / only terminal.",
+    },
+  };
 
   const reg = (
     name: string,
@@ -115,7 +176,7 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
           toolName: name,
           agent,
           kind: "terminal",
-          screenId: adapter.screenId,
+          screenId,
           resolveTarget: ({ args, result }) => resolveTarget?.(args, result) ?? target(),
         })
       : wrapped;
@@ -131,41 +192,77 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
     );
   };
 
-  async function exec(kind: StagedKind, data: string): Promise<void> {
+  /** Resolve the targeted terminal or throw a clear error for the agent. */
+  const need = (args: JsonObject): TerminalRef => {
+    const t = resolve(args.terminal);
+    if (!t) {
+      const ids = listTerminals().map((x) => x.id).join(", ") || "(none)";
+      throw new Error(
+        typeof args.terminal === "string" && args.terminal
+          ? `Unknown terminal '${args.terminal}'. Available: ${ids}. Use terminal_list.`
+          : "No terminal available.",
+      );
+    }
+    return t;
+  };
+
+  async function exec(t: TerminalRef, kind: StagedKind, data: string): Promise<void> {
     if (kind === "run") {
-      if (adapter.runCommand) await adapter.runCommand(data);
-      else adapter.write(data + "\r");
+      if (t.runCommand) await t.runCommand(data);
+      else t.write(data + "\r");
     } else {
-      adapter.write(data);
+      t.write(data);
     }
   }
 
-  async function stageOrExec(kind: StagedKind, data: string) {
+  async function stageOrExec(t: TerminalRef, kind: StagedKind, data: string) {
     if (!pendingMode) {
-      await exec(kind, data);
-      return textResult(`${kind === "run" ? "ran" : "wrote"}: ${truncate(data)}`, { kind, data, executed: true });
+      await exec(t, kind, data);
+      return textResult(`${kind === "run" ? "ran" : "wrote"} on ${t.id}: ${truncate(data)}`, {
+        kind,
+        data,
+        terminal: t.id,
+        executed: true,
+      });
     }
     const id = `t${++seq}`;
-    const entry: Staged = { id, kind, data };
+    const entry: Staged = { id, kind, data, terminalId: t.id };
     staged.set(id, entry);
     options.onPending?.(entry);
     return textResult(
-      `Staged ${kind} (id ${id}) — awaiting human confirmation: ${truncate(data)}`,
+      `Staged ${kind} on ${t.id} (id ${id}) — awaiting human confirmation: ${truncate(data)}`,
       { ...entry, pending: true },
     );
   }
 
+  // ── List ──────────────────────────────────────────────────────────────────
+  reg(
+    "terminal_list",
+    "List the terminals on this screen (id, label, which is active) — so you can reach into another terminal, not just the active one. Pass the chosen id as `terminal` to the other tools.",
+    {},
+    [],
+    () => {
+      const list = listTerminals().map((t) => ({ id: t.id, label: t.label ?? t.id, active: !!t.active }));
+      const text = list.length
+        ? list.map((t) => `${t.active ? "* " : "  "}${t.id} — ${t.label}`).join("\n")
+        : "(no terminals)";
+      return textResult(text, { terminals: list });
+    },
+    false,
+  );
+
   // ── Read ──────────────────────────────────────────────────────────────────
   reg(
     "terminal_read",
-    "Read the visible terminal buffer as text — what the user sees. Pass `tail` for only the last N lines.",
-    { tail: { type: "number", description: "Return only the last N lines." } },
+    "Read a terminal's visible buffer as text — what the user sees. Pass `tail` for only the last N lines, `terminal` to read a specific one.",
+    { ...TERMINAL_ARG, tail: { type: "number", description: "Return only the last N lines." } },
     [],
     (args) => {
-      let buf = adapter.getBuffer();
+      const t = need(args);
+      let buf = t.getBuffer();
       const tail = typeof args.tail === "number" ? args.tail : undefined;
       if (tail && tail > 0) buf = buf.split("\n").slice(-tail).join("\n");
-      return textResult(buf, { buffer: buf });
+      return textResult(buf, { buffer: buf, terminal: t.id });
     },
     false,
   );
@@ -178,7 +275,7 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
     () => {
       const list = [...staged.values()];
       return textResult(
-        list.length ? list.map((s) => `${s.id}: ${s.kind} ${truncate(s.data)}`).join("\n") : "(none)",
+        list.length ? list.map((s) => `${s.id}: ${s.kind} on ${s.terminalId} ${truncate(s.data)}`).join("\n") : "(none)",
         { pending: list },
       );
     },
@@ -188,21 +285,22 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
   // ── Mutations ───────────────────────────────────────────────────────────────
   reg(
     "terminal_write",
-    "Write raw data / keystrokes to the terminal (input, control chars, ANSI). In pendingMode this stages instead of executing.",
-    { data: { type: "string", description: "Raw bytes to write." } },
+    "Write raw data / keystrokes to a terminal (input, control chars, ANSI). Pass `terminal` to target a specific one. In pendingMode this stages instead of executing.",
+    { ...TERMINAL_ARG, data: { type: "string", description: "Raw bytes to write." } },
     ["data"],
-    (args) => stageOrExec("write", String(args.data)),
+    (args) => stageOrExec(need(args), "write", String(args.data)),
     true,
+    (args) => target(`write:${String(args.terminal ?? "")}`, resolve(args.terminal)?.id),
   );
 
   reg(
     "terminal_run",
-    "Run a shell command — writes the command followed by Enter (or the host's command runner). In pendingMode this stages it for confirmation.",
-    { command: { type: "string", description: "The command line to run." } },
+    "Run a shell command in a terminal — writes the command + Enter (or the host's runner). Pass `terminal` to target a specific one. In pendingMode this stages it for confirmation.",
+    { ...TERMINAL_ARG, command: { type: "string", description: "The command line to run." } },
     ["command"],
-    (args) => stageOrExec("run", String(args.command)),
+    (args) => stageOrExec(need(args), "run", String(args.command)),
     true,
-    (args) => target(truncate(String(args.command ?? ""))),
+    (args) => target(truncate(String(args.command ?? "")), resolve(args.terminal)?.id),
   );
 
   reg(
@@ -214,11 +312,17 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
       const id = String(args.id);
       const entry = staged.get(id);
       if (!entry) return errorResult(`No staged command ${id}`);
+      const t = resolve(entry.terminalId);
+      if (!t) return errorResult(`Terminal '${entry.terminalId}' is gone — cannot run ${id}`);
       staged.delete(id);
-      await exec(entry.kind, entry.data);
-      return textResult(`Confirmed ${id}: ${entry.kind} ${truncate(entry.data)}`, { ...entry, executed: true });
+      await exec(t, entry.kind, entry.data);
+      return textResult(`Confirmed ${id}: ${entry.kind} on ${t.id} ${truncate(entry.data)}`, { ...entry, executed: true });
     },
     true,
+    (args) => {
+      const e = staged.get(String(args.id));
+      return target(`confirm:${String(args.id ?? "")}`, e?.terminalId);
+    },
   );
 
   reg(
@@ -234,56 +338,63 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
     false,
   );
 
-  if (adapter.clear) {
+  if (canClear) {
     reg(
       "terminal_clear",
-      "Clear the terminal viewport.",
-      {},
+      "Clear a terminal's viewport. Pass `terminal` to target a specific one.",
+      { ...TERMINAL_ARG },
       [],
-      () => {
-        adapter.clear!();
-        return textResult("cleared");
+      (args) => {
+        const t = need(args);
+        if (!t.clear) return errorResult(`Terminal '${t.id}' can't be cleared.`);
+        t.clear();
+        return textResult(`cleared ${t.id}`, { terminal: t.id });
       },
       true,
+      (args) => target(`clear:${String(args.terminal ?? "")}`, resolve(args.terminal)?.id),
     );
   }
 
   // ── Shells ──────────────────────────────────────────────────────────────────
-  if (adapter.listShells) {
+  if (canShells) {
     reg(
       "terminal_list_shells",
-      "List the shells the host can switch to (cmd, PowerShell, Git Bash, …) — id + label, with the active one marked.",
-      {},
+      "List the shells a terminal can switch to (cmd, PowerShell, Git Bash, …) — id + label, active one marked. Pass `terminal` to target a specific one.",
+      { ...TERMINAL_ARG },
       [],
-      () => {
-        const shells = adapter.listShells!();
-        const active = adapter.getShell?.();
+      (args) => {
+        const t = need(args);
+        if (!t.listShells) return errorResult(`Terminal '${t.id}' has no switchable shells.`);
+        const shells = t.listShells();
+        const active = t.getShell?.();
         const text = shells.length
           ? shells.map((s) => `${s.id === active ? "* " : "  "}${s.id} — ${s.label}`).join("\n")
           : "(none)";
-        return textResult(text, { shells, active });
+        return textResult(text, { shells, active, terminal: t.id });
       },
       false,
     );
   }
 
-  if (adapter.setShell) {
+  if (canSetShell) {
     reg(
       "terminal_set_shell",
-      "Switch the active shell by id (e.g. 'powershell', 'git-bash'). Call terminal_list_shells first for valid ids. The host reconnects its backend to the chosen shell.",
-      { id: { type: "string", description: "Shell id to switch to." } },
+      "Switch a terminal's active shell by id (e.g. 'powershell', 'git-bash'). Call terminal_list_shells first for valid ids. Pass `terminal` to target a specific one.",
+      { ...TERMINAL_ARG, id: { type: "string", description: "Shell id to switch to." } },
       ["id"],
       async (args) => {
+        const t = need(args);
+        if (!t.setShell) return errorResult(`Terminal '${t.id}' can't switch shells.`);
         const id = String(args.id);
-        const shells = adapter.listShells?.();
+        const shells = t.listShells?.();
         if (shells && shells.length && !shells.some((s) => s.id === id)) {
-          return errorResult(`Unknown shell '${id}'. Use terminal_list_shells for valid ids.`);
+          return errorResult(`Unknown shell '${id}' for ${t.id}. Use terminal_list_shells for valid ids.`);
         }
-        await adapter.setShell!(id);
-        return textResult(`Switched shell to ${id}`, { shell: id });
+        await t.setShell(id);
+        return textResult(`Switched ${t.id} shell to ${id}`, { shell: id, terminal: t.id });
       },
       true,
-      (args) => target(`shell:${String(args.id ?? "")}`),
+      (args) => target(`shell:${String(args.id ?? "")}`, resolve(args.terminal)?.id),
     );
   }
 
@@ -298,8 +409,9 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
     confirm: (id: string) => {
       const e = staged.get(id);
       if (e) {
+        const t = resolve(e.terminalId);
         staged.delete(id);
-        void exec(e.kind, e.data);
+        if (t) void exec(t, e.kind, e.data);
       }
     },
     reject: (id: string) => {

@@ -101,6 +101,7 @@ export {
 } from "./bridges/slides";
 export {
   registerTerminalBridge,
+  type TerminalRef,
   type TerminalBridgeAdapter,
   type TerminalBridgeOptions,
   type TerminalBridge,
