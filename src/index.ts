@@ -174,3 +174,39 @@ export {
   type SseRelayOptions,
   type RelayState,
 } from "./sharing";
+
+// Connector builder — per-client MCP "install" affordances for a remote server.
+// Pure builders + the <ConnectorButtons> component (no optional peers, so safe
+// in the root barrel). The Node-only `.mcpb` pack helper lives at the subpath
+// `@particle-academy/agent-integrations/connectors/build`.
+export {
+  ConnectorButtons,
+  CLAUDE_CONNECTORS_URL,
+  CONNECTOR_TARGETS,
+  CONNECTOR_GLYPHS,
+  buildCursorDeeplink,
+  buildVscodeDeeplink,
+  buildManualConfig,
+  buildManualConfigSnippet,
+  slugifyServerName,
+  encodeBase64Json,
+  connectorHref,
+  buildMcpbManifest,
+  buildMcpbProxyStub,
+  MCPB_MANIFEST_VERSION,
+  MCPB_MIN_NODE,
+  DEFAULT_MCPB_ENTRY_POINT,
+  ClaudeMark,
+  CursorMark,
+  VscodeMark,
+  DesktopMark,
+  WrenchMark,
+  type ConnectorButtonsProps,
+  type ConnectorClient,
+  type ConnectorServer,
+  type ConnectorMechanism,
+  type ConnectorTargetMeta,
+  type ManualMcpConfig,
+  type McpbManifestInput,
+  type McpbTool,
+} from "./connectors";

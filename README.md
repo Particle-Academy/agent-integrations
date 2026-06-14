@@ -83,6 +83,26 @@ await host.callTool("sheet_set_cell", { address: "B3", value: 42 });
 
 Need both? `MicroMcpServer` extends `ToolRegistry`, so the same instance serves direct in-process calls **and** SSE-relayed remote agents at the same time. Bridges accept either — every `register*Bridge(host, …)` signature takes a `ToolHost`.
 
+## Connect an agent to your app — `<ConnectorButtons>`
+
+The step *before* presence: getting your MCP server installed in the user's
+agent. `<ConnectorButtons>` renders the right "Add to Claude / Cursor / VS Code"
+affordance per client (each subtly different), and `writeMcpbBundle()` builds the
+Claude Desktop `.mcpb`:
+
+```tsx
+import { ConnectorButtons } from "@particle-academy/agent-integrations";
+import "@particle-academy/agent-integrations/styles.css";
+
+<ConnectorButtons serverName="Decksmith" mcpUrl="https://decksmith.dev/mcp" mcpbDownloadUrl="/decksmith.mcpb" />
+```
+
+```ts
+import { writeMcpbBundle } from "@particle-academy/agent-integrations/connectors/build"; // Node, build-time
+```
+
+Full guide + the per-client format gotchas: [`docs/connectors.md`](./docs/connectors.md).
+
 ## Architecture
 
 ```

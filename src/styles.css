@@ -170,3 +170,70 @@
   0%, 100% { opacity: 0.4; }
   50%      { opacity: 1; }
 }
+
+/* ── Connector buttons (ConnectorButtons) ─────────────────────────────────── */
+.fai-connect {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+.fai-connect__btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid transparent; border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px; font-weight: 500; line-height: 1;
+  text-decoration: none; cursor: pointer;
+  color: #fff; background: #18181b;
+  transition: background 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
+}
+.fai-connect__btn:hover { opacity: 0.92; }
+.fai-connect__btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.fai-connect__glyph { width: 14px; height: 14px; flex: 0 0 auto; }
+.fai-connect__btn--claude-web    { background: #cc785c; }
+.fai-connect__btn--claude-desktop{ background: #cc785c; }
+.fai-connect__btn--cursor        { background: #111827; }
+.fai-connect__btn--vscode        { background: #0066b8; }
+.fai-connect__btn--manual        { background: #3f3f46; }
+
+.fai-connect__manual-wrap { position: relative; display: inline-flex; }
+.fai-connect__popover {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 50;
+  width: min(420px, 80vw);
+  background: #fff; color: #18181b;
+  border: 1px solid #e4e4e7; border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  padding: 12px;
+}
+.fai-connect__popover-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; font-weight: 600; margin-bottom: 6px;
+}
+.fai-connect__popover-close {
+  border: none; background: transparent; cursor: pointer;
+  font-size: 16px; line-height: 1; color: #71717a; padding: 0 4px;
+}
+.fai-connect__popover-hint { font-size: 11px; color: #52525b; margin: 0 0 8px; }
+.fai-connect__popover-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #f4f4f5; padding: 1px 4px; border-radius: 4px;
+}
+.fai-connect__snippet {
+  margin: 0 0 8px; max-height: 220px; overflow: auto;
+  background: #18181b; color: #e4e4e7;
+  border-radius: 8px; padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; line-height: 1.5; white-space: pre;
+}
+.fai-connect__copy-btn {
+  border: 1px solid #e4e4e7; border-radius: 7px;
+  background: #fafafa; color: #18181b; cursor: pointer;
+  font-size: 11px; font-weight: 500; padding: 5px 10px;
+}
+.fai-connect__copy-btn:hover { background: #f4f4f5; }
+
+@media (prefers-color-scheme: dark) {
+  .fai-connect__popover { background: #18181b; color: #fafafa; border-color: #3f3f46; }
+  .fai-connect__popover-hint { color: #a1a1aa; }
+  .fai-connect__popover-hint code { background: #27272a; }
+  .fai-connect__copy-btn { background: #27272a; color: #fafafa; border-color: #3f3f46; }
+  .fai-connect__copy-btn:hover { background: #3f3f46; }
+}

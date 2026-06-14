@@ -1,6 +1,6 @@
 {
   "name": "@particle-academy/agent-integrations",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "MCP-driven agent presence in collab sessions: per-session micro-MCP server, pluggable bridges to fancy-* packages, and agent UX components (panel + on-canvas cursor).",
   "repository": {
     "type": "git",
@@ -157,6 +157,26 @@
         "default": "./dist/sheets-adapter.cjs"
       }
     },
+    "./connectors": {
+      "import": {
+        "types": "./dist/connectors/index.d.ts",
+        "default": "./dist/connectors.js"
+      },
+      "require": {
+        "types": "./dist/connectors/index.d.cts",
+        "default": "./dist/connectors.cjs"
+      }
+    },
+    "./connectors/build": {
+      "import": {
+        "types": "./dist/connectors/build.d.ts",
+        "default": "./dist/connectors-build.js"
+      },
+      "require": {
+        "types": "./dist/connectors/build.d.cts",
+        "default": "./dist/connectors-build.cjs"
+      }
+    },
     "./components/shared-whiteboard": {
       "import": {
         "types": "./dist/components/SharedWhiteboard/index.d.ts",
@@ -218,6 +238,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "clean": "rm -rf dist",
     "prepublishOnly": "tsup"
   },
@@ -259,13 +281,16 @@
   "devDependencies": {
     "@particle-academy/fancy-slides": "^0.12.0",
     "@particle-academy/fancy-whiteboard": "^0.2.0",
+    "@testing-library/react": "^16.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "jsdom": "^25.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tsup": "^8.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   },
   "publishConfig": {
     "access": "public"
