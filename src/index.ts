@@ -107,6 +107,22 @@ export {
   type TerminalBridge,
   type TerminalShell,
 } from "./bridges/terminal";
+export {
+  registerNavigationBridge,
+  type NavigationBridgeAdapter,
+  type NavigationBridgeOptions,
+  type PageAction,
+  type PageSnapshot,
+  type NavigationConfirmRequest,
+} from "./bridges/navigation";
+
+// Co-browsing (site-wide session)
+export {
+  useCoBrowseSession,
+  type UseCoBrowseSessionOptions,
+  type CoBrowseSession,
+  type CoBrowseUserEvent,
+} from "./sharing/use-co-browse-session";
 
 // Components
 export { AgentPanel } from "./components/AgentPanel";
@@ -122,6 +138,7 @@ export {
 } from "./components/ScreensActivityBridge";
 export { ShareControls } from "./components/ShareControls";
 export type { ShareControlsProps } from "./components/ShareControls";
+export { CoBrowsePresence, type CoBrowsePresenceProps } from "./components/CoBrowsePresence";
 // SharedWhiteboard is NOT re-exported from the root barrel — it imports
 // fancy-whiteboard eagerly. Reach it via the subpath instead:
 //   import { SharedWhiteboard } from "@particle-academy/agent-integrations/components/shared-whiteboard";
