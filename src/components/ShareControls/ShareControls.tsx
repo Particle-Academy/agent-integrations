@@ -136,8 +136,8 @@ function buildCurlRecipe(session: SessionDescriptor): string {
     typeof window !== "undefined"
       ? `${window.location.protocol}//${window.location.host}`
       : "http://localhost";
-  const inbox = `${base}/whiteboard-share/${session.id}/inbox?token=${session.token}`;
-  const events = `${base}/whiteboard-share/${session.id}/events?token=${session.token}`;
+  const inbox = `${base}/agent-relay/${session.id}/inbox?token=${session.token}`;
+  const events = `${base}/agent-relay/${session.id}/events?token=${session.token}`;
   return [
     `# 1) In one terminal, subscribe to server-pushed frames (SSE)`,
     `curl -N "${events}"`,

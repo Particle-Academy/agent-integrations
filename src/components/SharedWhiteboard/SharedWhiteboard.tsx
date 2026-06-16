@@ -85,7 +85,7 @@ export function SharedWhiteboard({
   initialStrokes = [],
   initialViewport = { x: 0, y: 0, zoom: 1 },
   agent = DEFAULT_AGENT,
-  shareBaseUrl = "/whiteboard-share",
+  shareBaseUrl = "/agent-relay",
   onRegisterSession,
   showAgentPanel = true,
   showShareControls = true,

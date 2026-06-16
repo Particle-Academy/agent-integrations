@@ -21,7 +21,7 @@ export type UseCoBrowseSessionOptions = {
   adapter: NavigationBridgeAdapter;
   /** Identity for the agent's presence (cursor/log color + name). */
   agent?: { id: string; name?: string; color?: string };
-  /** Relay base path. Default "/whiteboard-share" (the generic frame broker). */
+  /** Relay base path. Default "/agent-relay" (the generic frame broker). */
   relayBaseUrl?: string;
   /** MCP server info advertised to the agent. */
   info?: { name: string; version: string; instructions?: string };
@@ -60,7 +60,7 @@ const USER = { id: "human", name: "You" };
 export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowseSession {
   const { adapter, extraBridges } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
-  const relayBaseUrl = options.relayBaseUrl ?? "/whiteboard-share";
+  const relayBaseUrl = options.relayBaseUrl ?? "/agent-relay";
 
   const serverRef = useRef<MicroMcpServer | null>(null);
   const relayRef = useRef<SseRelayTransport | null>(null);
