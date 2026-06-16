@@ -136,7 +136,7 @@ export {
   ScreensActivityBridge,
   type ScreensActivityBridgeProps,
 } from "./components/ScreensActivityBridge";
-export { ShareControls } from "./components/ShareControls";
+export { ShareControls, buildAgentPrompt } from "./components/ShareControls";
 export type { ShareControlsProps } from "./components/ShareControls";
 export { CoBrowsePresence, type CoBrowsePresenceProps } from "./components/CoBrowsePresence";
 export { CoBrowseCursorLayer, type CoBrowseCursorLayerProps } from "./components/CoBrowseCursorLayer";

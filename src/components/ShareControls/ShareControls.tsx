@@ -15,7 +15,7 @@ export type ShareControlsProps = {
   style?: CSSProperties;
 };
 
-type Tab = "url" | "json" | "curl";
+type Tab = "prompt" | "url" | "json" | "curl";
 
 /**
  * ShareControls — the host-facing UI for turning sharing on/off and
@@ -30,7 +30,7 @@ export function ShareControls({
   className,
   style,
 }: ShareControlsProps) {
-  const [tab, setTab] = useState<Tab>("url");
+  const [tab, setTab] = useState<Tab>("prompt");
 
   if (!session) {
     return (
@@ -39,7 +39,7 @@ export function ShareControls({
           Start shared session
         </button>
         <p className="fai-share__hint">
-          Generates a session id + secret token. Share the URL with humans, or hand the JSON config to an MCP-capable agent.
+          Generates a session id + secret token. Hand the <strong>Agent prompt</strong> to an AI agent, share the URL with humans, or give the JSON config to an MCP-capable client.
         </p>
       </div>
     );
@@ -48,6 +48,7 @@ export function ShareControls({
   const url = buildShareUrl(session, shareBaseUrl);
   const config = buildShareConfig(session);
   const curl = buildCurlRecipe(session);
+  const prompt = buildAgentPrompt(url);
 
   return (
     <div className={["fai-share fai-share--active", className ?? ""].filter(Boolean).join(" ")} style={style}>
@@ -67,12 +68,20 @@ export function ShareControls({
       </div>
 
       <div className="fai-share__tabs" role="tablist">
+        <TabButton tab="prompt" active={tab} setTab={setTab}>Agent prompt</TabButton>
         <TabButton tab="url" active={tab} setTab={setTab}>URL</TabButton>
         <TabButton tab="json" active={tab} setTab={setTab}>JSON</TabButton>
         <TabButton tab="curl" active={tab} setTab={setTab}>cURL recipe</TabButton>
       </div>
 
       <div className="fai-share__panel">
+        {tab === "prompt" && (
+          <CopyBox
+            label="Paste this straight into an AI agent — it connects over MCP, no browser"
+            value={prompt}
+            multiline
+          />
+        )}
         {tab === "url" && <CopyBox label="Open this URL in another tab to join the session" value={url} />}
         {tab === "json" && (
           <CopyBox
@@ -128,6 +137,40 @@ function CopyBox({ label, value, multiline }: { label: string; value: string; mu
       </div>
     </div>
   );
+}
+
+/**
+ * Build a copy-paste natural-language prompt to hand directly to an AI agent.
+ * Agents handed a bare URL tend to try to *open it in a browser* — this spells
+ * out that the link is a live MCP co-browsing session it should drive over MCP
+ * tools (via the zero-install relay client), never visit.
+ */
+export function buildAgentPrompt(url: string): string {
+  return [
+    `You're joining a live Human+ co-browsing session on a web app. This is an MCP`,
+    `(Model Context Protocol) session — NOT a website to visit. Do NOT open the URL`,
+    `in a browser and do NOT use any browser/Playwright tool. You drive the real,`,
+    `running app through MCP tools while a human watches and can take over.`,
+    ``,
+    `Session link (carries the session id + token — treat it as a secret):`,
+    `  ${url}`,
+    ``,
+    `Connect by running the relay client as an MCP server (zero install):`,
+    `  npx -y mcp-relay-client "${url}"`,
+    ``,
+    `That exposes the app's own tools (e.g. page_describe, page_read, nav_visit,`,
+    `page_click, page_set_field, page_submit, plus surface tools like whiteboard_*).`,
+    `Then:`,
+    `  1. Call page_describe first to see the current page and its interactive handles.`,
+    `  2. Act only on the STABLE HANDLES the tools return — never guess DOM selectors.`,
+    `  3. Navigate with nav_visit, type with page_set_field, click with page_click.`,
+    `     Submits and destructive clicks are staged for the human to confirm.`,
+    ``,
+    `If you can't register an MCP server but can run a shell, drive it directly:`,
+    `  curl -O https://raw.githubusercontent.com/Particle-Academy/mcp-relay-client/main/connect.sh`,
+    `  bash connect.sh "${url}" tools`,
+    `  bash connect.sh "${url}" call page_describe '{}'`,
+  ].join("\n");
 }
 
 /** Build a copy-paste cURL recipe for connecting an external MCP client. */
