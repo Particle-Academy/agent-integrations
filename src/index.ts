@@ -139,6 +139,7 @@ export {
 export { ShareControls } from "./components/ShareControls";
 export type { ShareControlsProps } from "./components/ShareControls";
 export { CoBrowsePresence, type CoBrowsePresenceProps } from "./components/CoBrowsePresence";
+export { CoBrowseCursorLayer, type CoBrowseCursorLayerProps } from "./components/CoBrowseCursorLayer";
 // SharedWhiteboard is NOT re-exported from the root barrel — it imports
 // fancy-whiteboard eagerly. Reach it via the subpath instead:
 //   import { SharedWhiteboard } from "@particle-academy/agent-integrations/components/shared-whiteboard";

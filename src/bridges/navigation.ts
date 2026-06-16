@@ -68,6 +68,12 @@ export type NavigationBridgeAdapter = {
   /** Submit a form by handle. */
   submit: (handle: string) => Promise<{ ok: boolean; error?: string }> | { ok: boolean; error?: string };
   /**
+   * Viewport rect of a handle's element, for agent-presence rendering (cursor +
+   * highlight). Returned in tool `meta.rect` so `<CoBrowseCursorLayer>` can show
+   * the agent acting on the page. Optional — omit and there's just no cursor.
+   */
+  rectFor?: (handle: string) => { x: number; y: number; width: number; height: number } | null;
+  /**
    * Trust-but-verify hook. When `pendingMode` is on, `page_submit` and
    * destructive `page_click` route through this; the host shows a prompt and
    * resolves true (proceed) / false (declined).
@@ -239,12 +245,13 @@ export function registerNavigationBridge(
     },
     [],
     (args) => {
+      const handle = typeof args.handle === "string" ? args.handle : undefined;
       adapter.scrollTo({
-        handle: typeof args.handle === "string" ? args.handle : undefined,
+        handle,
         x: typeof args.x === "number" ? args.x : undefined,
         y: typeof args.y === "number" ? args.y : undefined,
       });
-      return textResult("Scrolled");
+      return textResult("Scrolled", handle ? { handle, rect: adapter.rectFor?.(handle) ?? undefined } : undefined);
     },
     () => target("Scroll"),
   );
@@ -275,7 +282,7 @@ export function registerNavigationBridge(
       const handle = String(args.handle ?? "");
       const res = adapter.setField(handle, args.value);
       if (!res.ok) return errorResult(res.error ?? `Could not set ${handle}`);
-      return textResult(`${handle} ← ${JSON.stringify(args.value)}`, { handle, value: args.value });
+      return textResult(`${handle} ← ${JSON.stringify(args.value)}`, { handle, value: args.value, rect: adapter.rectFor?.(handle) ?? undefined });
     },
     (args) => target(`Set ${String(args.handle ?? "")}`, String(args.handle ?? "")),
   );
@@ -288,13 +295,14 @@ export function registerNavigationBridge(
     async (args) => {
       const handle = String(args.handle ?? "");
       const action = adapter.describe().actions.find((a) => a.handle === handle);
+      const rect = adapter.rectFor?.(handle) ?? undefined; // capture before the click may navigate away
       if (pendingMode && action?.destructive && adapter.confirm) {
         const ok = await adapter.confirm({ action: "click", handle, label: action.label });
         if (!ok) return errorResult("Declined by user");
       }
       const res = adapter.click(handle);
       if (!res.ok) return errorResult(res.error ?? `Could not click ${handle}`);
-      return textResult(`Clicked ${handle}`, { handle });
+      return textResult(`Clicked ${handle}`, { handle, rect });
     },
     (args) => target(`Click ${String(args.handle ?? "")}`, String(args.handle ?? "")),
   );
@@ -306,13 +314,14 @@ export function registerNavigationBridge(
     ["handle"],
     async (args) => {
       const handle = String(args.handle ?? "");
+      const rect = adapter.rectFor?.(handle) ?? undefined; // capture before the submit navigates
       if (pendingMode && adapter.confirm) {
         const ok = await adapter.confirm({ action: "submit", handle, label: handle });
         if (!ok) return errorResult("Declined by user");
       }
       const res = await adapter.submit(handle);
       if (!res.ok) return errorResult(res.error ?? "Submit failed");
-      return textResult(`Submitted ${handle}`, { handle });
+      return textResult(`Submitted ${handle}`, { handle, rect });
     },
     (args) => target(`Submit ${String(args.handle ?? "")}`, String(args.handle ?? "")),
   );
