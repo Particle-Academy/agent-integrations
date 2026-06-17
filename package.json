@@ -302,5 +302,8 @@
   ],
   "dependencies": {
     "@particle-academy/fancy-auto-common": "^0.1.0"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1"
   }
 }
