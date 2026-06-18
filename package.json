@@ -1,6 +1,6 @@
 {
   "name": "@particle-academy/agent-integrations",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "MCP-driven agent presence in collab sessions: per-session micro-MCP server, pluggable bridges to fancy-* packages, and agent UX components (panel + on-canvas cursor).",
   "repository": {
     "type": "git",
@@ -195,6 +195,16 @@
       "require": {
         "types": "./dist/presence/index.d.cts",
         "default": "./dist/presence.cjs"
+      }
+    },
+    "./heuristics": {
+      "import": {
+        "types": "./dist/heuristics/sink.d.ts",
+        "default": "./dist/heuristics.js"
+      },
+      "require": {
+        "types": "./dist/heuristics/sink.d.cts",
+        "default": "./dist/heuristics.cjs"
       }
     },
     "./undo": {

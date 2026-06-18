@@ -165,6 +165,18 @@ export {
   type ToolHandler as ActivityWrappedHandler,
 } from "./presence";
 
+// Heuristics sink — turns in-page agent activity into fancy-heuristics rows.
+// Subscribes to the shared fancy-auto-common activity bus and POSTs each event
+// to the heuristics `/collect` endpoint as actor:"agent" (also available as the
+// subpath import: agent-integrations/heuristics).
+export {
+  attachHeuristicsSink,
+  mapActivityToEvent as mapActivityToHeuristicsEvent,
+  type AttachHeuristicsSinkOptions,
+  type HeuristicsEvent,
+  type CollectBatch,
+} from "./heuristics/sink";
+
 // Undo/redo — per-agent stacks with reverse-action closures
 export {
   pushUndoEntry,
