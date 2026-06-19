@@ -59,6 +59,7 @@ export default defineConfig({
   external: [
     "react",
     "react-dom",
+    "@particle-academy/fancy-cf-relay",
     "@particle-academy/fancy-auto-common",
     "@particle-academy/fancy-whiteboard",
     "@particle-academy/fancy-artboard",

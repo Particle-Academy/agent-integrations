@@ -1,6 +1,7 @@
 import type { JsonRpcMessage } from "../mcp/types";
 import type { Transport } from "../mcp/server";
 import type { MicroMcpServer } from "../mcp/server";
+import type { RelayChannelHandle } from "@particle-academy/fancy-cf-relay";
 import { constantTimeEqual } from "./token";
 
 /**
@@ -31,6 +32,8 @@ export type SseRelayOptions = {
 export class SseRelayTransport implements Transport {
   private server?: MicroMcpServer;
   private es?: EventSource;
+  private channel?: RelayChannelHandle;
+  private disposed = false;
   private opts: SseRelayOptions;
   private sendQueue: JsonRpcMessage[] = [];
   private connected = false;
@@ -47,31 +50,53 @@ export class SseRelayTransport implements Transport {
     this.server = server;
   }
 
-  /** Open the SSE channel. Idempotent. */
+  /** Open the receive channel. Idempotent. */
   start(): void {
-    if (this.connected || typeof window === "undefined") return;
-    const url = `${this.opts.baseUrl}/${encodeURIComponent(this.opts.sessionId)}/events?token=${encodeURIComponent(this.opts.token)}`;
+    if (this.connected || this.disposed || typeof window === "undefined") return;
     this.setState("connecting");
+    // Prefer @particle-academy/fancy-cf-relay's adaptive channel (auto SSE↔
+    // long-poll with Cloudflare detection) so the receive leg survives a
+    // Cloudflare HTTP/3 (QUIC) edge that resets long-lived SSE streams. It's an
+    // OPTIONAL peer: if it isn't installed, fall back to a plain EventSource.
+    void import("@particle-academy/fancy-cf-relay")
+      .then(({ createRelayChannel }) => {
+        if (this.connected || this.disposed) return;
+        this.channel = createRelayChannel({
+          baseUrl: this.opts.baseUrl,
+          session: this.opts.sessionId,
+          token: this.opts.token,
+          transport: "auto",
+          receiveDirection: "inbound",
+          sendPath: "outbox",
+          onFrame: (raw) => this.handleInbound(raw),
+          onOpen: () => this.markOpen(),
+          onError: () => this.setState("error"),
+          fetchImpl: this.opts.fetch,
+        });
+        this.channel.start();
+      })
+      .catch(() => {
+        if (!this.disposed) this.startSse();
+      });
+  }
+
+  /** Fallback receive leg: a plain EventSource (no fancy-cf-relay installed). */
+  private startSse(): void {
+    if (this.connected || this.disposed) return;
+    const url = `${this.opts.baseUrl}/${encodeURIComponent(this.opts.sessionId)}/events?token=${encodeURIComponent(this.opts.token)}`;
     const es = new EventSource(url, { withCredentials: false });
     this.es = es;
+    es.addEventListener("open", () => this.markOpen());
+    es.addEventListener("mcp", (ev: MessageEvent) => this.handleInbound(ev.data));
+    es.addEventListener("error", () => this.setState("error")); // EventSource auto-reconnects
+  }
 
-    es.addEventListener("open", () => {
-      this.connected = true;
-      this.setState("open");
-      // Flush queued outbound frames (tool list_changed notifications, etc.)
-      const queued = this.sendQueue.splice(0);
-      for (const msg of queued) this.postOut(msg);
-    });
-
-    es.addEventListener("mcp", (ev: MessageEvent) => {
-      const raw = ev.data;
-      this.handleInbound(raw);
-    });
-
-    es.addEventListener("error", () => {
-      this.setState("error");
-      // EventSource auto-reconnects; no need to dispose.
-    });
+  /** Mark the channel live + flush any queued outbound frames. */
+  private markOpen(): void {
+    this.connected = true;
+    this.setState("open");
+    const queued = this.sendQueue.splice(0);
+    for (const msg of queued) this.postOut(msg);
   }
 
   send(message: JsonRpcMessage): void {
@@ -83,6 +108,9 @@ export class SseRelayTransport implements Transport {
   }
 
   close(): void {
+    this.disposed = true;
+    this.channel?.stop();
+    this.channel = undefined;
     this.es?.close();
     this.es = undefined;
     this.connected = false;
