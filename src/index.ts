@@ -115,6 +115,21 @@ export {
   type PageSnapshot,
   type NavigationConfirmRequest,
 } from "./bridges/navigation";
+export {
+  registerCatalogBridge,
+  type CatalogBridgeAdapter,
+  type CatalogBridgeOptions,
+  type CatalogProduct,
+  type CatalogPrice,
+  type CatalogCheckoutArgs,
+} from "./bridges/catalog";
+export {
+  registerFeaturesBridge,
+  type FeaturesBridgeAdapter,
+  type FeaturesBridgeOptions,
+  type FeatureGrant,
+  type FeatureDefinition,
+} from "./bridges/features";
 
 // Co-browsing (site-wide session)
 export {
