@@ -89,8 +89,13 @@ export function buildVscodeDeeplink(
 export function slugifyServerName(name: string): string {
   const slug = name
     .toLowerCase()
+    // Collapse every run of non-alphanumerics to a single dash, so the slug can
+    // never contain two consecutive dashes…
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    // …which leaves at most ONE leading/trailing dash to strip. A single-char
+    // strip (no `+` quantifier) is equivalent here and avoids a
+    // polynomial-backtracking trim regex.
+    .replace(/^-|-$/g, "");
   return slug || "mcp-server";
 }
 
