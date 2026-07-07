@@ -100,6 +100,11 @@ export {
   type SlidesBridgeOptions,
 } from "./bridges/slides";
 export {
+  registerMapBridge,
+  type MapBridgeAdapter,
+  type MapBridgeOptions,
+} from "./bridges/map";
+export {
   registerTerminalBridge,
   type TerminalRef,
   type TerminalBridgeAdapter,
