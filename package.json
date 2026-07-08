@@ -1,6 +1,6 @@
 {
   "name": "@particle-academy/agent-integrations",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "MCP-driven agent presence in collab sessions: per-session micro-MCP server, pluggable bridges to fancy-* packages, and agent UX components (panel + on-canvas cursor).",
   "repository": {
     "type": "git",
@@ -145,6 +145,16 @@
       "require": {
         "types": "./dist/bridges/map.d.cts",
         "default": "./dist/bridges-map.cjs"
+      }
+    },
+    "./bridges/files": {
+      "import": {
+        "types": "./dist/bridges/files.d.ts",
+        "default": "./dist/bridges-files.js"
+      },
+      "require": {
+        "types": "./dist/bridges/files.d.cts",
+        "default": "./dist/bridges-files.cjs"
       }
     },
     "./bridges/terminal": {

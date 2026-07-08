@@ -105,6 +105,11 @@ export {
   type MapBridgeOptions,
 } from "./bridges/map";
 export {
+  registerFilesBridge,
+  type FilesBridgeAdapter,
+  type FilesBridgeOptions,
+} from "./bridges/files";
+export {
   registerTerminalBridge,
   type TerminalRef,
   type TerminalBridgeAdapter,
