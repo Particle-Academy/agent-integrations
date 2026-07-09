@@ -101,7 +101,7 @@ export function registerArtboardBridge(
   // back to the args id for rename/remove/focus tools.
   const abTarget = (args: any, result: any): AgentTarget => ({
     kind: "artboard",
-    id:
+    elementId:
       (result?.structuredContent?.id as string | undefined) ??
       (args?.pieceId as string | undefined) ??
       (args?.sectionId as string | undefined),

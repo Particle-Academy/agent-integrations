@@ -210,7 +210,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         ["title"],
         (args) => {
             const title = str(args.title);
-            adapter.apply({ kind: "deck_set_title", title });
+            adapter.apply({ op: "deck.setTitle", title });
             return textResult(`Title set to "${title}"`, { title });
         },
         true,
@@ -232,7 +232,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             } else {
                 return errorResult("theme must be a string name or an object with a `name` field.");
             }
-            adapter.apply({ kind: "deck_apply_theme", theme });
+            adapter.apply({ op: "deck.setTheme", theme });
             return textResult(`Applied theme: ${theme.name}`, { theme });
         },
         true,
@@ -256,7 +256,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             } catch (e) {
                 return errorResult(e instanceof Error ? e.message : String(e));
             }
-            adapter.apply({ kind: "deck_set", deck });
+            adapter.apply({ op: "deck.replace", deck });
             return textResult(`Loaded deck "${deck.title}" (${deck.slides.length} slides)`, { id: deck.id, slides: deck.slides.length });
         },
         true,
@@ -286,7 +286,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
                 metadata: incoming.metadata,
             };
             const index = clamp(num(args.index, deck.slides.length), 0, deck.slides.length);
-            adapter.apply({ kind: "slide_add", index, slide });
+            adapter.apply({ op: "slide.add", index, slide });
             return textResult(`Added slide ${slide.id} at index ${index}`, { id: slide.id, index });
         },
         true,
@@ -300,7 +300,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         ["id"],
         (args) => {
             const id = str(args.id);
-            adapter.apply({ kind: "slide_remove", id });
+            adapter.apply({ op: "slide.remove", slideId: id });
             return textResult(`Removed slide ${id}`, { id });
         },
         true,
@@ -315,7 +315,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         (args) => {
             const id = str(args.id);
             const toIndex = num(args.toIndex, 0);
-            adapter.apply({ kind: "slide_reorder", id, toIndex });
+            adapter.apply({ op: "slide.reorder", slideId: id, toIndex });
             return textResult(`Moved slide ${id} → ${toIndex}`, { id, toIndex });
         },
         true,
@@ -330,7 +330,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         (args) => {
             const id = str(args.id);
             const layout = str(args.layout) as SlideData["layout"];
-            adapter.apply({ kind: "slide_set_layout", id, layout: layout ?? "blank" });
+            adapter.apply({ op: "slide.setLayout", slideId: id, layout: layout ?? "blank" });
             return textResult(`Slide ${id} layout → ${layout}`, { id, layout });
         },
         true,
@@ -345,7 +345,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         (args) => {
             const id = str(args.id);
             const notes = str(args.notes);
-            adapter.apply({ kind: "slide_set_notes", id, notes });
+            adapter.apply({ op: "slide.setNotes", slideId: id, notes });
             return textResult(`Notes updated on slide ${id}`, { id });
         },
         true,
@@ -363,7 +363,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         (args) => {
             const id = str(args.id);
             const bg = (args.background && typeof args.background === "object" ? args.background : undefined) as SlideData["background"];
-            adapter.apply({ kind: "slide_set_background", id, background: bg });
+            adapter.apply({ op: "slide.setBackground", slideId: id, background: bg });
             return textResult(`Background set on slide ${id}`, { id });
         },
         true,
@@ -384,7 +384,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         (args) => {
             const id = str(args.id);
             const transition = (args.transition && typeof args.transition === "object" ? args.transition : undefined) as SlideData["transition"];
-            adapter.apply({ kind: "slide_set_transition", id, transition });
+            adapter.apply({ op: "slide.setTransition", slideId: id, transition });
             return textResult(`Transition set on slide ${id}`, { id });
         },
         true,
@@ -409,7 +409,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
                 id: incoming.id ?? newElementId(),
                 ...incoming,
             } as SlideElement;
-            adapter.apply({ kind: "element_add", slideId, element });
+            adapter.apply({ op: "element.add", slideId, element });
             return textResult(`Added ${element.type} element ${element.id} on ${slideId}`, { id: element.id, slideId });
         },
         true,
@@ -424,7 +424,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         (args) => {
             const slideId = str(args.slideId);
             const elementId = str(args.elementId);
-            adapter.apply({ kind: "element_remove", slideId, elementId });
+            adapter.apply({ op: "element.remove", slideId, elementId });
             return textResult(`Removed element ${elementId} from ${slideId}`, { slideId, elementId });
         },
         true,
@@ -444,7 +444,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             const slideId = str(args.slideId);
             const elementId = str(args.elementId);
             const patch = (args.patch && typeof args.patch === "object" ? args.patch : {}) as Partial<SlideElement>;
-            adapter.apply({ kind: "element_update", slideId, elementId, patch });
+            adapter.apply({ op: "element.update", slideId, elementId, patch });
             return textResult(`Patched element ${elementId}`, { keys: Object.keys(patch) });
         },
         true,
@@ -466,7 +466,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             const elementId = str(args.elementId);
             const x = clamp(num(args.x, 0), 0, 1);
             const y = clamp(num(args.y, 0), 0, 1);
-            adapter.apply({ kind: "element_move", slideId, elementId, x, y });
+            adapter.apply({ op: "element.move", slideId, elementId, x, y });
             return textResult(`Moved element ${elementId} → (${x}, ${y})`, { x, y });
         },
         true,
@@ -488,7 +488,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             const elementId = str(args.elementId);
             const w = clamp(num(args.w, 0), 0, 1);
             const h = clamp(num(args.h, 0), 0, 1);
-            adapter.apply({ kind: "element_resize", slideId, elementId, w, h });
+            adapter.apply({ op: "element.resize", slideId, elementId, w, h });
             return textResult(`Resized element ${elementId} → (${w}, ${h})`, { w, h });
         },
         true,
@@ -511,7 +511,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             const slideId = str(args.slideId);
             const elementId = str(args.elementId);
             const animation = (args.animation && typeof args.animation === "object" ? args.animation : undefined) as ElementAnimation | undefined;
-            adapter.apply({ kind: "element_set_animation", slideId, elementId, animation });
+            adapter.apply({ op: "element.setAnimation", slideId, elementId, animation });
             return textResult(`Animation ${animation ? "set on" : "cleared from"} element ${elementId}`, { elementId });
         },
         true,

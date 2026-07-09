@@ -4,27 +4,15 @@ import type { JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import type { AgentTarget } from "../presence/types";
+import { reduceWorkbook } from "@particle-academy/fancy-sheets";
+import type { CellValue, SheetData, SheetOp, WorkbookData } from "@particle-academy/fancy-sheets";
 
 /**
- * Loose types — kept here so the bridge builds without a hard dep on
- * @particle-academy/fancy-sheets. They mirror the public surface of
- * `WorkbookData` / `SheetData` / `CellData` from that package.
+ * Cell writes funnel through fancy-sheets' own `reduceWorkbook` + `SheetOp` —
+ * the same reducer that drives `<SheetWorkbook>` — so agent edits recalculate
+ * formulas and land byte-identical to human edits, mirroring how the slides
+ * bridge uses `reduceDeck`. Types come straight from the package (no drift).
  */
-type CellValue = string | number | boolean | null;
-type CellData = { address: string; value: CellValue; format?: unknown; comment?: unknown; computedValue?: CellValue };
-type SheetData = {
-  id: string;
-  name: string;
-  cells: Record<string, CellData>;
-  columnWidths: Record<number, number>;
-  mergedRegions: Array<{ start: string; end: string }>;
-  columnFilters: Record<number, string>;
-  sortColumn?: number;
-  sortDirection?: "asc" | "desc";
-  frozenRows: number;
-  frozenCols: number;
-};
-type WorkbookData = { sheets: SheetData[]; activeSheetId: string };
 
 export type SheetsBridgeAdapter = {
   /** fancy-screens screen id (optional) so activity events know which screen the sheet lives in. */
@@ -197,10 +185,8 @@ export function registerSheetsBridge(
       const address = String(args.address);
       const value = args.value as CellValue;
       const wb = adapter.getWorkbook();
-      const sheet = getSheet(wb, sheetId);
-      if (!sheet) return errorResult(`No sheet ${sheetId}`);
-      const next = mergeCells(wb, sheetId, { [address]: cellOf(address, value) });
-      adapter.setWorkbook(next);
+      if (!getSheet(wb, sheetId)) return errorResult(`No sheet ${sheetId}`);
+      adapter.setWorkbook(reduceWorkbook(wb, setCellOp(sheetId, address, value)));
       return textResult(`${sheetId}!${address} ← ${JSON.stringify(value)}`, { sheet: sheetId, address, value });
     },
     true,
@@ -218,12 +204,10 @@ export function registerSheetsBridge(
     (args) => {
       const sheetId = getSheetId(args);
       const wb = adapter.getWorkbook();
-      const sheet = getSheet(wb, sheetId);
-      if (!sheet) return errorResult(`No sheet ${sheetId}`);
+      if (!getSheet(wb, sheetId)) return errorResult(`No sheet ${sheetId}`);
       const cells = (args.cells && typeof args.cells === "object") ? args.cells as Record<string, CellValue> : {};
-      const updates: Record<string, CellData> = {};
-      for (const [addr, v] of Object.entries(cells)) updates[addr] = cellOf(addr, v);
-      const next = mergeCells(wb, sheetId, updates);
+      let next = wb;
+      for (const [addr, v] of Object.entries(cells)) next = reduceWorkbook(next, setCellOp(sheetId, addr, v));
       adapter.setWorkbook(next);
       return textResult(`Set ${Object.keys(cells).length} cells in ${sheetId}`, { sheet: sheetId, count: Object.keys(cells).length });
     },
@@ -298,17 +282,13 @@ export function registerSheetsBridge(
 
 // ───────────── helpers ─────────────
 
-function cellOf(address: string, value: CellValue): CellData {
-  return { address, value };
-}
-
-function mergeCells(wb: WorkbookData, sheetId: string, updates: Record<string, CellData>): WorkbookData {
-  return {
-    ...wb,
-    sheets: wb.sheets.map((s) =>
-      s.id !== sheetId ? s : { ...s, cells: { ...s.cells, ...updates } },
-    ),
-  };
+/** Build a `set_cell` op, treating a leading-"=" string as a formula — matching
+ *  the in-app editor (value keeps the raw "=…"; formula drops the "="). */
+function setCellOp(sheet: string, address: string, value: CellValue): SheetOp {
+  if (typeof value === "string" && value.startsWith("=")) {
+    return { type: "set_cell", sheet, address, value, formula: value.slice(1) };
+  }
+  return { type: "set_cell", sheet, address, value };
 }
 
 /** Parse "B12" → { col: 1, row: 11 }. Letters are 1-based, rows 1-based. */

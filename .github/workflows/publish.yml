@@ -32,5 +32,7 @@ jobs:
 
       # Trusted Publishing (OIDC) — no token. Trusted Publisher configured on
       # npmjs.com; the bootstrap NPM_TOKEN has been revoked.
+      # Pin npm 11.18.0: npm@latest (12.0.0) ships a broken --provenance path
+      # that fails with "Cannot find module 'sigstore'".
       - name: Publish
-        run: npx -y npm@latest publish --provenance --access public
+        run: npx -y npm@11.18.0 publish --provenance --access public
