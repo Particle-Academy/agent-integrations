@@ -50,7 +50,7 @@ export type FilesBridgeOptions = {
   agent?: { id: string; name?: string; color?: string };
 };
 
-const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#0ea5e9" };
+const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
 
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const num = (v: unknown, fallback?: number): number =>

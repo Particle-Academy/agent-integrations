@@ -26,6 +26,7 @@ import type { ToolHost } from "../mcp/tool-host";
 import type { JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
+import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 import type { AgentTarget as FlAgentTarget } from "../presence/types";
 
 /**
@@ -75,6 +76,10 @@ export function registerFlowBridge(
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
+
+  // agent_undo / agent_redo / agent_history are registered whenever any bridge
+  // mounts, so undo availability doesn't hinge on which bridges are co-present.
+  ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
   // Activity-target resolver shared by every mutation tool. Pulls element id
   // from the freshly-added node/edge (structuredContent), falling back to args.

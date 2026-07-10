@@ -10,6 +10,7 @@ import type { ToolHost } from "../mcp/tool-host";
 import type { JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
+import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 import type { AgentTarget } from "../presence/types";
 
 /**
@@ -68,6 +69,10 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
     const { adapter } = options;
     const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
     const disposers: Array<() => void> = [];
+
+    // agent_undo / agent_redo / agent_history are registered whenever any bridge
+    // mounts, so undo availability doesn't hinge on which bridges are co-present.
+    ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
     const deckTarget = (): AgentTarget => ({
         kind: "deck",

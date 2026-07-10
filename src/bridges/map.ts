@@ -47,7 +47,7 @@ export type MapBridgeOptions = {
   agent?: { id: string; name?: string; color?: string };
 };
 
-const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#7c3aed" };
+const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
 
 const num = (v: unknown, fallback?: number): number =>
   typeof v === "number" && Number.isFinite(v) ? v : fallback ?? 0;
