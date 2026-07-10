@@ -4,14 +4,15 @@ import type { JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import type { AgentTarget } from "../presence/types";
-import { reduceWorkbook } from "@particle-academy/fancy-sheets";
 import type { CellValue, SheetData, SheetOp, WorkbookData } from "@particle-academy/fancy-sheets";
 
 /**
  * Cell writes funnel through fancy-sheets' own `reduceWorkbook` + `SheetOp` —
  * the same reducer that drives `<SheetWorkbook>` — so agent edits recalculate
  * formulas and land byte-identical to human edits, mirroring how the slides
- * bridge uses `reduceDeck`. Types come straight from the package (no drift).
+ * bridge works. Types come straight from the package (no drift); the reducer
+ * VALUE is lazy-imported inside the mutation handlers so the package barrel
+ * never statically pulls this optional peer (see issue #3).
  */
 
 export type SheetsBridgeAdapter = {
@@ -180,12 +181,13 @@ export function registerSheetsBridge(
       value: { description: "string | number | boolean | null. Strings starting with '=' are stored as formulas." },
     },
     ["address", "value"],
-    (args) => {
+    async (args) => {
       const sheetId = getSheetId(args);
       const address = String(args.address);
       const value = args.value as CellValue;
       const wb = adapter.getWorkbook();
       if (!getSheet(wb, sheetId)) return errorResult(`No sheet ${sheetId}`);
+      const { reduceWorkbook } = await import("@particle-academy/fancy-sheets");
       adapter.setWorkbook(reduceWorkbook(wb, setCellOp(sheetId, address, value)));
       return textResult(`${sheetId}!${address} ← ${JSON.stringify(value)}`, { sheet: sheetId, address, value });
     },
@@ -201,11 +203,12 @@ export function registerSheetsBridge(
       cells: { type: "object" },
     },
     ["cells"],
-    (args) => {
+    async (args) => {
       const sheetId = getSheetId(args);
       const wb = adapter.getWorkbook();
       if (!getSheet(wb, sheetId)) return errorResult(`No sheet ${sheetId}`);
       const cells = (args.cells && typeof args.cells === "object") ? args.cells as Record<string, CellValue> : {};
+      const { reduceWorkbook } = await import("@particle-academy/fancy-sheets");
       let next = wb;
       for (const [addr, v] of Object.entries(cells)) next = reduceWorkbook(next, setCellOp(sheetId, addr, v));
       adapter.setWorkbook(next);

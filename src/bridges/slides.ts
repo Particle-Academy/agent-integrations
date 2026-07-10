@@ -1,8 +1,10 @@
 // `Slide` is a React component in @particle-academy/fancy-slides; the slide
 // *data* type is exported as `SlideData`. Same naming convention applies to
 // other element data shapes.
+// Types are import-type-only (erased at build); the fancy-slides VALUES
+// (parseDeck / slideId / elementId) are lazy-imported inside the handlers so the
+// package barrel never statically pulls this optional peer (see issue #3).
 import type { Deck, DeckOp, ElementAnimation, SlideData, SlideElement, Theme } from "@particle-academy/fancy-slides";
-import { reduceDeck, parseDeck, slideId as newSlideId, elementId as newElementId } from "@particle-academy/fancy-slides";
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
 import type { JsonObject } from "../mcp/types";
@@ -244,11 +246,12 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
         "Replace the entire deck atomically — stream a full presentation in. Pass a complete Deck object ({ id, title, theme, slides }). Validated + migrated before it lands; the prior deck is the undo snapshot.",
         { deck: { description: "A complete Deck object." } },
         ["deck"],
-        (args) => {
+        async (args) => {
             const incoming = args.deck;
             if (!incoming || typeof incoming !== "object") {
                 return errorResult("deck must be a complete Deck object ({ id, title, theme, slides }).");
             }
+            const { parseDeck } = await import("@particle-academy/fancy-slides");
             let deck: Deck;
             try {
                 // parseDeck validates structure + migrates forward; throws on bad input.
@@ -273,9 +276,10 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             slide: { description: "Partial slide payload — id is auto-generated when absent." },
         },
         [],
-        (args) => {
+        async (args) => {
             const deck = adapter.getDeck();
             const incoming = (args.slide && typeof args.slide === "object" ? args.slide : {}) as Partial<SlideData>;
+            const { slideId: newSlideId } = await import("@particle-academy/fancy-slides");
             const slide: SlideData = {
                 id: incoming.id ?? newSlideId(),
                 layout: incoming.layout ?? "blank",
@@ -401,10 +405,11 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
             element: { description: "Partial element — type/x/y/w/h required, id auto-generated when absent." },
         },
         ["slideId", "element"],
-        (args) => {
+        async (args) => {
             const slideId = str(args.slideId);
             const incoming = (args.element && typeof args.element === "object" ? args.element : {}) as Partial<SlideElement>;
             if (!incoming.type) return errorResult("element.type is required.");
+            const { elementId: newElementId } = await import("@particle-academy/fancy-slides");
             const element = {
                 id: incoming.id ?? newElementId(),
                 ...incoming,
@@ -551,6 +556,7 @@ function firstTextContent(slide: SlideData): string | undefined {
     return undefined;
 }
 
-// Re-export the reducer so consumers writing their own adapter can apply
-// the same op-shape locally (e.g. for optimistic updates).
-export { reduceDeck };
+// NOTE: `reduceDeck` is intentionally NOT re-exported — a static re-export forces
+// the barrel to statically import the optional peer @particle-academy/fancy-slides
+// (issue #3). Consumers writing their own adapter import it from fancy-slides
+// directly: `import { reduceDeck } from "@particle-academy/fancy-slides"`.
