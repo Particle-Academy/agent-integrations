@@ -140,6 +140,18 @@ export {
   type FeatureGrant,
   type FeatureDefinition,
 } from "./bridges/features";
+export {
+  registerDocBridge,
+  type DocAdapter,
+  type DocBridgeOptions,
+  type DocOpTool,
+} from "./bridges/doc";
+export {
+  registerCmsBridge,
+  cmsReducer,
+  type CmsOp,
+  type CmsBridgeOptions,
+} from "./bridges/cms";
 
 // Co-browsing (site-wide session)
 export {

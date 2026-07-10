@@ -1,6 +1,6 @@
 {
   "name": "@particle-academy/agent-integrations",
-  "version": "0.26.0",
+  "version": "0.27.0",
   "description": "MCP-driven agent presence in collab sessions: per-session micro-MCP server, pluggable bridges to fancy-* packages, and agent UX components (panel + on-canvas cursor).",
   "repository": {
     "type": "git",
@@ -185,6 +185,26 @@
       "require": {
         "types": "./dist/bridges/features.d.cts",
         "default": "./dist/bridges-features.cjs"
+      }
+    },
+    "./bridges/doc": {
+      "import": {
+        "types": "./dist/bridges/doc.d.ts",
+        "default": "./dist/bridges-doc.js"
+      },
+      "require": {
+        "types": "./dist/bridges/doc.d.cts",
+        "default": "./dist/bridges-doc.cjs"
+      }
+    },
+    "./bridges/cms": {
+      "import": {
+        "types": "./dist/bridges/cms.d.ts",
+        "default": "./dist/bridges-cms.js"
+      },
+      "require": {
+        "types": "./dist/bridges/cms.d.cts",
+        "default": "./dist/bridges-cms.cjs"
       }
     },
     "./sheets-adapter": {
@@ -372,7 +392,8 @@
     "**/*.css"
   ],
   "dependencies": {
-    "@particle-academy/fancy-auto-common": "^0.1.0"
+    "@particle-academy/fancy-auto-common": "^0.1.0",
+    "@particle-academy/fancy-doc-commons": "^0.1.0"
   },
   "overrides": {
     "esbuild": "^0.28.1"
