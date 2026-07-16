@@ -31,6 +31,8 @@ export type PageSnapshot = {
   url: string;
   title: string;
   actions: PageAction[];
+  /** Monotonic host revision. Human input advances it and invalidates stale agent intent. */
+  revision?: number;
 };
 
 /** A write the host may want the human to confirm (trust-but-verify). */
@@ -50,6 +52,8 @@ export type NavigationBridgeAdapter = {
   screenId?: string;
   /** Current location. */
   getLocation: () => { url: string; title: string };
+  /** Current human-control revision. Omit to disable stale-intent protection. */
+  getRevision?: () => number;
   /** Snapshot of the page's actionable elements (stable handles + labels). */
   describe: () => PageSnapshot;
   /** Visible text / heading outline for grounding (optional). */
@@ -105,6 +109,18 @@ export function registerNavigationBridge(
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const pendingMode = options.pendingMode ?? true;
   const disposers: Array<() => void> = [];
+  let groundedRevision: number | null = null;
+
+  const staleIntent = () => {
+    const current = adapter.getRevision?.();
+    if (current === undefined) return null;
+    if (groundedRevision === null || groundedRevision !== current) {
+      return errorResult(
+        `Human took control at page revision ${current}. This agent action was cancelled; call page_describe before acting again.`,
+      );
+    }
+    return null;
+  };
 
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
@@ -160,6 +176,11 @@ export function registerNavigationBridge(
     [],
     () => {
       const snap = adapter.describe();
+      const revision = adapter.getRevision?.();
+      if (revision !== undefined) {
+        snap.revision = revision;
+        groundedRevision = revision;
+      }
       const text = [
         `URL: ${snap.url}`,
         `Title: ${snap.title}`,
@@ -186,6 +207,8 @@ export function registerNavigationBridge(
     { handle: { type: "string" } },
     ["handle"],
     (args) => {
+      const stale = staleIntent();
+      if (stale) return stale;
       const handle = String(args.handle ?? "");
       const action = adapter.describe().actions.find((candidate) => candidate.handle === handle);
       if (!action) return errorResult(`No element for handle "${handle}"`);
@@ -205,6 +228,8 @@ export function registerNavigationBridge(
     { url: { type: "string", description: "Path like /packages or an absolute URL." } },
     ["url"],
     async (args) => {
+      const stale = staleIntent();
+      if (stale) return stale;
       const url = String(args.url ?? "");
       if (!url) return errorResult("url is required");
       const from = adapter.getLocation().url;
@@ -232,6 +257,8 @@ export function registerNavigationBridge(
     {},
     [],
     async () => {
+      const stale = staleIntent();
+      if (stale) return stale;
       if (!adapter.back) return errorResult("Host did not provide back navigation.");
       await adapter.back();
       return textResult("Went back");
@@ -245,6 +272,8 @@ export function registerNavigationBridge(
     {},
     [],
     async () => {
+      const stale = staleIntent();
+      if (stale) return stale;
       if (!adapter.forward) return errorResult("Host did not provide forward navigation.");
       await adapter.forward();
       return textResult("Went forward");
@@ -262,6 +291,8 @@ export function registerNavigationBridge(
     },
     [],
     (args) => {
+      const stale = staleIntent();
+      if (stale) return stale;
       const handle = typeof args.handle === "string" ? args.handle : undefined;
       adapter.scrollTo({
         handle,
@@ -279,6 +310,8 @@ export function registerNavigationBridge(
     { dy: { type: "number" } },
     ["dy"],
     (args) => {
+      const stale = staleIntent();
+      if (stale) return stale;
       adapter.scrollBy(Number(args.dy ?? 0));
       return textResult(`Scrolled by ${Number(args.dy ?? 0)}px`);
     },
@@ -296,6 +329,8 @@ export function registerNavigationBridge(
     },
     ["handle", "value"],
     (args) => {
+      const stale = staleIntent();
+      if (stale) return stale;
       const handle = String(args.handle ?? "");
       const res = adapter.setField(handle, args.value);
       if (!res.ok) return errorResult(res.error ?? `Could not set ${handle}`);
@@ -310,6 +345,8 @@ export function registerNavigationBridge(
     { handle: { type: "string" } },
     ["handle"],
     async (args) => {
+      const stale = staleIntent();
+      if (stale) return stale;
       const handle = String(args.handle ?? "");
       const action = adapter.describe().actions.find((a) => a.handle === handle);
       const rect = adapter.rectFor?.(handle) ?? undefined; // capture before the click may navigate away
@@ -330,6 +367,8 @@ export function registerNavigationBridge(
     { handle: { type: "string" } },
     ["handle"],
     async (args) => {
+      const stale = staleIntent();
+      if (stale) return stale;
       const handle = String(args.handle ?? "");
       const rect = adapter.rectFor?.(handle) ?? undefined; // capture before the submit navigates
       if (pendingMode && adapter.confirm) {

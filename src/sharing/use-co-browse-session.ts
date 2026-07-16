@@ -8,10 +8,10 @@ import { registerNavigationBridge, type NavigationBridgeAdapter } from "../bridg
 
 /** A thing the human did, surfaced so the connected agent stays aware. */
 export type CoBrowseUserEvent =
-  | { kind: "navigation"; url: string; title?: string }
-  | { kind: "scroll"; y: number }
-  | { kind: "form"; handle: string; value?: unknown; masked?: boolean }
-  | { kind: "click"; handle: string; label?: string };
+  | { kind: "navigation"; url: string; title?: string; revision?: number }
+  | { kind: "scroll"; y: number; revision?: number }
+  | { kind: "form"; handle: string; value?: unknown; masked?: boolean; revision?: number }
+  | { kind: "click"; handle: string; label?: string; revision?: number };
 
 export type UseCoBrowseSessionOptions = {
   /**

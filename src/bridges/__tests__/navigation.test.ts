@@ -77,6 +77,25 @@ describe("registerNavigationBridge", () => {
     expect(adapter.click).not.toHaveBeenCalled();
   });
 
+  it("cancels stale agent intent after the human advances the page revision", async () => {
+    const host = new ToolRegistry();
+    let revision = 1;
+    const { adapter } = makeAdapter({ getRevision: () => revision });
+    registerNavigationBridge(host, { adapter });
+
+    await host.callTool("page_describe", {});
+    revision += 1;
+    const stale = await host.callTool("page_click", { handle: "h1" });
+
+    expect(stale.isError).toBe(true);
+    expect(text(stale)).toContain("Human took control");
+    expect(adapter.click).not.toHaveBeenCalled();
+
+    await host.callTool("page_describe", {});
+    await host.callTool("page_click", { handle: "h1" });
+    expect(adapter.click).toHaveBeenCalledWith("h1");
+  });
+
   it("page_describe returns the snapshot with stable handles", async () => {
     const host = new ToolRegistry();
     registerNavigationBridge(host, { adapter: makeAdapter().adapter });
