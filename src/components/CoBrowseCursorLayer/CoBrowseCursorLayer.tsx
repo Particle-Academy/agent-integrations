@@ -6,6 +6,26 @@ import { AgentActivityHighlight } from "../AgentActivityHighlight/AgentActivityH
 
 type Rect = { x: number; y: number; width: number; height: number };
 
+const CURSOR_EDGE_INSET = 24;
+const FLUID_CURSOR_SPEED_PX_PER_SECOND = 1_050;
+const MIN_GLIDE_MS = 240;
+const MAX_GLIDE_MS = 1_200;
+
+export function visibleCursorPoint(rect: Rect, viewport: { width: number; height: number }) {
+  const x = rect.x + rect.width / 2;
+  const y = rect.y + rect.height / 2;
+  return {
+    x: Math.min(Math.max(x, CURSOR_EDGE_INSET), Math.max(CURSOR_EDGE_INSET, viewport.width - CURSOR_EDGE_INSET)),
+    y: Math.min(Math.max(y, CURSOR_EDGE_INSET), Math.max(CURSOR_EDGE_INSET, viewport.height - CURSOR_EDGE_INSET)),
+  };
+}
+
+export function fluidGlideDuration(from: { x: number; y: number } | null, to: { x: number; y: number }) {
+  if (!from) return 0;
+  const distance = Math.hypot(to.x - from.x, to.y - from.y);
+  return Math.round(Math.min(MAX_GLIDE_MS, Math.max(MIN_GLIDE_MS, (distance / FLUID_CURSOR_SPEED_PX_PER_SECOND) * 1_000)));
+}
+
 export type CoBrowseCursorLayerProps = {
   /** Render the overlay only while a session is live. Default true. */
   active?: boolean;
@@ -27,7 +47,7 @@ export type CoBrowseCursorLayerProps = {
  */
 export function CoBrowseCursorLayer({ active = true, zIndex = 2147483000 }: CoBrowseCursorLayerProps) {
   const { latest } = useAgentActivity(undefined, { capacity: 12 });
-  const [cursor, setCursor] = useState<{ x: number; y: number; name: string; color: string; status?: string } | null>(
+  const [cursor, setCursor] = useState<{ x: number; y: number; name: string; color: string; status?: string; glideMs: number } | null>(
     null,
   );
   const [pulse, setPulse] = useState<{ rect: Rect; color: string; key: number } | null>(null);
@@ -35,7 +55,11 @@ export function CoBrowseCursorLayer({ active = true, zIndex = 2147483000 }: CoBr
   useEffect(() => {
     if (!latest || (latest.source ?? "agent") === "user") return;
     if (latest.action === "agent_disconnected") {
-      setCursor(null);
+      // Relay clients may be intentionally short-lived (one process per MCP
+      // call). The shared session is the presence boundary, not an individual
+      // transport connection, so leave the agent's cursor in place between
+      // calls. `active=false` still removes it when sharing actually ends.
+      setCursor((prev) => (prev ? { ...prev, status: "Standing by", glideMs: 0 } : prev));
       setPulse(null);
       return;
     }
@@ -44,8 +68,18 @@ export function CoBrowseCursorLayer({ active = true, zIndex = 2147483000 }: CoBr
     const status = latest.target?.label ?? latest.action;
     const rect = (latest.meta as { rect?: Rect } | undefined)?.rect;
     if (rect) {
-      // Acted on a concrete element — glide the cursor to it + pulse a highlight.
-      setCursor({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, name, color, status });
+      // Keep off-screen targets represented at the nearest viewport edge, then
+      // glide at a distance-aware pace that a watching human can comfortably
+      // follow. This is presence, not a teleport animation.
+      const target = visibleCursorPoint(rect, { width: window.innerWidth, height: window.innerHeight });
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+      setCursor((prev) => ({
+        ...target,
+        name,
+        color,
+        status,
+        glideMs: reduceMotion ? 0 : fluidGlideDuration(prev, target),
+      }));
       setPulse({ rect, color, key: latest.timestamp });
     } else {
       // nav / scroll — no element. Keep (or first-show, at viewport center) the
@@ -53,7 +87,7 @@ export function CoBrowseCursorLayer({ active = true, zIndex = 2147483000 }: CoBr
       setCursor((prev) =>
         prev
           ? { ...prev, status, name, color }
-          : { x: window.innerWidth / 2, y: window.innerHeight / 2, name, color, status },
+          : { x: window.innerWidth / 2, y: window.innerHeight / 2, name, color, status, glideMs: 0 },
       );
     }
   }, [latest?.timestamp]);
@@ -78,7 +112,11 @@ export function CoBrowseCursorLayer({ active = true, zIndex = 2147483000 }: CoBr
         name={cursor.name}
         color={cursor.color}
         status={cursor.status}
-        style={{ transition: "left .35s cubic-bezier(.22,.61,.36,1), top .35s cubic-bezier(.22,.61,.36,1)" }}
+        style={{
+          transition: cursor.glideMs
+            ? `left ${cursor.glideMs}ms cubic-bezier(.22,.61,.36,1), top ${cursor.glideMs}ms cubic-bezier(.22,.61,.36,1)`
+            : "none",
+        }}
       />
     </div>,
     document.body,
