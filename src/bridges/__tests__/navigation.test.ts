@@ -50,6 +50,7 @@ describe("registerNavigationBridge", () => {
     for (const n of [
       "page_describe",
       "page_read",
+      "page_focus",
       "nav_visit",
       "nav_back",
       "nav_forward",
@@ -62,6 +63,18 @@ describe("registerNavigationBridge", () => {
     ]) {
       expect(names).toContain(n);
     }
+  });
+
+  it("page_focus reports the stable handle rect without activating it", async () => {
+    const host = new ToolRegistry();
+    const rect = { x: 10, y: 20, width: 100, height: 30 };
+    const { adapter } = makeAdapter({ rectFor: vi.fn(() => rect) });
+    registerNavigationBridge(host, { adapter });
+
+    const res = await host.callTool("page_focus", { handle: "h1" });
+
+    expect(res.structuredContent).toMatchObject({ handle: "h1", rect });
+    expect(adapter.click).not.toHaveBeenCalled();
   });
 
   it("page_describe returns the snapshot with stable handles", async () => {

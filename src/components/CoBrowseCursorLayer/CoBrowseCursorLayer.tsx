@@ -34,6 +34,11 @@ export function CoBrowseCursorLayer({ active = true, zIndex = 2147483000 }: CoBr
 
   useEffect(() => {
     if (!latest || (latest.source ?? "agent") === "user") return;
+    if (latest.action === "agent_disconnected") {
+      setCursor(null);
+      setPulse(null);
+      return;
+    }
     const color = latest.agentColor ?? "#a855f7";
     const name = latest.agentName ?? "Agent";
     const status = latest.target?.label ?? latest.action;

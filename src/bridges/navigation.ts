@@ -168,7 +168,7 @@ export function registerNavigationBridge(
       ].join("\n");
       return textResult(text, snap);
     },
-    false,
+    () => target("Inspect page"),
   );
 
   reg(
@@ -177,7 +177,24 @@ export function registerNavigationBridge(
     {},
     [],
     () => textResult(adapter.read ? adapter.read() : "(host did not provide page text)"),
-    false,
+    () => target("Read page"),
+  );
+
+  reg(
+    "page_focus",
+    "Move the agent's visible focus to an interactive element by stable handle without activating it.",
+    { handle: { type: "string" } },
+    ["handle"],
+    (args) => {
+      const handle = String(args.handle ?? "");
+      const action = adapter.describe().actions.find((candidate) => candidate.handle === handle);
+      if (!action) return errorResult(`No element for handle "${handle}"`);
+      return textResult(`Focused ${handle}`, {
+        handle,
+        rect: adapter.rectFor?.(handle) ?? undefined,
+      });
+    },
+    (args) => target(`Focus ${String(args.handle ?? "")}`, String(args.handle ?? "")),
   );
 
   // ───────────── Navigate / scroll ─────────────

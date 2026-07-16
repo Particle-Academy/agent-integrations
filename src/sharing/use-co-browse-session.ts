@@ -10,7 +10,8 @@ import { registerNavigationBridge, type NavigationBridgeAdapter } from "../bridg
 export type CoBrowseUserEvent =
   | { kind: "navigation"; url: string; title?: string }
   | { kind: "scroll"; y: number }
-  | { kind: "form"; handle: string; value?: unknown; masked?: boolean };
+  | { kind: "form"; handle: string; value?: unknown; masked?: boolean }
+  | { kind: "click"; handle: string; label?: string };
 
 export type UseCoBrowseSessionOptions = {
   /**
@@ -101,11 +102,14 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
     if (!server || relayRef.current) return;
     const descriptor = createSessionDescriptor();
     const csrf = options.csrfToken?.() ?? "";
-    await fetch(`${relayBaseUrl}/register`, {
+    const response = await fetch(`${relayBaseUrl}/register`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-csrf-token": csrf },
       body: JSON.stringify({ session: descriptor.id, token: descriptor.token }),
     });
+    if (!response.ok) {
+      throw new Error(`Relay registration failed (${response.status})`);
+    }
     const relay = attachSseRelay(server, { baseUrl: relayBaseUrl, sessionId: descriptor.id, token: descriptor.token });
     relay.onStateChange(setRelayState);
     relayRef.current = relay;
@@ -120,10 +124,9 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
     setSession(null);
     if (current) {
       const csrf = options.csrfToken?.() ?? "";
-      void fetch(`${relayBaseUrl}/${current.id}/unregister`, {
+      void fetch(`${relayBaseUrl}/${current.id}/unregister?token=${encodeURIComponent(current.token)}`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-csrf-token": csrf },
-        body: JSON.stringify({ token: current.token }),
       }).catch(() => {});
     }
   }, [relayBaseUrl, options, session]);
@@ -134,7 +137,9 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
         ? `You navigated to ${event.url}`
         : event.kind === "scroll"
           ? "You scrolled"
-          : `You edited ${event.handle}${event.masked ? " (hidden)" : ""}`;
+          : event.kind === "click"
+            ? `You clicked ${event.label ?? event.handle}`
+            : `You edited ${event.handle}${event.masked ? " (hidden)" : ""}`;
     emitActivity({
       agentId: USER.id,
       agentName: USER.name,

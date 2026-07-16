@@ -3,6 +3,7 @@ import type { Transport } from "../mcp/server";
 import type { MicroMcpServer } from "../mcp/server";
 import type { RelayChannelHandle } from "@particle-academy/fancy-cf-relay";
 import { constantTimeEqual } from "./token";
+import { emitActivity } from "../presence/registry";
 
 /**
  * SseRelayTransport — bridges the in-page MicroMcpServer to a host-app
@@ -40,6 +41,7 @@ export class SseRelayTransport implements Transport {
   private listeners = new Set<(state: RelayState) => void>();
   private state: RelayState = "idle";
   private expectedToken: string;
+  private peers = new Set<string>();
 
   constructor(options: SseRelayOptions) {
     this.opts = options;
@@ -155,6 +157,36 @@ export class SseRelayTransport implements Transport {
     try {
       message = JSON.parse(raw);
     } catch {
+      return;
+    }
+    if ("method" in message && message.method === "notifications/peer_joined") {
+      const subscriberId = String((message.params as { subscriberId?: unknown } | undefined)?.subscriberId ?? "peer");
+      this.peers.add(subscriberId);
+      emitActivity({
+        agentId: "agent",
+        agentName: "Agent",
+        agentColor: "#a855f7",
+        action: "agent_connected",
+        timestamp: Date.now(),
+        target: { kind: "navigation", label: "Agent connected" },
+        meta: { subscriberId },
+      });
+      return;
+    }
+    if ("method" in message && message.method === "notifications/peer_left") {
+      const subscriberId = String((message.params as { subscriberId?: unknown } | undefined)?.subscriberId ?? "peer");
+      this.peers.delete(subscriberId);
+      if (this.peers.size === 0) {
+        emitActivity({
+          agentId: "agent",
+          agentName: "Agent",
+          agentColor: "#a855f7",
+          action: "agent_disconnected",
+          timestamp: Date.now(),
+          target: { kind: "navigation", label: "Agent disconnected" },
+          meta: { subscriberId },
+        });
+      }
       return;
     }
     await this.server.receive(this, message);
