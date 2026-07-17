@@ -10,7 +10,8 @@ import { createNodeRelay } from "./node";
  *
  * Flags:
  *   --port <n>          Listen port. Default 8787.
- *   --host <addr>       Bind address. Default 0.0.0.0.
+ *   --host <addr>       Bind address. Default 127.0.0.1 (loopback). Pass
+ *                       0.0.0.0 to expose on all interfaces (warns).
  *   --prefix <path>     URL path prefix (no trailing slash). Default "".
  *                       Useful when mounting behind a reverse proxy.
  *   --ttl-ms <n>        Session TTL ms. Default 14_400_000 (4h).
@@ -23,7 +24,10 @@ import { createNodeRelay } from "./node";
 async function main() {
   const argv = process.argv.slice(2);
   let port = Number(process.env.PORT ?? 8787);
-  let host = process.env.HOST ?? "0.0.0.0";
+  // Loopback by default: this relay fronts terminal_run (RCE) and register is
+  // unauthenticated, so it must not listen on all interfaces unless the operator
+  // explicitly opts in with --host 0.0.0.0.
+  let host = process.env.HOST ?? "127.0.0.1";
   let prefix = process.env.PREFIX ?? "";
   let ttlMs = Number(process.env.TTL_MS ?? 4 * 60 * 60 * 1000);
   let cors = process.env.CORS_ALLOW_ORIGIN ?? "*";
@@ -65,6 +69,14 @@ async function main() {
     relay.handler(req, res);
   });
 
+  const isLoopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
+  if (!isLoopback) {
+    process.stderr.write(
+      `[relay] WARNING: binding ${host} exposes the relay on non-loopback interfaces. ` +
+        `register is unauthenticated and a leaked session token grants terminal_run. ` +
+        `Only do this behind an authenticating proxy / trusted network.\n`,
+    );
+  }
   server.listen(port, host, () => {
     process.stdout.write(
       `[relay] listening on http://${host}:${port}${prefix || ""} ` +
@@ -88,7 +100,8 @@ Usage: agent-integrations-relay [options]
 
 Options:
   --port <n>          Listen port (env: PORT). Default 8787.
-  --host <addr>       Bind address (env: HOST). Default 0.0.0.0.
+  --host <addr>       Bind address (env: HOST). Default 127.0.0.1 (loopback).
+                      Pass 0.0.0.0 to expose on all interfaces (prints a warning).
   --prefix <path>     URL path prefix (env: PREFIX). Default "".
   --ttl-ms <n>        Session TTL ms (env: TTL_MS). Default 14_400_000.
   --cors <origin>     CORS Access-Control-Allow-Origin (env: CORS_ALLOW_ORIGIN). Default "*".

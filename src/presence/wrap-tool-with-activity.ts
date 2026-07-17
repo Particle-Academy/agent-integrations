@@ -58,6 +58,13 @@ export function wrapToolWithActivity<TArgs = Record<string, unknown>>(
     resolveTarget?: ActivityTargetResolver<TArgs>;
     /** Optional ttl override. */
     ttlMs?: number;
+    /**
+     * Build the `meta` broadcast to all relay peers. Defaults to the tool's full
+     * `structuredContent`. Override to REDACT sensitive fields before fan-out —
+     * e.g. the terminal bridge strips raw command/keystroke bytes so a command
+     * line (or its secrets) is never broadcast verbatim to every peer.
+     */
+    buildMeta?: (result: CallToolResult) => Record<string, unknown> | undefined;
   },
 ): ToolHandler<TArgs> {
   return async (args) => {
@@ -79,7 +86,7 @@ export function wrapToolWithActivity<TArgs = Record<string, unknown>>(
       target: { ...target, kind: target.kind ?? options.kind, screenId: target.screenId ?? options.screenId },
       action: options.toolName,
       timestamp: Date.now(),
-      meta: extractMeta(result),
+      meta: options.buildMeta ? options.buildMeta(result) : extractMeta(result),
       ttlMs: options.ttlMs,
     });
     return result;

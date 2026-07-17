@@ -27,14 +27,22 @@ export function describeSession(id: string, token: string): SessionDescriptor {
   return { id, token, display: token.slice(0, 8) };
 }
 
-/** Build the shareable URL for the current page (preserves path, adds session+token). */
+/**
+ * Build the shareable URL for the current page (preserves path, adds
+ * session+token in the URL FRAGMENT).
+ *
+ * The token goes in the `#fragment`, never the `?query`: a fragment is never
+ * transmitted to the server, so it can't leak through access/proxy logs or the
+ * `Referer` header sent to third-party assets on the page. The recipient reads
+ * it back with {@link readSessionFromUrl}. (The on-wire relay leg still sends
+ * `?token=` today — moving that off the query is the larger transport change.)
+ */
 export function buildShareUrl(
   descriptor: SessionDescriptor,
   baseUrl: string = typeof window !== "undefined" ? window.location.href.split("?")[0] : "",
 ): string {
   const u = new URL(baseUrl);
-  u.searchParams.set("session", descriptor.id);
-  u.searchParams.set("token", descriptor.token);
+  u.hash = new URLSearchParams({ session: descriptor.id, token: descriptor.token }).toString();
   return u.toString();
 }
 
@@ -50,12 +58,17 @@ export function buildShareConfig(descriptor: SessionDescriptor, transport = "bro
   };
 }
 
-/** Read session descriptor from current URL, or null if not a shared link. */
+/**
+ * Read session descriptor from the current URL, or null if not a shared link.
+ * Prefers the fragment (the non-leaking form {@link buildShareUrl} now emits),
+ * falling back to the query string for links minted before that change.
+ */
 export function readSessionFromUrl(): SessionDescriptor | null {
   if (typeof window === "undefined") return null;
-  const params = new URL(window.location.href).searchParams;
-  const id = params.get("session");
-  const token = params.get("token");
+  const url = new URL(window.location.href);
+  const frag = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const id = frag.get("session") ?? url.searchParams.get("session");
+  const token = frag.get("token") ?? url.searchParams.get("token");
   if (!id || !token) return null;
   return describeSession(id, token);
 }

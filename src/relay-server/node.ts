@@ -27,6 +27,15 @@ export type NodeRelayOptions = RelayBrokerOptions & {
   /** Comma-separated origins (or `*`) for CORS. Default `*` — relays
    *  are typically called cross-origin from the demo host. */
   corsAllowOrigin?: string;
+  /**
+   * Strict browser-origin allow-list. When set, only these Origins get a
+   * matching `Access-Control-Allow-Origin` (the request's own Origin is
+   * reflected, never `*`), which blunts DNS-rebinding + hostile cross-origin
+   * pages from reading relay responses. Recommended for any browser-facing
+   * deployment. When unset, `corsAllowOrigin` (default `*`) is used and the
+   * session token is the only auth — pair that with a loopback bind.
+   */
+  allowedOrigins?: string[];
 };
 
 export type NodeHandler = (req: IncomingMessage, res: ServerResponse) => unknown | Promise<unknown>;
@@ -50,10 +59,21 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
   const prefix = (opts.pathPrefix ?? "").replace(/\/$/, "");
   const cors = opts.corsAllowOrigin ?? "*";
 
-  function setCorsHeaders(res: ServerResponse) {
-    res.setHeader("access-control-allow-origin", cors);
+  const allowedOrigins = opts.allowedOrigins;
+
+  function setCorsHeaders(res: ServerResponse, req?: IncomingMessage) {
+    if (allowedOrigins && allowedOrigins.length) {
+      // Strict mode: reflect the request Origin only when it's allow-listed;
+      // otherwise emit an origin that no browser will match.
+      const origin = req?.headers.origin;
+      res.setHeader("access-control-allow-origin", origin && allowedOrigins.includes(origin) ? origin : "null");
+      res.setHeader("vary", "origin");
+    } else {
+      res.setHeader("access-control-allow-origin", cors);
+    }
     res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
-    res.setHeader("access-control-allow-headers", "content-type, x-csrf-token, accept");
+    // `authorization` is forward-compat for a header-borne session token.
+    res.setHeader("access-control-allow-headers", "content-type, x-csrf-token, accept, authorization");
     res.setHeader("access-control-max-age", "86400");
   }
 
@@ -95,7 +115,7 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
   }
 
   const register: NodeHandler = async (req, res) => {
-    setCorsHeaders(res);
+    setCorsHeaders(res, req);
     if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
     if (req.method !== "POST") return json(res, 405, { error: "method_not_allowed" });
     let body: string;
@@ -120,7 +140,7 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
     direction: Direction | "unregister",
   ): NodeHandler {
     return async (req, res) => {
-      setCorsHeaders(res);
+      setCorsHeaders(res, req);
       if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
       if (req.method !== "POST") return json(res, 405, { error: "method_not_allowed" });
       const session = extractSession(req, prefix);
@@ -148,7 +168,7 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
   const unregister = makeSessionHandler("unregister");
 
   const events: NodeHandler = async (req, res) => {
-    setCorsHeaders(res);
+    setCorsHeaders(res, req);
     if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
     if (req.method !== "GET") return json(res, 405, { error: "method_not_allowed" });
     const session = extractSession(req, prefix);

@@ -68,12 +68,34 @@ export type FormBridgeAdapter = {
   focus?: (name: string) => void;
   /** Submit the form. Returns the values that were submitted (or rejection). */
   submit?: () => Promise<{ ok: boolean; values?: Record<string, unknown>; error?: string }>;
+  /**
+   * Human confirm gate for `form_submit` (trust-but-verify). When `pendingMode`
+   * is on, the bridge calls this before submitting; return false to decline.
+   * Wire it to a human control — submitting a form is a human-visible,
+   * often-destructive action (checkout, delete, invite).
+   */
+  confirm?: (request: FormConfirmRequest) => Promise<boolean> | boolean;
+};
+
+/** What a `form_submit` confirm gate is asked to approve. */
+export type FormConfirmRequest = {
+  action: "submit";
+  form: string;
+  title?: string;
+  values: Record<string, unknown>;
 };
 
 export type FormBridgeOptions = {
   adapter: FormBridgeAdapter;
   /** Identity tagged into activity events. */
   agent?: { id: string; name?: string; color?: string };
+  /**
+   * Stage `form_submit` for human confirmation via `adapter.confirm` instead of
+   * submitting immediately. **Default: ON** (matches the navigation bridge and
+   * the Human+ trust-but-verify contract). Set false only when auto-submit is
+   * safe. If on without an `adapter.confirm`, submit proceeds (nothing to gate).
+   */
+  pendingMode?: boolean;
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
@@ -89,6 +111,7 @@ export function registerFormBridge(
 ): Bridge {
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
+  const pendingMode = options.pendingMode ?? true;
   const disposers: Array<() => void> = [];
 
   // agent_undo / agent_redo / agent_history are registered whenever any bridge
@@ -246,11 +269,22 @@ export function registerFormBridge(
 
   reg(
     "form_submit",
-    "Submit the form. Host returns ok + values (or an error).",
+    "Submit the form. Host returns ok + values (or an error). In pendingMode this is staged for the human to confirm first.",
     {},
     [],
     async () => {
       if (!adapter.submit) return errorResult("Host did not provide a submit implementation.");
+      // Trust-but-verify: a form submit is a human-visible / often-destructive
+      // action, so gate it on a human confirm when one is wired.
+      if (pendingMode && adapter.confirm) {
+        const ok = await adapter.confirm({
+          action: "submit",
+          form: formId,
+          title: adapter.title,
+          values: adapter.getValues(),
+        });
+        if (!ok) return errorResult("Declined by user");
+      }
       const result = await adapter.submit();
       if (!result.ok) return errorResult(result.error ?? "Submit failed");
       return textResult("Submitted", { values: result.values });

@@ -48,9 +48,47 @@ export type FilesBridgeOptions = {
   adapter: FilesBridgeAdapter;
   /** Identity tagged onto agent-driven actions. */
   agent?: { id: string; name?: string; color?: string };
+  /**
+   * Optional containment root. When set, every agent-supplied path is checked
+   * with {@link assertPathWithinRoot} before it reaches the adapter: a `..`
+   * segment or an absolute path outside `root` is rejected. This is a
+   * fail-closed, string-level guard (no filesystem access — the bridge runs in
+   * the browser). It is NOT sufficient on its own: a host over a real
+   * filesystem MUST additionally resolve symlinks/junctions (realpath) and
+   * enforce the root, because a link under `root` can still point outside it.
+   * When `root` is unset the bridge does no containment and the adapter is
+   * SOLELY responsible for sandboxing what `listChildren`/`requestSnapshot` expose.
+   */
+  root?: string;
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
+
+/** Host default cap on snapshot recursion, so an agent can't request an
+ *  unbounded deep walk. */
+const MAX_SNAPSHOT_DEPTH = 8;
+
+/**
+ * Fail-closed, filesystem-free path containment. Throws when `path` contains a
+ * `..` segment, or is absolute and not within `root`. Relative paths without
+ * `..` pass (resolved within root by the host). String-level only — see the
+ * `root` docs: hosts over a real fs must ALSO realpath to defeat symlinks.
+ */
+export function assertPathWithinRoot(root: string, path: string): void {
+  const segments = path.replace(/[\\/]+/g, "/").split("/");
+  if (segments.includes("..")) {
+    throw new Error(`Path may not contain '..': ${path}`);
+  }
+  const isAbsolute = /^([A-Za-z]:)?[\\/]/.test(path) || /^[A-Za-z]:/.test(path);
+  if (isAbsolute) {
+    const norm = (p: string): string => p.replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();
+    const r = norm(root);
+    const p = norm(path);
+    if (p !== r && !p.startsWith(r + "/")) {
+      throw new Error(`Path escapes the configured root: ${path}`);
+    }
+  }
+}
 
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const num = (v: unknown, fallback?: number): number =>
@@ -82,6 +120,13 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
+
+  // Reject traversal / out-of-root paths before they reach the adapter (no-op
+  // when no root is configured — the adapter is then responsible for sandboxing).
+  const guard = (path: string): string => {
+    if (options.root !== undefined) assertPathWithinRoot(options.root, path);
+    return path;
+  };
 
   // Register agent_undo / agent_redo / agent_history once per host. Idempotent.
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
@@ -154,7 +199,7 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
     { path: { type: "string", description: "Folder path to list; defaults to the current directory." } },
     [],
     async (args) => {
-      const path = args.path !== undefined ? str(args.path) : adapter.getPath();
+      const path = guard(args.path !== undefined ? str(args.path) : adapter.getPath());
       const entries = await adapter.listChildren(path);
       const summary = entries.map((e) => ({
         path: e.path,
@@ -178,7 +223,7 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
     { path: { type: "string" } },
     ["path"],
     (args) => {
-      const path = str(args.path);
+      const path = guard(str(args.path));
       const prev = adapter.getPath();
       adapter.setPath(path);
       pushUndoEntry(agent.id, {
@@ -202,7 +247,7 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
     { path: { type: "string" } },
     ["path"],
     (args) => {
-      const path = str(args.path);
+      const path = guard(str(args.path));
       if (adapter.getExpanded().includes(path)) {
         return textResult(`${path} already expanded`, { path, expanded: true });
       }
@@ -226,7 +271,7 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
     { path: { type: "string" } },
     ["path"],
     (args) => {
-      const path = str(args.path);
+      const path = guard(str(args.path));
       if (!adapter.getExpanded().includes(path)) {
         return textResult(`${path} already collapsed`, { path, expanded: false });
       }
@@ -255,7 +300,7 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
     },
     [],
     (args) => {
-      const next = args.paths !== undefined ? asPaths(args.paths) : asPaths(args.path);
+      const next = (args.paths !== undefined ? asPaths(args.paths) : asPaths(args.path)).map(guard);
       const prev = adapter.getSelection();
       adapter.setSelection(next);
       pushUndoEntry(agent.id, {
@@ -287,8 +332,10 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
       if (!adapter.requestSnapshot) {
         return errorResult("Host did not wire requestSnapshot (snapshot mode not enabled).");
       }
-      const path = args.path !== undefined ? str(args.path) : adapter.getPath();
-      const depth = args.depth !== undefined ? num(args.depth) : undefined;
+      const path = guard(args.path !== undefined ? str(args.path) : adapter.getPath());
+      // Clamp depth so an agent can't demand an unbounded recursive walk.
+      const depth =
+        args.depth !== undefined ? Math.max(0, Math.min(MAX_SNAPSHOT_DEPTH, num(args.depth))) : undefined;
       const tree = await adapter.requestSnapshot(path, depth);
       const count = Array.isArray(tree) ? tree.length : 0;
       return textResult(`Snapshot of ${path}: ${count} top-level entr${count === 1 ? "y" : "ies"}.`, {

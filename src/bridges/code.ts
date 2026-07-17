@@ -4,7 +4,11 @@ import type { JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
+import { pushUndoEntry } from "../undo/undo-stack";
 import type { AgentTarget } from "../presence/types";
+
+/** Streaming append is a UX nicety; large content must use code_set_value. */
+const MAX_STREAM_CHARS = 10_000;
 
 /**
  * Adapter the host wires to a fancy-code CodeEditor (typically via the
@@ -63,6 +67,21 @@ export function registerCodeBridge(
     screenId: adapter.screenId,
     elementId: adapter.id,
     label: adapter.title ?? adapter.id,
+  };
+
+  // Record a reversible document edit so agent_undo/redo actually work for code
+  // (they were registered but the code bridge pushed nothing — false
+  // recoverability). Captures the whole-document before/after; restore is a
+  // full setValue either way.
+  const recordUndo = (action: string, label: string, prevValue: string, nextValue: string): void => {
+    pushUndoEntry(agent.id, {
+      timestamp: Date.now(),
+      bridgeId: "code",
+      action,
+      label,
+      undo: () => adapter.setValue(prevValue),
+      redo: () => adapter.setValue(nextValue),
+    });
   };
 
   const reg = (
@@ -147,7 +166,9 @@ export function registerCodeBridge(
     ["value"],
     (args) => {
       const value = String(args.value ?? "");
+      const prev = adapter.getValue();
       adapter.setValue(value);
+      recordUndo("code_set_value", "Replace document", prev, value);
       return textResult(`Replaced document (${value.length} chars)`, { length: value.length });
     },
     true,
@@ -160,8 +181,10 @@ export function registerCodeBridge(
     ["text"],
     (args) => {
       const text = String(args.text ?? "");
-      const next = adapter.getValue() + text;
+      const prev = adapter.getValue();
+      const next = prev + text;
       adapter.setValue(next);
+      recordUndo("code_append", `Append ${text.length} chars`, prev, next);
       return textResult(`Appended ${text.length} chars`, { length: next.length });
     },
     true,
@@ -177,6 +200,11 @@ export function registerCodeBridge(
     ["text"],
     async (args) => {
       const text = String(args.text ?? "");
+      if (text.length > MAX_STREAM_CHARS) {
+        return errorResult(
+          `Text too long to stream (${text.length} > ${MAX_STREAM_CHARS}). Use code_set_value / code_append for large content.`,
+        );
+      }
       const cps = Math.max(1, Number(args.cps ?? 25));
       const interval = Math.max(8, Math.round(1000 / cps));
       const start = adapter.getValue();
@@ -184,6 +212,7 @@ export function registerCodeBridge(
         adapter.setValue(start + text.slice(0, i));
         if (i < text.length) await new Promise((r) => setTimeout(r, interval));
       }
+      recordUndo("code_stream_append", `Append ${text.length} chars`, start, start + text);
       return textResult(`Streamed ${text.length} chars`, { length: text.length });
     },
     true,
@@ -196,7 +225,10 @@ export function registerCodeBridge(
     ["text"],
     (args) => {
       if (!adapter.replaceSelection) return errorResult("Host did not provide replaceSelection.");
+      // No selection-range API, so restore is whole-document before/after.
+      const prev = adapter.getValue();
       adapter.replaceSelection(String(args.text ?? ""));
+      recordUndo("code_replace_selection", "Replace selection", prev, adapter.getValue());
       return textResult("Selection replaced", { });
     },
     true,
@@ -210,7 +242,18 @@ export function registerCodeBridge(
     (args) => {
       if (!adapter.setLanguage) return errorResult("Host did not provide setLanguage.");
       const lang = String(args.language ?? "");
+      const prevLang = adapter.getLanguage?.();
       adapter.setLanguage(lang);
+      if (prevLang !== undefined) {
+        pushUndoEntry(agent.id, {
+          timestamp: Date.now(),
+          bridgeId: "code",
+          action: "code_set_language",
+          label: `Language → ${lang}`,
+          undo: () => adapter.setLanguage?.(prevLang),
+          redo: () => adapter.setLanguage?.(lang),
+        });
+      }
       return textResult(`Language → ${lang}`, { language: lang });
     },
     true,
@@ -226,7 +269,8 @@ export function registerCodeBridge(
       adapter.focus();
       return textResult("Focused", { });
     },
-    true,
+    // Focus is not a document mutation — don't broadcast it as one or log undo.
+    false,
   );
 
   return {

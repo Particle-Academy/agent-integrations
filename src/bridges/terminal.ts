@@ -1,6 +1,6 @@
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
-import type { JsonObject } from "../mcp/types";
+import type { CallToolResult, JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
@@ -73,11 +73,31 @@ export type TerminalBridgeOptions = {
    * Trust-but-verify (Human+ contract for inhabited surfaces). When on,
    * `terminal_write` + `terminal_run` don't execute — they **stage** the command
    * (returning a pending id) and fire `onPending`. A human confirms via the
-   * `terminal_confirm` tool or the returned bridge's `confirm(id)`. Default off.
+   * returned bridge's `confirm(id)` (wire it to a human-only control).
+   *
+   * **Default: ON.** The terminal is the most dangerous surface (arbitrary shell),
+   * and possession of the relay session token = permission to call every tool, so
+   * it must fail SAFE. Pass `false` only for a fully-trusted, non-shared terminal
+   * where auto-execution is acceptable. A host that leaves this on MUST wire a
+   * human confirm path (`onPending` + `bridge.confirm`), or staged commands never run.
    */
   pendingMode?: boolean;
   /** Notified when a command is staged (pendingMode) — show it + offer confirm / reject. */
   onPending?: (pending: Staged) => void;
+  /**
+   * Expose `terminal_confirm` / `terminal_reject` as agent-callable tools.
+   * **Default: false** — otherwise the *same* agent that staged a command could
+   * confirm it, defeating the human-in-the-loop. Leave off and confirm via the
+   * returned `bridge.confirm(id)` wired to a human control.
+   */
+  allowAgentConfirm?: boolean;
+  /**
+   * Per-terminal authorization. Return false to hide a terminal id from this
+   * agent entirely (it won't appear in `terminal_list` and can't be targeted).
+   * Use it to scope an agent to its own pane(s); without it, `{ terminals }`
+   * grants the agent full read/write over EVERY terminal in the list.
+   */
+  canAccess?: (terminalId: string) => boolean;
 };
 
 export type TerminalBridge = Bridge & {
@@ -110,7 +130,10 @@ const truncate = (s: string, n = 60): string => (s.length > n ? s.slice(0, n) + 
  */
 export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOptions): TerminalBridge {
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
-  const pendingMode = options.pendingMode ?? false;
+  // Safe-by-default: the terminal stages for human confirmation unless a host
+  // explicitly opts a trusted, non-shared terminal into auto-exec (see the
+  // pendingMode docs). Every other write bridge already defaults to staged.
+  const pendingMode = options.pendingMode ?? true;
   const screenId = options.screenId ?? options.adapter?.screenId;
   const disposers: Array<() => void> = [];
   const staged = new Map<string, Staged>();
@@ -122,9 +145,13 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
   // The live terminal list — from `terminals()` (multi) or the single `adapter`
   // normalized to one active ref with the id "terminal".
   const listTerminals = (): TerminalRef[] => {
-    if (options.terminals) return options.terminals();
-    if (options.adapter) return [{ id: "terminal", label: "Terminal", active: true, ...options.adapter }];
-    return [];
+    const all = options.terminals
+      ? options.terminals()
+      : options.adapter
+        ? [{ id: "terminal", label: "Terminal", active: true, ...options.adapter }]
+        : [];
+    // Per-terminal ACL: an agent can only see/target terminals it's allowed to.
+    return options.canAccess ? all.filter((t) => options.canAccess!(t.id)) : all;
   };
 
   /** Resolve a terminal by id; with no id, the active one, else the first. */
@@ -147,6 +174,21 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
     elementId: terminalId ?? screenId ?? "terminal",
     label: label ?? "terminal",
   });
+
+  // Broadcast meta for terminal mutations: shape only, never the raw command /
+  // keystroke bytes (those may hold secrets, and the relay fans meta to every
+  // peer). Full data stays local to the tool result + onPending / bridge.confirm.
+  const redactMeta = (result: CallToolResult): Record<string, unknown> | undefined => {
+    const sc = result.structuredContent as Record<string, unknown> | undefined;
+    if (!sc || typeof sc !== "object") return undefined;
+    return {
+      terminal: sc.terminal,
+      kind: sc.kind,
+      length: typeof sc.data === "string" ? (sc.data as string).length : undefined,
+      executed: sc.executed,
+      pending: sc.pending,
+    };
+  };
 
   const TERMINAL_ARG = {
     terminal: {
@@ -177,7 +219,12 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
           agent,
           kind: "terminal",
           screenId,
-          resolveTarget: ({ args, result }) => resolveTarget?.(args, result) ?? target(),
+          // A per-call resolver may return null to SKIP the broadcast (e.g. a
+          // merely-staged command); only fall back to the default target when no
+          // resolver was supplied.
+          resolveTarget: ({ args, result }) => (resolveTarget ? resolveTarget(args, result) : target()),
+          // Never fan raw command/keystroke bytes to peers — broadcast shape only.
+          buildMeta: redactMeta,
         })
       : wrapped;
     disposers.push(
@@ -216,11 +263,15 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
   }
 
   async function stageOrExec(t: TerminalRef, kind: StagedKind, data: string) {
+    // The human-facing summary truncates for readability, but the full payload
+    // + its length ride in structuredContent / onPending so a confirm UI never
+    // silently under-shows a long escape/injection payload.
     if (!pendingMode) {
       await exec(t, kind, data);
       return textResult(`${kind === "run" ? "ran" : "wrote"} on ${t.id}: ${truncate(data)}`, {
         kind,
         data,
+        length: data.length,
         terminal: t.id,
         executed: true,
       });
@@ -231,7 +282,7 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
     options.onPending?.(entry);
     return textResult(
       `Staged ${kind} on ${t.id} (id ${id}) — awaiting human confirmation: ${truncate(data)}`,
-      { ...entry, pending: true },
+      { ...entry, length: data.length, pending: true },
     );
   }
 
@@ -285,12 +336,14 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
   // ── Mutations ───────────────────────────────────────────────────────────────
   reg(
     "terminal_write",
-    "Write raw data / keystrokes to a terminal (input, control chars, ANSI). Pass `terminal` to target a specific one. In pendingMode this stages instead of executing.",
+    "Write raw data / keystrokes to a terminal (input, control chars, ANSI). Pass `terminal` to target a specific one. In pendingMode this stages instead of executing. NOTE: bytes are written verbatim — an embedded CR runs a command, and ANSI/OSC sequences reach the terminal; treat this exactly like terminal_run for gating.",
     { ...TERMINAL_ARG, data: { type: "string", description: "Raw bytes to write." } },
     ["data"],
     (args) => stageOrExec(need(args), "write", String(args.data)),
     true,
-    (args) => target(`write:${String(args.terminal ?? "")}`, resolve(args.terminal)?.id),
+    // Skip the peer broadcast while only staged; emit once it actually executes.
+    (args, result) =>
+      result?.structuredContent?.pending ? null : target(`write:${String(args.terminal ?? "")}`, resolve(args.terminal)?.id),
   );
 
   reg(
@@ -300,43 +353,54 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
     ["command"],
     (args) => stageOrExec(need(args), "run", String(args.command)),
     true,
-    (args) => target(truncate(String(args.command ?? "")), resolve(args.terminal)?.id),
+    (args, result) =>
+      result?.structuredContent?.pending ? null : target(truncate(String(args.command ?? "")), resolve(args.terminal)?.id),
   );
 
-  reg(
-    "terminal_confirm",
-    "Confirm + execute a staged command by id (pendingMode).",
-    { id: { type: "string" } },
-    ["id"],
-    async (args) => {
-      const id = String(args.id);
-      const entry = staged.get(id);
-      if (!entry) return errorResult(`No staged command ${id}`);
-      const t = resolve(entry.terminalId);
-      if (!t) return errorResult(`Terminal '${entry.terminalId}' is gone — cannot run ${id}`);
-      staged.delete(id);
-      await exec(t, entry.kind, entry.data);
-      return textResult(`Confirmed ${id}: ${entry.kind} on ${t.id} ${truncate(entry.data)}`, { ...entry, executed: true });
-    },
-    true,
-    (args) => {
-      const e = staged.get(String(args.id));
-      return target(`confirm:${String(args.id ?? "")}`, e?.terminalId);
-    },
-  );
+  // Confirmation is HUMAN-driven by default: the acting agent must not be able to
+  // confirm its own staged command (that would defeat pendingMode). Hosts confirm
+  // via the returned `bridge.confirm(id)` wired to a human control. Only expose
+  // the agent-callable tools when a host explicitly opts in.
+  if (options.allowAgentConfirm) {
+    reg(
+      "terminal_confirm",
+      "Confirm + execute a staged command by id (pendingMode).",
+      { id: { type: "string" } },
+      ["id"],
+      async (args) => {
+        const id = String(args.id);
+        const entry = staged.get(id);
+        if (!entry) return errorResult(`No staged command ${id}`);
+        const t = resolve(entry.terminalId);
+        if (!t) return errorResult(`Terminal '${entry.terminalId}' is gone — cannot run ${id}`);
+        staged.delete(id);
+        await exec(t, entry.kind, entry.data);
+        return textResult(`Confirmed ${id}: ${entry.kind} on ${t.id} ${truncate(entry.data)}`, {
+          ...entry,
+          length: entry.data.length,
+          executed: true,
+        });
+      },
+      true,
+      (args) => {
+        const e = staged.get(String(args.id));
+        return target(`confirm:${String(args.id ?? "")}`, e?.terminalId);
+      },
+    );
 
-  reg(
-    "terminal_reject",
-    "Drop a staged command by id without executing it.",
-    { id: { type: "string" } },
-    ["id"],
-    (args) => {
-      const id = String(args.id);
-      if (!staged.delete(id)) return errorResult(`No staged command ${id}`);
-      return textResult(`Rejected ${id}`, { id, rejected: true });
-    },
-    false,
-  );
+    reg(
+      "terminal_reject",
+      "Drop a staged command by id without executing it.",
+      { id: { type: "string" } },
+      ["id"],
+      (args) => {
+        const id = String(args.id);
+        if (!staged.delete(id)) return errorResult(`No staged command ${id}`);
+        return textResult(`Rejected ${id}`, { id, rejected: true });
+      },
+      false,
+    );
+  }
 
   if (canClear) {
     reg(
@@ -386,9 +450,15 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
         const t = need(args);
         if (!t.setShell) return errorResult(`Terminal '${t.id}' can't switch shells.`);
         const id = String(args.id);
+        // Fail closed: only allow a shell that is explicitly listed. A terminal
+        // exposing setShell without listShells (or with an empty list) rejects
+        // every id, so an unvalidated agent string can never reach setShell
+        // (which a host may map to an executable = arbitrary-binary launch).
         const shells = t.listShells?.();
-        if (shells && shells.length && !shells.some((s) => s.id === id)) {
-          return errorResult(`Unknown shell '${id}' for ${t.id}. Use terminal_list_shells for valid ids.`);
+        if (!shells || !shells.some((s) => s.id === id)) {
+          return errorResult(
+            `Unknown or unlisted shell '${id}' for ${t.id}. Call terminal_list_shells for valid ids.`,
+          );
         }
         await t.setShell(id);
         return textResult(`Switched ${t.id} shell to ${id}`, { shell: id, terminal: t.id });

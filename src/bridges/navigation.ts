@@ -232,6 +232,17 @@ export function registerNavigationBridge(
       if (stale) return stale;
       const url = String(args.url ?? "");
       if (!url) return errorResult("url is required");
+      // Scheme allow-list: permit only same-site/relative paths and http(s)
+      // absolutes. A `javascript:` / `data:` / `file:` / `vbscript:` URL handed
+      // to a host that wires visit() to window.location would execute as the
+      // human — a semi-trusted agent (steerable via page_read prompt injection)
+      // must not reach those.
+      const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(url)?.[1]?.toLowerCase();
+      if (scheme && scheme !== "http" && scheme !== "https") {
+        return errorResult(
+          `Refusing to navigate to a '${scheme}:' URL. Only http(s) URLs or same-site paths are allowed.`,
+        );
+      }
       const from = adapter.getLocation().url;
       await adapter.visit(url);
       pushUndoEntry(agent.id, {

@@ -239,8 +239,40 @@ export class RelayBroker {
     }
   }
 
+  /**
+   * Validate that a peer-supplied payload is a well-formed JSON-RPC 2.0 frame
+   * (or batch) before it is fanned out. Previously this was a substring match on
+   * `"jsonrpc"`, which let any token holder inject spoofed frames — a forged
+   * `notifications/peer_joined` / `peer_left` (broker-reserved presence control),
+   * a fake `notifications/agent_activity {source:"user"}` ("human took control"),
+   * or a forged response with a matching id. We now parse + shape-check, and
+   * reject the broker-reserved control methods (the broker emits those itself,
+   * never a peer).
+   */
   private isFrame(payload: string): boolean {
-    return payload.length > 0 && payload.includes('"jsonrpc"');
+    if (payload.length === 0) return false;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      return false;
+    }
+    const frames = Array.isArray(parsed) ? parsed : [parsed];
+    return frames.length > 0 && frames.every((f) => this.isValidFrame(f));
+  }
+
+  private isValidFrame(f: unknown): boolean {
+    if (!f || typeof f !== "object" || Array.isArray(f)) return false;
+    const o = f as Record<string, unknown>;
+    if (o.jsonrpc !== "2.0") return false;
+    const method = typeof o.method === "string" ? o.method : undefined;
+    // Broker-reserved control frames may never arrive from a peer.
+    if (method === "notifications/peer_joined" || method === "notifications/peer_left") return false;
+    if (method !== undefined) return true; // request or notification
+    // Response: needs an id and exactly one of result / error.
+    const hasResult = "result" in o;
+    const hasError = "error" in o;
+    return "id" in o && hasResult !== hasError;
   }
 
   private reap() {

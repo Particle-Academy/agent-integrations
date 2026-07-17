@@ -228,6 +228,35 @@ Agents (Claude Desktop, Cline, custom) connect to the same channel via your auth
 | `whiteboard_set_viewport` | Pan / zoom |
 | `whiteboard_set_agent_cursor` | Move presence |
 
+## Security / host obligations
+
+These bridges let an agent drive a human's terminal / files / editor / browser, so
+the host contract carries real weight. What the package does — and what it leaves
+to you:
+
+- **The MCP server is unauthenticated by design.** `MicroMcpServer` does no
+  per-tool auth — possession of the relay **session token = permission to call
+  every tool**, including `terminal_run`. Put it behind an **authenticating relay**
+  and treat the token as a password. The standalone `ai-relay` now binds
+  **`127.0.0.1`** by default (pass `--host 0.0.0.0` to expose, with a warning).
+- **Terminal is staged by default.** `registerTerminalBridge` defaults
+  `pendingMode: true` and does **not** expose `terminal_confirm`/`terminal_reject`
+  as agent tools (an agent must not confirm its own command). Wire a **human**
+  control to the returned `bridge.confirm(id)`. `terminal_write` bytes are written
+  verbatim (an embedded CR runs a command; ANSI/OSC reach the terminal) — set
+  `osc52={false}` on any agent-driveable `<Terminal>` and gate writes like runs.
+  `{ terminals }` grants the agent every listed pane unless you pass `canAccess`.
+- **Files must be root-scoped by the host.** Pass `root` to `registerFilesBridge`
+  for a fail-closed string guard, but a host over a real filesystem MUST also
+  `realpath` to defeat symlink/junction escapes — the bridge can't (it runs in the
+  browser).
+- **Navigation / forms are trust-but-verify.** `nav_visit` allows only
+  `http(s)`/relative URLs; `form_submit` stages on `adapter.confirm` when
+  `pendingMode` is on.
+- **The relay fans tool results + activity to all peers.** The terminal bridge
+  redacts raw command bytes from broadcast meta, but any `structuredContent` you
+  return is visible to every connected peer — don't return secrets.
+
 ## Status
 
 `v0.1` — protocol + whiteboard bridge + UI. APIs will evolve before `v1`.
