@@ -54,11 +54,11 @@ describe("registerFilesBridge — root containment", () => {
 
   it("clamps snapshot depth", async () => {
     const host = new ToolRegistry();
-    const requestSnapshot = vi.fn(() => []);
+    const requestSnapshot = vi.fn((_path: string, _depth?: number) => [] as never[]);
     registerFilesBridge(host, { adapter: makeAdapter({ requestSnapshot }), root: "/root" });
 
     await host.callTool("files_request_snapshot", { path: "/root", depth: 9999 });
-    const passedDepth = requestSnapshot.mock.calls[0][1];
+    const passedDepth = requestSnapshot.mock.calls[0]?.[1];
     expect(passedDepth).toBeLessThanOrEqual(8);
   });
 });
