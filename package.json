@@ -1,6 +1,6 @@
 {
   "name": "@particle-academy/agent-integrations",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "description": "MCP-driven agent presence in collab sessions: per-session micro-MCP server, pluggable bridges to fancy-* packages, and agent UX components (panel + on-canvas cursor).",
   "repository": {
     "type": "git",
@@ -147,6 +147,16 @@
         "default": "./dist/bridges-map.cjs"
       }
     },
+    "./bridges/git": {
+      "import": {
+        "types": "./dist/bridges/git.d.ts",
+        "default": "./dist/bridges-git.js"
+      },
+      "require": {
+        "types": "./dist/bridges/git.d.cts",
+        "default": "./dist/bridges-git.cjs"
+      }
+    },
     "./bridges/files": {
       "import": {
         "types": "./dist/bridges/files.d.ts",
@@ -208,16 +218,34 @@
       }
     },
     "./bridges/tui": {
-      "import": { "types": "./dist/bridges/tui.d.ts", "default": "./dist/bridges-tui.js" },
-      "require": { "types": "./dist/bridges/tui.d.cts", "default": "./dist/bridges-tui.cjs" }
+      "import": {
+        "types": "./dist/bridges/tui.d.ts",
+        "default": "./dist/bridges-tui.js"
+      },
+      "require": {
+        "types": "./dist/bridges/tui.d.cts",
+        "default": "./dist/bridges-tui.cjs"
+      }
     },
     "./human-plus": {
-      "import": { "types": "./dist/human-plus/index.d.ts", "default": "./dist/human-plus.js" },
-      "require": { "types": "./dist/human-plus/index.d.cts", "default": "./dist/human-plus.cjs" }
+      "import": {
+        "types": "./dist/human-plus/index.d.ts",
+        "default": "./dist/human-plus.js"
+      },
+      "require": {
+        "types": "./dist/human-plus/index.d.cts",
+        "default": "./dist/human-plus.cjs"
+      }
     },
     "./human-plus/node": {
-      "import": { "types": "./dist/human-plus/file-store.d.ts", "default": "./dist/human-plus-node.js" },
-      "require": { "types": "./dist/human-plus/file-store.d.cts", "default": "./dist/human-plus-node.cjs" }
+      "import": {
+        "types": "./dist/human-plus/file-store.d.ts",
+        "default": "./dist/human-plus-node.js"
+      },
+      "require": {
+        "types": "./dist/human-plus/file-store.d.cts",
+        "default": "./dist/human-plus-node.cjs"
+      }
     },
     "./sheets-adapter": {
       "import": {

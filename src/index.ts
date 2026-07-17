@@ -116,6 +116,12 @@ export {
   type MapBridgeOptions,
 } from "./bridges/map";
 export {
+  registerGitBridge,
+  type GitBridgeAdapter,
+  type GitBridgeOptions,
+  type GitProposal,
+} from "./bridges/git";
+export {
   registerFilesBridge,
   type FilesBridgeAdapter,
   type FilesBridgeOptions,
