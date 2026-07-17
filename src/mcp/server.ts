@@ -96,7 +96,7 @@ export class MicroMcpServer extends ToolRegistry {
 
     const request = message as JsonRpcRequest;
     try {
-      const result = await this.handle(request);
+      const result = await this.handle(request, transport);
       transport.send({ jsonrpc: "2.0", id: request.id, result });
     } catch (err) {
       transport.send({
@@ -107,7 +107,7 @@ export class MicroMcpServer extends ToolRegistry {
     }
   }
 
-  private async handle(request: JsonRpcRequest): Promise<any> {
+  private async handle(request: JsonRpcRequest, transport: Transport): Promise<any> {
     const { method, params } = request;
     switch (method) {
       case "initialize":
@@ -131,7 +131,7 @@ export class MicroMcpServer extends ToolRegistry {
         if (!tool) {
           throw rpcError(JSONRPC_METHOD_NOT_FOUND, `Unknown tool: ${name}`);
         }
-        const result = await tool.handler(args);
+        const result = await tool.handler(args, { transport });
         return result satisfies CallToolResult;
       }
 
@@ -150,6 +150,12 @@ export class MicroMcpServer extends ToolRegistry {
       this.notifyListChangedScheduled = false;
       this.broadcast({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
     });
+  }
+
+  /** Send an application notification to every client, or one attached transport. */
+  notify(message: JsonRpcMessage, transport?: Transport): void {
+    if (transport) transport.send(message);
+    else this.broadcast(message);
   }
 
   private broadcast(message: JsonRpcMessage): void {

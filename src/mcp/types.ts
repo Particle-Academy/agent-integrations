@@ -56,6 +56,7 @@ export type ServerCapabilities = {
   resources?: { listChanged?: boolean; subscribe?: boolean };
   prompts?: { listChanged?: boolean };
   logging?: Record<string, never>;
+  experimental?: Record<string, JsonValue>;
 };
 
 export type ServerInfo = {
@@ -98,7 +99,8 @@ export type CallToolResult = {
 };
 
 /** Handler signature for a tool registered on the MicroMcpServer. */
-export type ToolHandler = (args: JsonObject) => Promise<CallToolResult> | CallToolResult;
+export type ToolCallContext = { transport?: unknown };
+export type ToolHandler = (args: JsonObject, context?: ToolCallContext) => Promise<CallToolResult> | CallToolResult;
 
 /** Internal record kept by the server. */
 export type RegisteredTool = {

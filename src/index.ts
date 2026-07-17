@@ -25,12 +25,23 @@ export type {
   JsonObject,
   ToolDefinition,
   ToolHandler,
+  ToolCallContext,
   CallToolResult,
   ContentBlock,
   ServerCapabilities,
   ServerInfo,
   InitializeResult,
 } from "./mcp/types";
+export {
+  MemoryHumanPlusEventStore,
+  type HumanPlusEvent,
+  type NewHumanPlusEvent,
+  type HumanPlusEventStore,
+  type HumanPlusEventQuery,
+  type HumanPlusEventPage,
+  type HumanPlusDisposition,
+} from "./human-plus/events";
+export { registerTuiBridge, type TuiBridgeOptions, type TuiSurfaceRegistryLike } from "./bridges/tui";
 export { MCP_PROTOCOL_VERSION } from "./mcp/types";
 
 // Bridges
