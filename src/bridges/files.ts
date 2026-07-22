@@ -81,7 +81,13 @@ export function assertPathWithinRoot(root: string, path: string): void {
   }
   const isAbsolute = /^([A-Za-z]:)?[\\/]/.test(path) || /^[A-Za-z]:/.test(path);
   if (isAbsolute) {
-    const norm = (p: string): string => p.replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();
+    // Strip a trailing slash with `\/$`, NOT `\/+$`. The quantified `\/+$`
+    // is a polynomial-ReDoS on paths with many slashes (CodeQL js/polynomial-
+    // redos), and the `+` is redundant here: the preceding
+    // `.replace(/[\\/]+/g, "/")` has already collapsed every slash-run to a
+    // single `/`, so at most one trailing slash can remain. Non-quantified
+    // `\/$` matches the same input in linear time.
+    const norm = (p: string): string => p.replace(/[\\/]+/g, "/").replace(/\/$/, "").toLowerCase();
     const r = norm(root);
     const p = norm(path);
     if (p !== r && !p.startsWith(r + "/")) {

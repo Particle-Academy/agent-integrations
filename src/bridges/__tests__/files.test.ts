@@ -29,6 +29,26 @@ describe("assertPathWithinRoot", () => {
     expect(() => assertPathWithinRoot("/root", "/root/sub")).not.toThrow();
     expect(() => assertPathWithinRoot("C:/proj", "C:/proj/src")).not.toThrow();
   });
+
+  it("collapses redundant slashes without a trailing slash changing the verdict", () => {
+    // The trailing-slash strip must still behave: a root or path with a trailing
+    // slash compares equal to the same without one.
+    expect(() => assertPathWithinRoot("/root/", "/root/sub")).not.toThrow();
+    expect(() => assertPathWithinRoot("/root", "/root/sub/")).not.toThrow();
+    expect(() => assertPathWithinRoot("/root//deep", "/root/deep/x")).not.toThrow();
+    expect(() => assertPathWithinRoot("/root", "/rootother/x")).toThrow();
+  });
+
+  it("handles a path of many slashes correctly (the CodeQL-flagged regex was here)", () => {
+    // CodeQL flagged `/\/+$/` as a polynomial ReDoS. In THIS path it is defused
+    // — the preceding `.replace(/[\\/]+/g, "/")` collapses every slash-run to a
+    // single `/` before the trailing-strip regex runs, so no repetition ever
+    // reaches it. The fix drops the redundant `+` for hygiene and to clear the
+    // alert; this asserts the collapse-then-guard still returns the right
+    // verdict on a pathological many-slash input.
+    expect(() => assertPathWithinRoot("/root", "/" + "/".repeat(10_000) + "etc/passwd")).toThrow();
+    expect(() => assertPathWithinRoot("/root", "/root" + "/".repeat(10_000) + "sub")).not.toThrow();
+  });
 });
 
 describe("registerFilesBridge — root containment", () => {
