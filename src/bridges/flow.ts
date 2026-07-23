@@ -45,12 +45,46 @@ export type FlowBridgeAdapter = {
   /** Optional: set per-node status text without going through the runner
    *  (useful for agents narrating). */
   setNodeStatus?: (id: string, status: NodeRunStatus, text?: string) => void;
+  /**
+   * Human confirm gate for staged actions (trust-but-verify). When
+   * `pendingMode` is on, the bridge calls this before a destructive action;
+   * return false to decline. Wire it to a human control.
+   */
+  confirm?: (request: FlowConfirmRequest) => Promise<boolean> | boolean;
 };
+
+/** What a staged (pendingMode) flow action asks a human to approve. */
+export type FlowConfirmRequest =
+  | { action: "delete_node"; nodeId: string; label?: string }
+  | { action: "run" };
 
 export type FlowBridgeOptions = {
   adapter: FlowBridgeAdapter;
   /** Identity tagged onto agent-authored nodes. */
   agent?: { id: string; name?: string; color?: string };
+  /**
+   * Enforce port-type compatibility on `flow_connect`, using fancy-flow's
+   * `createConnectionValidator` — the SAME rule `<FlowCanvas>` applies, so an
+   * agent can't build an edge the canvas would refuse. `true` (default) uses the
+   * default rule (untyped ports permissive); pass `ConnectionValidatorOptions`
+   * to tune it, or `false` to disable. No-ops if fancy-flow (>= 0.18.0) isn't
+   * importable — the bridge falls back to the existence-only check.
+   */
+  validateConnections?: boolean | Record<string, unknown>;
+  /**
+   * Validate a node's config against its kind's `configSchema` on
+   * `flow_add_node` / `flow_update_node`. `"reject"` (default) refuses an
+   * invalid write; `"warn"` applies it but reports the issues; `"off"` skips.
+   * No-ops for the legacy 6-pack (no schema) and when fancy-flow isn't importable.
+   */
+  validateConfig?: "reject" | "warn" | "off";
+  /**
+   * Stage destructive/human-visible actions (`flow_delete_node`, `flow_run`) for
+   * human confirmation via `adapter.confirm` instead of applying immediately.
+   * **Default: OFF** — flow authoring is high-frequency, unlike a form submit.
+   * When on without an `adapter.confirm`, the action proceeds (nothing to gate).
+   */
+  pendingMode?: boolean;
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
@@ -76,6 +110,30 @@ export function registerFlowBridge(
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
+
+  const pendingMode = options.pendingMode ?? false;
+  const validateConfigMode = options.validateConfig ?? "reject";
+
+  // Lazily build the connection validator from fancy-flow (>= 0.18.0) and cache
+  // it. `undefined` = not yet tried, `null` = unavailable/disabled → fall back
+  // to the existence-only check. The validator reads nodes live via the getter.
+  let connValidator: ((c: any) => boolean) | null | undefined = undefined;
+  const getConnValidator = async (): Promise<((c: any) => boolean) | null> => {
+    if (connValidator !== undefined) return connValidator;
+    if (options.validateConnections === false) return (connValidator = null);
+    try {
+      // @ts-ignore — optional peer dep, may not be installed
+      const { createConnectionValidator } = await import("@particle-academy/fancy-flow" as any);
+      const opts =
+        options.validateConnections && options.validateConnections !== true
+          ? options.validateConnections
+          : undefined;
+      connValidator = createConnectionValidator(() => adapter.getNodes() as any, opts);
+    } catch {
+      connValidator = null;
+    }
+    return connValidator ?? null;
+  };
 
   // agent_undo / agent_redo / agent_history are registered whenever any bridge
   // mounts, so undo availability doesn't hinge on which bridges are co-present.
@@ -161,13 +219,13 @@ export function registerFlowBridge(
     "List every node kind registered in fancy-flow's registry. Use this to discover what's authorable before adding nodes.",
     { category: { type: "string", description: "Optional category filter: trigger | logic | data | ai | io | human | output | custom." } },
     [],
-    async () => {
+    async (args) => {
       // Dynamic import keeps the bridge usable even when fancy-flow isn't loaded.
       try {
         // @ts-ignore — optional peer dep, may not be installed
         const { listNodeKinds } = await import("@particle-academy/fancy-flow" as any);
-        const cat = adapter ? undefined : undefined; // placeholder
-        const all = (cat ? listNodeKinds(cat) : listNodeKinds()).map((k: any) => ({
+        const category = typeof args.category === "string" ? args.category : undefined;
+        const all = (category ? listNodeKinds().filter((k: any) => k.category === category) : listNodeKinds()).map((k: any) => ({
           name: k.name,
           category: k.category,
           label: k.label,
@@ -257,6 +315,24 @@ export function registerFlowBridge(
       }
       const id = newId("n");
       const config = { ...defaults, ...((args.config && typeof args.config === "object") ? (args.config as Record<string, unknown>) : {}) };
+      let configWarnings: string[] = [];
+      if (kindDef && validateConfigMode !== "off") {
+        try {
+          // @ts-ignore — optional peer dep
+          const { validateConfig } = await import("@particle-academy/fancy-flow" as any);
+          const issues = (validateConfig(kindDef, config) ?? []) as Array<{ message: string }>;
+          if (issues.length) {
+            if (validateConfigMode === "reject") {
+              return errorResult(
+                `Config invalid for ${kindName}: ${issues.map((i) => i.message).join("; ")}. Call flow_get_node_schema for the accepted fields.`,
+              );
+            }
+            configWarnings = issues.map((i) => i.message);
+          }
+        } catch {
+          /* fancy-flow not importable → skip validation */
+        }
+      }
       const node: FlowNode = {
         id,
         type: kindName,
@@ -270,7 +346,10 @@ export function registerFlowBridge(
         } as any,
       };
       adapter.setNodes((all) => [...all, node]);
-      return textResult(`Added ${kindName} ${id} ("${str(args.label)}")`, node);
+      return textResult(
+        `Added ${kindName} ${id} ("${str(args.label)}")${configWarnings.length ? ` — config warnings: ${configWarnings.join("; ")}` : ""}`,
+        node,
+      );
     },
     flTarget,
   );
@@ -287,32 +366,55 @@ export function registerFlowBridge(
       config: { type: "object" },
     },
     ["id"],
-    (args) => {
+    async (args) => {
       const id = str(args.id);
-      let updated: FlowNode | null = null;
-      adapter.setNodes((all) =>
-        all.map((n) => {
-          if (n.id !== id) return n;
-          updated = {
-            ...n,
-            position: {
-              x: args.x !== undefined ? num(args.x) : n.position.x,
-              y: args.y !== undefined ? num(args.y) : n.position.y,
-            },
-            data: {
-              ...n.data,
-              ...(args.label !== undefined ? { label: str(args.label) } : {}),
-              ...(args.description !== undefined ? { description: str(args.description) } : {}),
-              ...(args.config && typeof args.config === "object"
-                ? { config: { ...(n.data.config ?? {}), ...(args.config as Record<string, unknown>) } }
-                : {}),
-            },
-          };
-          return updated;
-        }),
+      // Read first so config validation can veto BEFORE any mutation applies.
+      const current = adapter.getNodes().find((n) => n.id === id);
+      if (!current) return errorResult(`No node with id ${id}`);
+
+      const mergedConfig =
+        args.config && typeof args.config === "object"
+          ? { ...(current.data.config ?? {}), ...(args.config as Record<string, unknown>) }
+          : current.data.config;
+
+      let configWarnings: string[] = [];
+      if (args.config && typeof args.config === "object" && validateConfigMode !== "off") {
+        try {
+          // @ts-ignore — optional peer dep
+          const { getNodeKind, validateConfig } = await import("@particle-academy/fancy-flow" as any);
+          const kindDef = getNodeKind((current.data as any).kind ?? current.type);
+          if (kindDef) {
+            const issues = (validateConfig(kindDef, mergedConfig ?? {}) ?? []) as Array<{ message: string }>;
+            if (issues.length) {
+              if (validateConfigMode === "reject") {
+                return errorResult(`Config invalid for ${id}: ${issues.map((i) => i.message).join("; ")}.`);
+              }
+              configWarnings = issues.map((i) => i.message);
+            }
+          }
+        } catch {
+          /* fancy-flow not importable → skip validation */
+        }
+      }
+
+      const updated: FlowNode = {
+        ...current,
+        position: {
+          x: args.x !== undefined ? num(args.x) : current.position.x,
+          y: args.y !== undefined ? num(args.y) : current.position.y,
+        },
+        data: {
+          ...current.data,
+          ...(args.label !== undefined ? { label: str(args.label) } : {}),
+          ...(args.description !== undefined ? { description: str(args.description) } : {}),
+          ...(args.config && typeof args.config === "object" ? { config: mergedConfig } : {}),
+        },
+      };
+      adapter.setNodes((all) => all.map((n) => (n.id === id ? updated : n)));
+      return textResult(
+        `Updated node ${id}${configWarnings.length ? ` — config warnings: ${configWarnings.join("; ")}` : ""}`,
+        updated,
       );
-      if (!updated) return errorResult(`No node with id ${id}`);
-      return textResult(`Updated node ${id}`, updated);
     },
     flTarget,
   );
@@ -322,13 +424,17 @@ export function registerFlowBridge(
     "Remove a node by id (also removes any connected edges).",
     { id: { type: "string" } },
     ["id"],
-    (args) => {
+    async (args) => {
       const id = str(args.id);
       // Validate existence BEFORE scheduling the state update — React's
       // functional updaters may run async in strict mode, so checking a
       // flag set inside the updater would race the response.
-      if (!adapter.getNodes().some((n) => n.id === id)) {
-        return errorResult(`No node with id ${id}`);
+      const target = adapter.getNodes().find((n) => n.id === id);
+      if (!target) return errorResult(`No node with id ${id}`);
+      // Destructive → stage for human confirmation when pendingMode is on.
+      if (pendingMode && adapter.confirm) {
+        const ok = await adapter.confirm({ action: "delete_node", nodeId: id, label: target.data?.label });
+        if (!ok) return textResult(`Delete of node ${id} was declined by the human.`);
       }
       adapter.setNodes((all) => all.filter((n) => n.id !== id));
       adapter.setEdges((all) => all.filter((e) => e.source !== id && e.target !== id));
@@ -350,18 +456,31 @@ export function registerFlowBridge(
       label: { type: "string" },
     },
     ["source", "target"],
-    (args) => {
+    async (args) => {
       const source = str(args.source);
       const target = str(args.target);
+      const sourceHandle = args.sourceHandle ? str(args.sourceHandle) : undefined;
+      const targetHandle = args.targetHandle ? str(args.targetHandle) : undefined;
       const all = adapter.getNodes();
       if (!all.find((n) => n.id === source)) return errorResult(`No source node ${source}`);
       if (!all.find((n) => n.id === target)) return errorResult(`No target node ${target}`);
+
+      // Enforce port-type compatibility with the SAME rule <FlowCanvas> applies,
+      // so an agent can't build an edge the canvas would refuse (no drift).
+      const validate = await getConnValidator();
+      if (validate && !validate({ source, target, sourceHandle: sourceHandle ?? null, targetHandle: targetHandle ?? null })) {
+        if (source === target) return errorResult(`Cannot connect node ${source} to itself.`);
+        return errorResult(
+          `Invalid connection ${source}${sourceHandle ? `:${sourceHandle}` : ""} → ${target}${targetHandle ? `:${targetHandle}` : ""}: incompatible port types or unknown handle. Call flow_get_node_schema to check the ports.`,
+        );
+      }
+
       const edge: FlowEdge = {
         id: newId("e"),
         source,
         target,
-        ...(args.sourceHandle ? { sourceHandle: str(args.sourceHandle) } : {}),
-        ...(args.targetHandle ? { targetHandle: str(args.targetHandle) } : {}),
+        ...(sourceHandle ? { sourceHandle } : {}),
+        ...(targetHandle ? { targetHandle } : {}),
         ...(args.label ? { label: str(args.label) } : {}),
       };
       adapter.setEdges((existing) => [...existing, edge]);
@@ -427,6 +546,10 @@ export function registerFlowBridge(
     [],
     async () => {
       if (!adapter.run) return errorResult("Host did not provide a run handler.");
+      if (pendingMode && adapter.confirm) {
+        const ok = await adapter.confirm({ action: "run" });
+        if (!ok) return textResult("Run was declined by the human.");
+      }
       const result = await adapter.run();
       return textResult(result.ok ? "Run complete" : `Run failed: ${result.error ?? "unknown"}`, result);
     },
