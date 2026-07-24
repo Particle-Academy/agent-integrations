@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.32.0] — 2026-07-23
+## [0.32.0] — 2026-07-24
+
+> This release also cuts work already merged to `main` but unreleased since
+> 0.31.0: a Human+ **Git bridge** (`registerGitBridge`), a **files-bridge
+> ReDoS** hardening, and the CI workflow.
 
 ### Added
 
