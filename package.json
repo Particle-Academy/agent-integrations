@@ -347,7 +347,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit && eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
@@ -418,11 +418,14 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "jsdom": "^25.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^3.0.0"
   },
   "publishConfig": {
