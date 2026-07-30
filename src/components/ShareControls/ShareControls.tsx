@@ -1,5 +1,6 @@
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import type { SessionDescriptor } from "../../sharing/token";
+import type { AgentActivity } from "../AgentPanel";
 import { buildShareConfig, buildShareUrl } from "../../sharing/token";
 
 export type ShareControlsProps = {
@@ -9,13 +10,27 @@ export type ShareControlsProps = {
   onStop: () => void;
   /** Optional connection-state badge text. */
   status?: string;
+  /**
+   * True once an agent has actually connected to the session.
+   *
+   * Flips the panel from "here is how to connect" to "here is what the agent is
+   * doing" — the paste-this-prompt UI is dead weight the moment it has been
+   * pasted, and what the human needs then is visibility.
+   */
+  agentConnected?: boolean;
+  /**
+   * What the agent has done, newest last. Reuses `AgentActivity` from
+   * `AgentPanel` rather than a second shape, so a host already collecting
+   * presence events can pass the same array to both.
+   */
+  activity?: AgentActivity[];
   /** Override the URL base used in the share URL. */
   shareBaseUrl?: string;
   className?: string;
   style?: CSSProperties;
 };
 
-type Tab = "prompt" | "url" | "json" | "curl";
+type Tab = "activity" | "prompt" | "url" | "json" | "curl";
 
 /**
  * ShareControls — the host-facing UI for turning sharing on/off and
@@ -26,11 +41,26 @@ export function ShareControls({
   onStart,
   onStop,
   status,
+  agentConnected = false,
+  activity,
   shareBaseUrl,
   className,
   style,
 }: ShareControlsProps) {
   const [tab, setTab] = useState<Tab>("prompt");
+
+  // Switch to the log the FIRST time an agent connects, then leave the tab
+  // alone. Forcing it on every render would fight a human who deliberately went
+  // back to copy the URL again — the panel should follow the session, not
+  // overrule the person reading it.
+  const wasConnected = useRef(false);
+  useEffect(() => {
+    if (agentConnected && !wasConnected.current) {
+      wasConnected.current = true;
+      setTab("activity");
+    }
+    if (!agentConnected) wasConnected.current = false;
+  }, [agentConnected]);
 
   if (!session) {
     return (
@@ -68,6 +98,11 @@ export function ShareControls({
       </div>
 
       <div className="fai-share__tabs" role="tablist">
+        {agentConnected && (
+          <TabButton tab="activity" active={tab} setTab={setTab}>
+            Activity
+          </TabButton>
+        )}
         <TabButton tab="prompt" active={tab} setTab={setTab}>Agent prompt</TabButton>
         <TabButton tab="url" active={tab} setTab={setTab}>URL</TabButton>
         <TabButton tab="json" active={tab} setTab={setTab}>JSON</TabButton>
@@ -75,6 +110,7 @@ export function ShareControls({
       </div>
 
       <div className="fai-share__panel">
+        {tab === "activity" && <ActivityLog activity={activity} />}
         {tab === "prompt" && (
           <CopyBox
             label="Paste this straight into an AI agent — it connects over MCP, no browser"
@@ -98,6 +134,45 @@ export function ShareControls({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * What the agent has actually done, newest first.
+ *
+ * The panel used to keep showing the paste-this-prompt UI after the agent was
+ * already connected and driving — dead weight at exactly the moment the human
+ * needs the opposite: visibility. A connected agent with no visible activity is
+ * indistinguishable from a broken one, which is precisely how a stalled session
+ * goes unnoticed.
+ */
+function ActivityLog({ activity }: { activity?: AgentActivity[] }) {
+  const entries = (activity ?? []).slice().reverse();
+
+  if (entries.length === 0) {
+    return (
+      <p className="fai-share__empty">
+        Connected. Nothing yet — actions appear here as the agent takes them.
+      </p>
+    );
+  }
+
+  return (
+    <ol className="fai-share__activity" aria-live="polite">
+      {entries.map((entry) => (
+        <li key={entry.id} className="fai-share__activity-row" data-kind={entry.kind}>
+          <time className="fai-share__activity-time" dateTime={new Date(entry.at).toISOString()}>
+            {new Date(entry.at).toLocaleTimeString(undefined, {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
+          </time>
+          <span className="fai-share__activity-source">{entry.source}</span>
+          <span className="fai-share__activity-text">{entry.text}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 

@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.33.0] — 2026-07-30
+
+### Added
+
+- **`<ShareControls>` becomes an activity log once an agent connects.** It kept
+  showing the paste-this-prompt UI — Agent prompt / URL / JSON / cURL — long
+  after the agent had connected and started driving. Dead weight at exactly the
+  moment the human needs the opposite, and it made a **connected agent
+  indistinguishable from a broken one**: a stalled session looked identical to a
+  working one.
+
+  Two new optional props: `agentConnected` and `activity`. The panel switches to
+  the log the FIRST time an agent connects and then leaves the tab alone, so it
+  never fights a human who went back to re-copy the URL. Connected-with-nothing-
+  yet says so explicitly rather than rendering an empty list.
+
+  `activity` reuses `AgentActivity` from `AgentPanel` rather than introducing a
+  second event shape, so a host already collecting presence events passes the
+  same array to both.
+
+  **No action needed** — both props are optional and the panel behaves exactly as
+  before without them.
+
 ### Changed
 
 - Widened the `fancy-auto-common` and `fancy-doc-commons` requirement from `^0.1.0` to `>=0.1 <2.0`, so a
