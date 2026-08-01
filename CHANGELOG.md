@@ -11,6 +11,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-07-31
+
+### Added
+
+- **`registerPasskeyBridge` — the 21st bridge, over passkey (WebAuthn)
+  *management*.** Import from `@particle-academy/agent-integrations/bridges/passkeys`
+  or the root barrel. Five tools: `passkey_list`, `passkey_status`,
+  `passkey_rename`, `passkey_revoke`, `passkey_begin_enrollment`. Pairs with
+  `@particle-academy/fancy-passkeys-ui`'s `PasskeyManager` — the adapter takes
+  the same callbacks you already passed the component — but imports nothing, so
+  it type-checks and builds with that package absent.
+
+  **What it deliberately does not do, and never will:** complete a ceremony.
+  There is no `passkey_authenticate`, no `passkey_sign_in`, no `passkey_complete`.
+  A WebAuthn ceremony needs a user gesture and a biometric or PIN, both of which
+  only the human at the keyboard has; a tool that performed one would be a bypass
+  of the exact property that makes a passkey better than a password. A test
+  asserts the registered tool names against a closed list, so adding one fails CI.
+
+  Two more things the bridge does rather than documents:
+
+  - **`passkey_list` re-projects every record onto the eight public summary
+    fields.** Hosts hand `list()` their ORM model — the obvious thing to do — and
+    that model carries the COSE public key, the user handle and the signature
+    counter. A whitelist (not a blacklist) means a backend growing a column
+    cannot silently start publishing credential material to every agent in the
+    session.
+  - **`passkey_revoke` only ever STAGES.** It puts the request in front of the
+    human and returns; the confirming click comes from the surface. Unlike
+    `features_grant`, there is no `confirm: true` argument and no host hook that
+    turns staging off — `additionalProperties: false` means the schema will not
+    even accept one. Revoking the last passkey is a lockout, and the response
+    says when that is the case so the agent can warn the human first.
+
+  `passkey_rename` is immediate and undoable via `agent_undo`. Set
+  `confirmRename: true` to route it through a host `confirm` hook as well — worth
+  it where the label carries trust, since a rogue credential relabelled
+  "Glenn's iPhone" survives a human's audit of the list.
+
+### Note
+
+- `@particle-academy/fancy-passkeys-ui` is **not** listed as a peer or a
+  devDependency, because it is not published yet and a dependency on a package
+  that 404s is worse than none. The bridge does not import it; the adapter is
+  satisfied structurally. The peer entry lands with that package's first release.
+
 ## [0.33.0] — 2026-07-30
 
 ### Added

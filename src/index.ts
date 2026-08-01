@@ -157,6 +157,19 @@ export {
   type FeatureGrant,
   type FeatureDefinition,
 } from "./bridges/features";
+// Passkey MANAGEMENT only — list / status / rename / propose a revoke / open an
+// enrollment prompt. Nothing here completes a WebAuthn ceremony, and nothing
+// ever should; see the header of ./bridges/passkeys.
+export {
+  registerPasskeyBridge,
+  PASSKEY_BRIDGE_TOOLS,
+  type PasskeyBridgeAdapter,
+  type PasskeyBridgeOptions,
+  type PasskeySummaryLike,
+  type PasskeySupport,
+  type PasskeySurfaceState,
+  type PasskeyProposal,
+} from "./bridges/passkeys";
 export {
   registerDocBridge,
   type DocAdapter,

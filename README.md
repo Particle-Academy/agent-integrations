@@ -58,6 +58,7 @@ Every bridge has a matching subpath if you'd rather import surgically:
 | charts              | `…/bridges/charts`                                     |
 | scene               | `…/bridges/scene`                                      |
 | screens             | `…/bridges/screens`                                    |
+| passkeys            | `…/bridges/passkeys`                                   |
 | sheets adapter hook | `…/sheets-adapter`                                     |
 | presence            | `…/presence`                                           |
 | undo                | `…/undo`                                               |
@@ -253,6 +254,14 @@ to you:
 - **Navigation / forms are trust-but-verify.** `nav_visit` allows only
   `http(s)`/relative URLs; `form_submit` stages on `adapter.confirm` when
   `pendingMode` is on.
+- **Passkeys are management-only, and that is not a gap.** `registerPasskeyBridge`
+  exposes no tool that completes a WebAuthn ceremony — no `passkey_authenticate`,
+  no `passkey_sign_in` — because a ceremony needs a user gesture and a biometric,
+  and a tool that performed one would turn a phishing-resistant factor back into
+  a bearer token. `passkey_revoke` **stages** a revoke for the human and has no
+  `confirm` argument that would apply it (revoking the last passkey is a lockout).
+  `passkey_list` re-projects onto the public summary fields, so handing it your
+  ORM model cannot leak a public key, a user handle, or a signature counter.
 - **The relay fans tool results + activity to all peers.** The terminal bridge
   redacts raw command bytes from broadcast meta, but any `structuredContent` you
   return is visible to every connected peer — don't return secrets.
