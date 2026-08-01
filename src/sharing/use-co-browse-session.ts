@@ -38,6 +38,18 @@ export type CoBrowseSession = {
   server: MicroMcpServer | null;
   session: SessionDescriptor | null;
   relayState: RelayState;
+  /**
+   * True once at least one remote agent is actually attached to the session.
+   *
+   * Distinct from `relayState === "open"`, which only says the BROWSER reached
+   * the relay — true the moment sharing starts, before the link has been handed
+   * to anyone. A UI that keys "Agent is driving" off the relay state therefore
+   * announces a driver who does not exist, and stays silent when a real one
+   * arrives.
+   */
+  agentConnected: boolean;
+  /** How many remote agents are attached (0 when nobody has joined). */
+  agentCount: number;
   startShare: () => Promise<void>;
   stopShare: () => void;
   /**
@@ -70,6 +82,7 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
 
   const [session, setSession] = useState<SessionDescriptor | null>(null);
   const [relayState, setRelayState] = useState<RelayState>("idle");
+  const [agentCount, setAgentCount] = useState(0);
 
   // Build the server + bridges once. The adapter is captured here, so it must
   // be stable (its methods read live state).
@@ -112,6 +125,7 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
     }
     const relay = attachSseRelay(server, { baseUrl: relayBaseUrl, sessionId: descriptor.id, token: descriptor.token });
     relay.onStateChange(setRelayState);
+    relay.onPeersChange(setAgentCount);
     relayRef.current = relay;
     setSession(descriptor);
   }, [relayBaseUrl, options]);
@@ -121,6 +135,7 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
     relayRef.current?.close();
     relayRef.current = null;
     setRelayState("idle");
+    setAgentCount(0);
     setSession(null);
     if (current) {
       const csrf = options.csrfToken?.() ?? "";
@@ -151,5 +166,14 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
     });
   }, []);
 
-  return { server: serverRef.current, session, relayState, startShare, stopShare, observeUser };
+  return {
+    server: serverRef.current,
+    session,
+    relayState,
+    agentConnected: agentCount > 0,
+    agentCount,
+    startShare,
+    stopShare,
+    observeUser,
+  };
 }

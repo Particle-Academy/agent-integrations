@@ -42,6 +42,7 @@ export class SseRelayTransport implements Transport {
   private state: RelayState = "idle";
   private expectedToken: string;
   private peers = new Set<string>();
+  private peerListeners = new Set<(count: number) => void>();
 
   constructor(options: SseRelayOptions) {
     this.opts = options;
@@ -116,6 +117,8 @@ export class SseRelayTransport implements Transport {
     this.es?.close();
     this.es = undefined;
     this.connected = false;
+    this.peers.clear();
+    this.notifyPeers();
     this.setState("closed");
   }
 
@@ -123,6 +126,31 @@ export class SseRelayTransport implements Transport {
     this.listeners.add(listener);
     listener(this.state);
     return () => this.listeners.delete(listener);
+  }
+
+  /** How many remote peers (agents) are currently attached to this session. */
+  peerCount(): number {
+    return this.peers.size;
+  }
+
+  /**
+   * Subscribe to peer arrivals/departures. Fires immediately with the current
+   * count.
+   *
+   * This is the ONLY honest answer to "is an agent actually here?".
+   * `onStateChange` reports the BROWSER's own channel to the relay, which opens
+   * the instant sharing starts — so a UI keyed on it announces "Agent is
+   * driving" to a human who has not yet handed the link to anybody, and can
+   * never tell them when one really arrives.
+   */
+  onPeersChange(listener: (count: number) => void): () => void {
+    this.peerListeners.add(listener);
+    listener(this.peers.size);
+    return () => this.peerListeners.delete(listener);
+  }
+
+  private notifyPeers(): void {
+    for (const l of this.peerListeners) l(this.peers.size);
   }
 
   /**
@@ -162,6 +190,7 @@ export class SseRelayTransport implements Transport {
     if ("method" in message && message.method === "notifications/peer_joined") {
       const subscriberId = String((message.params as { subscriberId?: unknown } | undefined)?.subscriberId ?? "peer");
       this.peers.add(subscriberId);
+      this.notifyPeers();
       emitActivity({
         agentId: "agent",
         agentName: "Agent",
@@ -176,6 +205,7 @@ export class SseRelayTransport implements Transport {
     if ("method" in message && message.method === "notifications/peer_left") {
       const subscriberId = String((message.params as { subscriberId?: unknown } | undefined)?.subscriberId ?? "peer");
       this.peers.delete(subscriberId);
+      this.notifyPeers();
       if (this.peers.size === 0) {
         emitActivity({
           agentId: "agent",

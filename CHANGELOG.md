@@ -11,6 +11,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`useCoBrowseSession` now reports whether an agent is actually there** —
+  `agentConnected` / `agentCount`, driven by the relay's peer join/leave frames
+  (`SseRelayTransport.onPeersChange` / `peerCount()` are public too).
+
+  The only signal available before this was `relayState`, which describes the
+  BROWSER's own channel to the relay and turns `"open"` the instant sharing
+  starts. Anything keyed on it therefore announced a driver to a human who had
+  not yet handed the link to anybody — and stayed exactly the same when a real
+  agent arrived, so it could not report the one event it existed to report.
+
+  **No action needed** — additive fields on an object you already receive.
+
+### Fixed
+
+- **`<CoBrowsePresence>` shows what the agent is doing.** 0.33.0 gave
+  `<ShareControls>` the `agentConnected` + `activity` props, but nothing passed
+  them, so the site-wide co-browse panel still rendered the paste-this-prompt UI
+  (Agent prompt / URL / JSON / cURL) while an agent was connected and driving.
+  It now feeds both from the presence stream and opens on the log.
+
+  Its "Agent is driving" badge was keyed on `relayState === "open"` and is now
+  keyed on a real peer, so it no longer reads "Agent is driving" over a session
+  nobody has joined.
+
+- **The agent cursor no longer appears for an agent that has not acted.**
+  `agent_connected` — a lifecycle frame carrying no target — was parking a
+  motionless pointer captioned "Agent connected" at the centre of the viewport.
+  Short-lived relay clients (one process per MCP call) re-emit it constantly, so
+  the cursor could sit there for the whole session having never once moved,
+  which reads as a hung agent rather than a present one.
+
+  `<CoBrowseCursorLayer>` now creates and moves the cursor only on real tool
+  traffic, and retires it after `idleAfterMs` (default 15s) of silence. Pass
+  `idleAfterMs={0}` for the old always-on behaviour. Connect / disconnect frames
+  still update the caption of a cursor that is already on screen; they just
+  never conjure one, and never extend its life.
+
+
 ## [0.34.0] — 2026-07-31
 
 ### Added

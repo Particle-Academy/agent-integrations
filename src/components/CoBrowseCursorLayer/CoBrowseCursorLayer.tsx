@@ -31,7 +31,24 @@ export type CoBrowseCursorLayerProps = {
   active?: boolean;
   /** Stacking order of the overlay. Default just under the max. */
   zIndex?: number;
+  /**
+   * Retire the cursor after this long without a tool call. Default 15s;
+   * `0` keeps it on screen indefinitely.
+   *
+   * A cursor that sits still is not neutral — it reads as "the agent is
+   * broken", which is worse than showing nothing. Continuous presence belongs
+   * in the activity log; the cursor is for *motion*.
+   */
+  idleAfterMs?: number;
 };
+
+/**
+ * Session lifecycle chatter. Real events, but nothing the agent DID — so they
+ * must never conjure a cursor. `agent_connected` used to, parking a motionless
+ * pointer captioned "Agent connected" in the middle of the viewport for a
+ * session in which the agent had not yet made a single tool call.
+ */
+const LIFECYCLE_ACTIONS = new Set(["agent_connected", "agent_disconnected"]);
 
 /**
  * Page-wide agent presence for co-browsing — the missing "all actors present"
@@ -45,24 +62,34 @@ export type CoBrowseCursorLayerProps = {
  * Mount it once near the app root (e.g. in your CoBrowseProvider), gated on an
  * active session. SSR-safe: renders null on the server / until the first action.
  */
-export function CoBrowseCursorLayer({ active = true, zIndex = 2147483000 }: CoBrowseCursorLayerProps) {
+export function CoBrowseCursorLayer({
+  active = true,
+  zIndex = 2147483000,
+  idleAfterMs = 15_000,
+}: CoBrowseCursorLayerProps) {
   const { latest } = useAgentActivity(undefined, { capacity: 12 });
   const [cursor, setCursor] = useState<{ x: number; y: number; name: string; color: string; status?: string; glideMs: number } | null>(
     null,
   );
   const [pulse, setPulse] = useState<{ rect: Rect; color: string; key: number } | null>(null);
+  // Timestamp of the last real tool call — the only thing that keeps the cursor
+  // alive. Deliberately NOT bumped by lifecycle events, so a relay client
+  // reconnecting every call can't hold a stale pointer on screen forever.
+  const [lastActionAt, setLastActionAt] = useState(0);
 
   useEffect(() => {
     if (!latest || (latest.source ?? "agent") === "user") return;
-    if (latest.action === "agent_disconnected") {
-      // Relay clients may be intentionally short-lived (one process per MCP
-      // call). The shared session is the presence boundary, not an individual
-      // transport connection, so leave the agent's cursor in place between
-      // calls. `active=false` still removes it when sharing actually ends.
-      setCursor((prev) => (prev ? { ...prev, status: "Standing by", glideMs: 0 } : prev));
+    if (LIFECYCLE_ACTIONS.has(latest.action)) {
+      // Connecting is not acting. Relay clients may also be intentionally
+      // short-lived (one process per MCP call), so a disconnect is not the end
+      // of the session either — if a cursor is already on screen from real work,
+      // leave it and just say so. What we must NOT do is create one: an agent
+      // that has connected and done nothing has nowhere to point.
+      setCursor((prev) => (prev ? { ...prev, status: "Standing by", glideMs: 0 } : null));
       setPulse(null);
       return;
     }
+    setLastActionAt(latest.timestamp);
     const color = latest.agentColor ?? "#a855f7";
     const name = latest.agentName ?? "Agent";
     const status = latest.target?.label ?? latest.action;
@@ -91,6 +118,18 @@ export function CoBrowseCursorLayer({ active = true, zIndex = 2147483000 }: CoBr
       );
     }
   }, [latest?.timestamp]);
+
+  // Retire the cursor once the agent goes quiet. Presence that never changes
+  // stops being information — the human reads a frozen pointer as a hung agent,
+  // and the activity log is where "still connected" is supposed to live.
+  useEffect(() => {
+    if (!idleAfterMs || !lastActionAt) return;
+    const timer = setTimeout(() => {
+      setCursor(null);
+      setPulse(null);
+    }, idleAfterMs);
+    return () => clearTimeout(timer);
+  }, [lastActionAt, idleAfterMs]);
 
   if (!active || !cursor || typeof document === "undefined") return null;
 
