@@ -11,6 +11,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.36.0] — 2026-08-03
+
+### Added
+
+- **`registerScreenDocBridge`** — an agent bridge over the *contents* of one
+  rendered `<Screen doc={…}>` (fancy-screens ≥ 0.6), built on
+  `registerDocBridge`. Read the nodes in a screen, patch a prop, retext a label,
+  reparent a card — with undo, agent activity and staged writes inherited from
+  the substrate.
+
+  This is the other half of `registerScreensBridge`, and the halves are not
+  interchangeable: that one moves *between* screens and treats their contents as
+  an opaque `config` blob. Until fancy-screens 0.6 there was no way to address
+  anything *inside* a screen at all, because `ScreenSchema` nodes had no `id` —
+  an agent could emit an entire surface and then touch none of it. That was a
+  standing violation of the component contract's stable-handles requirement, on
+  the one shipped "agent emits a UI" path.
+
+  Two things it adds over the raw generic bridge, both about a screen being a
+  rendered React tree:
+
+  - **Positional ids are reported as positional.** fancy-screens mints one for
+    any node the author left anonymous; it looks like a handle and is not one,
+    because inserting a sibling above it silently repoints it. Every read here
+    says which kind of id it returned, and `screen_addressable` lists only the
+    durable ones.
+  - **`screen_set_text`** retexts an element by the *element's* id, so an agent
+    never has to know that literal text is a reserved `#text` child node.
+
+  Pass `surface` to prefix the tools per screen (`"screen_checkout"`) when more
+  than one doc-driven screen is bridged at once.
+
+- **`add` accepts an optional `id`** on every doc-derived bridge (`cms_add`,
+  `screen_add`, …), so an agent can name the handle it is about to depend on
+  instead of taking a minted one. Adding over an existing id is an error rather
+  than a silent overwrite.
+
+  **What you must DO: nothing.** The argument is optional and omitting it
+  behaves exactly as before.
+
+### Fixed
+
+- **BREAKING (staged writes): a staged `update` / `remove` / `move` / domain op
+  now returns its pending id as `pendingId`, not `id`.**
+
+  These ops report the *node* id they targeted, and that assignment ran after
+  the staged result was spread — so it overwrote the pending id with the node
+  id. `*_confirm` only accepts a pending id, so three of the four canonical ops
+  produced a staged write that could never be confirmed, and the edit was
+  silently dropped. Only `add` worked, and only because it does not report a
+  separate node id. Every mutation now returns both, under separate keys.
+
+  **What you must DO — only if you use `stagePolicy`:** read `pendingId` where
+  you previously read `id` from a staged result. Anything staging only `add`
+  keeps working if it reads `pendingId`; `id` on a staged `add` is now the new
+  node's id, which is what it always claimed to be. Hosts that never set a
+  `stagePolicy` are unaffected — nothing stages by default.
+
+- **A minted node id no longer collides with an existing node.** The counter
+  restarts with the bridge, so on a tree loaded from elsewhere `cms-1` could
+  already be taken and `add` would overwrite that node. Minting now skips past
+  anything present.
+
 ## [0.35.0] — 2026-07-31
 
 ### Added

@@ -98,7 +98,17 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
   let idSeq = 0;
-  const mintId = () => adapter.newId?.() ?? `${surface}-${(idSeq += 1)}`;
+  // The counter restarts with the bridge, so on a tree loaded from elsewhere
+  // `surface-1` may well be taken. Skip past anything that already exists
+  // rather than minting an id that silently overwrites a node.
+  const mintId = () => {
+    if (adapter.newId) return adapter.newId();
+    const taken = adapter.get().nodes;
+    let id: string;
+    do id = `${surface}-${(idSeq += 1)}`;
+    while (taken[id]);
+    return id;
+  };
   const target = (elementId?: string): AgentTarget => ({ kind: surface, screenId: adapter.screenId, elementId });
 
   // Staged ops awaiting confirmation.
@@ -120,13 +130,21 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
     return { ok: true, id: targetId };
   }
 
-  /** Auto-apply, or stage for confirmation per the stage policy. */
-  function submit(op: TOp, label: string, targetId?: string): { staged: boolean; id?: string } {
+  /**
+   * Auto-apply, or stage for confirmation per the stage policy.
+   *
+   * The staged case reports the pending id under its OWN key. Returning it as
+   * `id` — as this used to — collided with the node id every mutation already
+   * reports, so `update`/`remove`/`move` overwrote it and left the agent holding
+   * a node id that `confirm` does not accept. The staged write was unconfirmable
+   * for three of the four canonical ops, and looked fine from the outside.
+   */
+  function submit(op: TOp, label: string, targetId?: string): { staged: boolean; id?: string; pendingId?: string } {
     if (stage(op) === "confirm") {
-      const id = `${surface}-pending-${(idSeq += 1)}`;
-      pending.set(id, { op, label, targetId });
-      options.onPending?.({ id, op, label });
-      return { staged: true, id };
+      const pendingId = `${surface}-pending-${(idSeq += 1)}`;
+      pending.set(pendingId, { op, label, targetId });
+      options.onPending?.({ id: pendingId, op, label });
+      return { staged: true, id: targetId, pendingId };
     }
     commit(op, label, targetId);
     return { staged: false, id: targetId };
@@ -226,17 +244,28 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
       parent: { type: ["string", "null"], description: "Parent id, or null for a root." },
       props: { type: "object", description: "JSON props bag." },
       order: { type: "string", description: "Fractional order key (default: append)." },
+      id: {
+        type: "string",
+        description:
+          "Id for the new node. Supply a meaningful one if you intend to address this node later; omitted means one is minted for you. Must not already exist.",
+      },
     },
     ["type"],
     (args) => {
       const tree = adapter.get();
       const parent = typeof args.parent === "string" ? args.parent : null;
-      const id = mintId();
+      // An agent that names the node names the handle it will use afterwards.
+      // Minted ids are addressable too, just less memorable.
+      const requested = typeof args.id === "string" ? args.id : undefined;
+      if (requested !== undefined && tree.nodes[requested]) {
+        throw new Error(`Node ${requested} already exists — pick a different id or update it instead`);
+      }
+      const id = requested ?? mintId();
       const order = typeof args.order === "string" ? args.order : appendOrder(tree, parent);
       const props = (args.props && typeof args.props === "object" ? args.props : {}) as Record<string, unknown>;
       const node = makeNode({ id, type: String(args.type), parent, order }, props);
       const res = submit({ t: "insert", node } as unknown as TOp, `add ${args.type} ${id}`, id);
-      return { ...res, _text: res.staged ? `staged add ${id}` : `added ${id}` };
+      return { ...res, _text: res.staged ? `staged add ${id} — confirm ${res.pendingId}` : `added ${id}` };
     },
     true,
     (_args, result) => target(result.id as string | undefined),
@@ -251,7 +280,7 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
       if (!adapter.get().nodes[id]) throw new Error(`No node ${id}`);
       const patch = (args.patch && typeof args.patch === "object" ? args.patch : {}) as Record<string, unknown>;
       const res = submit({ t: "set_props", id, patch } as unknown as TOp, `update ${id}`, id);
-      return { ...res, id, _text: res.staged ? `staged update ${id}` : `updated ${id}` };
+      return { ...res, id, _text: res.staged ? `staged update ${id} — confirm ${res.pendingId}` : `updated ${id}` };
     },
     true,
     (args) => target(String(args.id)),
@@ -267,7 +296,7 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
       if (!tree.nodes[id]) throw new Error(`No node ${id}`);
       const count = descendantsOf(tree, id).length + 1;
       const res = submit({ t: "remove", id } as unknown as TOp, `remove ${id} (${count} node${count === 1 ? "" : "s"})`, id);
-      return { ...res, id, removed: count, _text: res.staged ? `staged remove ${id}` : `removed ${id}` };
+      return { ...res, id, removed: count, _text: res.staged ? `staged remove ${id} — confirm ${res.pendingId}` : `removed ${id}` };
     },
     true,
     (args) => target(String(args.id)),
@@ -284,7 +313,7 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
       const parent = args.parent === null ? null : typeof args.parent === "string" ? args.parent : tree.nodes[id]!.parent;
       const order = typeof args.order === "string" ? args.order : appendOrder(tree, parent);
       const res = submit({ t: "move", id, parent, order } as unknown as TOp, `move ${id}`, id);
-      return { ...res, id, _text: res.staged ? `staged move ${id}` : `moved ${id}` };
+      return { ...res, id, _text: res.staged ? `staged move ${id} — confirm ${res.pendingId}` : `moved ${id}` };
     },
     true,
     (args) => target(String(args.id)),
@@ -302,7 +331,7 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
         if (built && typeof built === "object" && "error" in built) throw new Error((built as { error: string }).error);
         const tid = t.targetId?.(args);
         const res = submit(built as TOp, `${t.verb} ${tid ?? ""}`.trim(), tid);
-        return { ...res, id: tid, _text: res.staged ? `staged ${t.verb}` : t.verb };
+        return { ...res, id: tid, _text: res.staged ? `staged ${t.verb} — confirm ${res.pendingId}` : t.verb };
       },
       true,
       (args) => target(t.targetId?.(args)),
@@ -312,8 +341,8 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
   // ── Staged-write confirm / reject ───────────────────────────────────────
   reg(
     "confirm",
-    "Apply a staged op by its pending id (from a staged mutation).",
-    { id: { type: "string" } },
+    "Apply a staged op. Pass the `pendingId` a staged mutation returned — not the node `id` it also returns.",
+    { id: { type: "string", description: "The `pendingId` from a staged mutation." } },
     ["id"],
     (args) => {
       const id = String(args.id);
@@ -328,8 +357,8 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
   );
   reg(
     "reject",
-    "Discard a staged op by its pending id.",
-    { id: { type: "string" } },
+    "Discard a staged op. Pass the `pendingId` a staged mutation returned — not the node `id` it also returns.",
+    { id: { type: "string", description: "The `pendingId` from a staged mutation." } },
     ["id"],
     (args) => {
       const id = String(args.id);

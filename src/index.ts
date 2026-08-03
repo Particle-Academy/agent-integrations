@@ -182,6 +182,15 @@ export {
   type CmsOp,
   type CmsBridgeOptions,
 } from "./bridges/cms";
+// The CONTENT of one screen. Pairs with registerScreensBridge above, which moves
+// between screens and treats their contents as opaque.
+export {
+  registerScreenDocBridge,
+  SCREEN_TEXT_NODE_TYPE,
+  type ScreenDocNode,
+  type ScreenDocOp,
+  type ScreenDocBridgeOptions,
+} from "./bridges/screen-doc";
 
 // Co-browsing (site-wide session)
 export {

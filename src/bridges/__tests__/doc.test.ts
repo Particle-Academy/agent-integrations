@@ -62,11 +62,70 @@ describe("registerCmsBridge (on registerDocBridge)", () => {
     expect(add.sc.staged).toBe(true);
     expect(Object.keys(tree().nodes).length).toBe(0); // nothing applied yet
 
-    await call("cms_confirm", { id: add.sc.id as string });
+    await call("cms_confirm", { id: add.sc.pendingId as string });
     expect(Object.keys(tree().nodes).length).toBe(1); // now applied
 
     const add2 = await call("cms_add", { type: "box" });
-    await call("cms_reject", { id: add2.sc.id as string });
+    await call("cms_reject", { id: add2.sc.pendingId as string });
     expect(Object.keys(tree().nodes).length).toBe(1); // rejected → still 1
+  });
+
+  // Only staged `add` was covered before, and `add` was the one op whose pending
+  // id survived — the other three overwrote it with the node id, so `confirm`
+  // could never be called and the staged write silently discarded every edit.
+  it.each(["update", "remove", "move", "set_style"])(
+    "reports a confirmable pendingId for a staged %s, distinct from the node id",
+    async (verb) => {
+      const seeded = setup();
+      const id = (await seeded.call("cms_add", { type: "box" })).sc.id as string;
+
+      let tree = seeded.tree();
+      const host = new ToolRegistry();
+      registerCmsBridge(host, {
+        adapter: { get: () => tree, set: (n) => { tree = n; } },
+        stagePolicy: () => "confirm",
+      });
+      const call = async (n: string, a: JsonObject) =>
+        ((await host.callTool(n, a)).structuredContent ?? {}) as Record<string, unknown>;
+
+      const args: Record<string, JsonObject> = {
+        update: { id, patch: { content: "x" } },
+        remove: { id },
+        move: { id, parent: null },
+        set_style: { id, patch: { color: "#f00" } },
+      };
+      const staged = await call(`cms_${verb}`, args[verb]!);
+
+      expect(staged.staged).toBe(true);
+      expect(staged.id).toBe(id);
+      expect(staged.pendingId).toEqual(expect.stringContaining("cms-pending-"));
+
+      const confirmed = await call("cms_confirm", { id: staged.pendingId as string });
+      expect(confirmed.ok).toBe(true);
+    },
+  );
+
+  it("mints an id that does not already exist in the tree", async () => {
+    // The counter restarts with the bridge, so a tree loaded from elsewhere can
+    // already hold `cms-1`. Minting it again would overwrite that node.
+    let tree: DocTree<StyledNode> = {
+      nodes: { "cms-1": { id: "cms-1", type: "box", parent: null, order: "a0", props: {}, style: { base: {} } } },
+    };
+    const host = new ToolRegistry();
+    registerCmsBridge(host, { adapter: { get: () => tree, set: (n) => { tree = n; } } });
+
+    const r = (await host.callTool("cms_add", { type: "text" })).structuredContent as Record<string, unknown>;
+    expect(r.id).not.toBe("cms-1");
+    expect(tree.nodes["cms-1"]?.type).toBe("box");
+  });
+
+  it("lets a caller name the node, and refuses to add over an existing id", async () => {
+    const { call, tree } = setup();
+    await call("cms_add", { type: "box", id: "hero" });
+    expect(tree().nodes.hero?.type).toBe("box");
+
+    const clash = await call("cms_add", { type: "text", id: "hero" });
+    expect(clash.isError).toBe(true);
+    expect(tree().nodes.hero?.type).toBe("box");
   });
 });
