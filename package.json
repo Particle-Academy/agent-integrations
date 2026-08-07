@@ -1,6 +1,6 @@
 {
   "name": "@particle-academy/agent-integrations",
-  "version": "0.36.0",
+  "version": "0.37.0",
   "description": "MCP-driven agent presence in collab sessions: per-session micro-MCP server, pluggable bridges to fancy-* packages, and agent UX components (panel + on-canvas cursor).",
   "repository": {
     "type": "git",
@@ -382,8 +382,8 @@
     "@particle-academy/fancy-sheets": ">=0.9.0",
     "@particle-academy/fancy-slides": ">=0.13.0",
     "@particle-academy/fancy-whiteboard": ">=0.1.0",
-    "react": "^18.0.0 || ^19.0.0",
-    "react-dom": "^18.0.0 || ^19.0.0"
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "peerDependenciesMeta": {
     "@particle-academy/fancy-whiteboard": {
@@ -426,13 +426,13 @@
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^22.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "jsdom": "^25.0.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.65.0",
@@ -451,5 +451,8 @@
   },
   "overrides": {
     "esbuild": "^0.28.1"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
