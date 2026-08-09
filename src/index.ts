@@ -91,6 +91,15 @@ export {
   type ChartsBridgeOptions,
 } from "./bridges/charts";
 export {
+  registerGridBridge,
+  type GridBridgeAdapter,
+  type GridBridgeOptions,
+  type GridState,
+  type GridSort,
+  type GridFilter,
+  type GridPagination,
+} from "./bridges/grid";
+export {
   registerSceneBridge,
   type SceneBridgeAdapter,
   type SceneBridgeOptions,

@@ -11,6 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-08-09
+
+### Added
+
+- **`registerGridBridge`** (`./bridges/grid`) — MCP access to a
+  `@particle-academy/fancy-grid` surface: `grid_get`, `grid_sort`,
+  `grid_filter`, `grid_select_rows` and `grid_edit_cell`.
+
+  The grid state types are **mirrored here, not imported**. fancy-grid keeps
+  TanStack Table and Virtual as peers precisely so nothing bundles them, and an
+  `import type` would still make fancy-grid a build-time dependency of this
+  package. The state is four small JSON shapes; the coupling is not worth it —
+  the same call the scene bridge makes about fancy-3d's descriptor.
+
+  Three behaviours worth knowing:
+
+  - **An unknown column is an ERROR**, not a silent no-op. A sort nothing
+    applies looks exactly like a grid that is not sorted, so an agent would have
+    no way to tell it failed. Same for selecting a row that is not on the page.
+  - **`grid_edit_cell` is omitted entirely on a read-only grid** rather than
+    registered and failing at call time. An agent should learn what it can do
+    from the tool list, not by trying.
+  - **`pendingMode` gates `grid_edit_cell` only.** It is the one tool that
+    changes stored DATA rather than view state; sorting a grid is not a
+    trust-but-verify action, and gating it would train people to click through
+    confirmations.
+
+  View state goes through the adapter's single `setState`, because that is how
+  the grid is controlled — a bridge mutating pieces separately would drift from
+  what the component accepts. Every view change is undoable via `agent_undo`.
+
+
 ## [0.38.0] — 2026-08-09
 
 ### Added
