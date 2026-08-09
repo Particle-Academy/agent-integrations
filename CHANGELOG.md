@@ -11,6 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-08-09
+
+### Added
+
+- **`AgentPanel` is now a tool-call feed.** `AgentActivity` gains optional
+  `args`, `result`, `durationMs` and `status` (`"pending" | "ok" | "error"`),
+  and a `kind: "tool"` row carrying any of them renders as
+  `tool(args) · 142ms` with `→ result` beneath.
+
+  This is an extension rather than a new `<ToolCallFeed>` because the panel
+  already rendered an activity stream with a `"tool"` kind — a sibling
+  component would have re-rendered the same rows beside it.
+
+  `status: "pending"` is what makes it a **stream** rather than a log: a row can
+  appear the moment a call starts and be replaced when it settles, instead of
+  the feed only ever showing finished work. Status is inferred as `error` from
+  `kind: "error"` when not given.
+
+  Payloads are truncated to ~80 chars on the row. A feed is scanned, not read,
+  and an untruncated result pushes every subsequent row off screen — the full
+  value stays available on `detail`.
+
+  Each part carries a handle (`data-fai-args`, `data-fai-result`,
+  `data-fai-latency`, plus `data-kind` / `data-status` on the row) so a host can
+  restyle or address it.
+
+  **What you must do:** nothing. Every field is optional, and a row without them
+  renders exactly as before — pinned by a test.
+
+
 ### Added
 
 - **A shared-substrate parity suite** (`src/bridges/__tests__/substrate-parity.test.ts`)

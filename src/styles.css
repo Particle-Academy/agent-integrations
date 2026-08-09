@@ -43,8 +43,27 @@
 .fai-row--message { border-left: 3px solid #3b82f6; }
 .fai-row--info { border-left: 3px solid #71717a; }
 .fai-row--error { border-left: 3px solid #ef4444; background: rgba(254, 226, 226, 0.4); }
-.fai-row__meta { display: flex; justify-content: space-between; opacity: 0.6; font-size: 10px; }
+/* The meta line is now `tool(args) · 142ms          12:04:31`, so the time is
+   pushed right with margin rather than by justify-between — with
+   space-between, adding args would have scattered the parts across the row. */
+.fai-row__meta { display: flex; align-items: baseline; gap: 4px; opacity: 0.6; font-size: 10px; }
 .fai-row__source { font-family: ui-monospace, monospace; }
+.fai-row__args {
+  font-family: ui-monospace, monospace;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fai-row__latency { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fai-row__time { margin-left: auto; white-space: nowrap; }
+.fai-row__result {
+  font-family: ui-monospace, monospace; font-size: 11px;
+  opacity: 0.85; margin: 2px 0 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A call in flight, so a feed reads as a stream rather than as a log that
+   only ever shows settled work. */
+.fai-row--pending { opacity: 0.7; }
+.fai-row--pending .fai-row__source::after { content: " …"; }
+.fai-row--error .fai-row__result { color: #b91c1c; }
 .fai-row__text { white-space: pre-wrap; }
 .fai-row__detail summary { cursor: pointer; opacity: 0.7; font-size: 11px; margin-top: 4px; }
 .fai-row__detail pre {
