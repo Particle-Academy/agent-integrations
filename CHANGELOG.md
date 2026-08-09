@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A shared-substrate parity suite** (`src/bridges/__tests__/substrate-parity.test.ts`)
+  asserting that `fancy-cms-ui` and `fancy-screens` really do read and write the
+  same node / tree / op types, run against the **published** packages rather
+  than by inspection.
+
+  The "one document substrate" claim is easy to state and easy to quietly break:
+  each package has its own reducer, and two reducers that agree today can
+  disagree on one edge — ordering, cascade, a no-op guard — without anything
+  failing, because each package's own suite only ever exercises its own. Both
+  are devDependencies, so nothing at runtime depends on them.
+
+  Also covers the other half: `registerDocBridge` driving a document the CMS
+  itself created, with `registerCmsBridge` adding two domain ops and nothing
+  else — the generic bridge doing the work, which is what "no CMS-specific
+  bridge" was supposed to mean.
+
+
 ## [0.37.0] — 2026-08-07
 
 ### Changed
