@@ -11,6 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A test that every bridge is reachable by a consumer.** Shipping a bridge
+  takes four edits in four files, and the guidance already warned what happens
+  when one is missed — *"the bridge lands in source but invisible to consumers,
+  exactly how `registerSlidesBridge` sat un-shipped until v0.6.3."* Nothing
+  checked it. A bridge's own tests import it by relative path, so they pass
+  whether or not the **package** exposes it: green suite, correct source, and a
+  feature that does not exist outside this repo.
+
+  It also asserts the subtler half — that a module eagerly importing an optional
+  peer stays **out** of the root barrel. That was a comment, and comments do not
+  fail builds. Re-exporting `SharedWhiteboard` would make `fancy-whiteboard`
+  mandatory for everyone importing the package root, the same class of breakage
+  as `fancy-flow` shipping `@xyflow/react` and making `fancy-screens`
+  impossible to co-install. Verified by adding that export and watching the test
+  go red, rather than by assuming.
+
+  No runtime change — this release is the guard, not a fix.
+
+### Notes
+
+- **Ten bridges have no test file:** `artboard`, `charts`, `cms`, `git`, `map`,
+  `scene`, `screens`, `sheets`, `slides`, `whiteboard`. They are recorded in an
+  explicit `UNTESTED_BRIDGES` list that may only shrink, and a further test
+  fails if an entry becomes stale. The list is not permission — it stops a
+  **new** bridge landing untested while the existing gap is worked off, and
+  makes the gap countable instead of invisible.
+
 ## [0.39.0] — 2026-08-09
 
 ### Added
