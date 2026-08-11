@@ -11,7 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`artboard_set_piece_content` failed on any piece that had no content yet.**
+  The undo snapshot cloned `existing.content` through
+  `JSON.parse(JSON.stringify(...))`, and `JSON.stringify(undefined)` returns the
+  *value* `undefined` rather than a string — so `JSON.parse` threw
+  `"undefined" is not valid JSON` and the tool returned an error.
+
+  Invisible from inside the bridge, because a piece the BRIDGE adds always has
+  content (`coerceContent` returns at least `{kind:"node"}`). It only fired on a
+  piece the host app built — which is every piece on a board a human made, i.e.
+  the normal case for an agent asked to fill something in.
+
+  **What you must do:** nothing. `clone` now passes `undefined` through, so undo
+  can also restore a piece to genuinely having no content.
+
 ### Added
+
+- **Tests for the ten bridges that had none** — `artboard`, `charts`, `cms`,
+  `git`, `map`, `scene`, `screens`, `sheets`, `slides`, `whiteboard`. The suite
+  goes 233 → 317.
+
+  `UNTESTED_BRIDGES` is now **empty**. It stays as a mechanism — an entry is a
+  reviewable admission that a bridge ships untested, and a further test fails if
+  one goes stale — so it cannot quietly become a parking space.
+
+  Beyond the defect above, writing them pinned several contracts that were not
+  what they looked like from outside: `git` omits `git_reviews_list` /
+  `git_checks` entirely rather than advertising tools that fail; `element_move`
+  takes FRACTIONAL slide coordinates and clamps to 0..1; `map_add_marker` takes
+  flat `lat`/`lng` but stores a nested `position`; `artboard_add_piece` marks
+  agent-added pieces `pending`; and `artboard_set_piece_content` silently
+  coerces an unrecognised content shape to `{kind:"node"}` while reporting
+  success.
 
 - **A test that every bridge is reachable by a consumer.** Shipping a bridge
   takes four edits in four files, and the guidance already warned what happens
@@ -25,20 +58,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   peer stays **out** of the root barrel. That was a comment, and comments do not
   fail builds. Re-exporting `SharedWhiteboard` would make `fancy-whiteboard`
   mandatory for everyone importing the package root, the same class of breakage
-  as `fancy-flow` shipping `@xyflow/react` and making `fancy-screens`
-  impossible to co-install. Verified by adding that export and watching the test
-  go red, rather than by assuming.
-
-  No runtime change — this release is the guard, not a fix.
+  as `fancy-flow` shipping `@xyflow/react` and making `fancy-screens` impossible
+  to co-install. Verified by adding that export and watching the test go red.
 
 ### Notes
 
-- **Ten bridges have no test file:** `artboard`, `charts`, `cms`, `git`, `map`,
-  `scene`, `screens`, `sheets`, `slides`, `whiteboard`. They are recorded in an
-  explicit `UNTESTED_BRIDGES` list that may only shrink, and a further test
-  fails if an entry becomes stale. The list is not permission — it stops a
-  **new** bridge landing untested while the existing gap is worked off, and
-  makes the gap countable instead of invisible.
+- **`ToolRegistry.callTool` does not validate the `required` list.** It is
+  advertised in each tool's schema and never enforced, so a call omitting a
+  required argument runs anyway — `chart_update_option` with no `partial` merges
+  `{}` and reports "Merged chart option"; `scene_add_object` with no `kind`
+  mints an object with the id `undefined_<random>`. A schema-respecting MCP
+  client will not do this, but a relay, a hand-rolled client or a model emitting
+  malformed arguments will, and this package exists to be driven by exactly
+  those. Not changed here: enforcing it turns silent no-ops into errors across
+  24 bridges, which is a deliberate decision rather than a test-writing side
+  effect.
 
 ## [0.39.0] — 2026-08-09
 

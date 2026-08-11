@@ -122,23 +122,18 @@ function eagerPeerImports(rawSource: string, peers: string[]): string[] {
 /**
  * Bridges that do not yet have their own test file.
  *
- * This list may only ever SHRINK. It is not permission — it is a record of a
- * gap found on 2026-08-10, kept explicit so a NEW bridge cannot land untested
- * while the old ones are still outstanding. Deleting an entry is the fix;
- * adding one needs a very good reason.
+ * **Empty, and it should stay that way.** It held ten entries when it was
+ * introduced on 2026-08-10 and was emptied the same day. It survives as a
+ * mechanism rather than a list: an entry here is a deliberate, reviewable
+ * admission that a bridge ships untested, and the assertion below fails if one
+ * goes stale — so it cannot quietly become a parking space.
+ *
+ * Adding an entry needs a very good reason. Writing the test is nearly always
+ * cheaper than justifying its absence: the ten written on the day it emptied
+ * found two real defects and three places where the contract was not what it
+ * looked like from the outside.
  */
-const UNTESTED_BRIDGES = [
-  "artboard",
-  "charts",
-  "cms",
-  "git",
-  "map",
-  "scene",
-  "screens",
-  "sheets",
-  "slides",
-  "whiteboard",
-];
+const UNTESTED_BRIDGES: string[] = [];
 
 const bridges: BridgeFacts[] = readdirSync(bridgeDir)
   .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))

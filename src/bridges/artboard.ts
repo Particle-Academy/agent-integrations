@@ -67,7 +67,21 @@ const newId = (prefix: string) =>
   `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 
 /** Deep-clone helper for snapshotting pieces/sections for undo closures. */
-const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+/**
+ * Deep-clone for undo snapshots.
+ *
+ * `undefined` is passed through rather than round-tripped. `JSON.stringify(undefined)`
+ * returns the VALUE `undefined`, not a string, so `JSON.parse` then throws
+ * `"undefined" is not valid JSON` — and this is called on optional fields.
+ *
+ * That was live: `artboard_set_piece_content` snapshots `existing.content`
+ * before writing, so it threw for any piece that did not already have content.
+ * Pieces the BRIDGE creates always do (`coerceContent` returns at least
+ * `{kind:"node"}`), which is why it went unnoticed — but a piece the host app
+ * built has no content until something sets it, so an agent adding content to a
+ * human-made piece hit an error every time.
+ */
+const clone = <T,>(v: T): T => (v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T));
 
 /** Coerce arbitrary JSON into a valid ArtPieceContent, defaulting to a node. */
 const coerceContent = (v: unknown): ArtPieceContent => {
