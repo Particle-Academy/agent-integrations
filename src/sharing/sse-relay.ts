@@ -3,6 +3,7 @@ import type { Transport } from "../mcp/server";
 import type { MicroMcpServer } from "../mcp/server";
 import type { RelayChannelHandle } from "@particle-academy/fancy-cf-relay";
 import { constantTimeEqual } from "./token";
+import type { AgentActivityEvent } from "../presence/types";
 import { emitActivity } from "../presence/registry";
 
 /**
@@ -23,6 +24,29 @@ import { emitActivity } from "../presence/registry";
  * top by wrapping `send` / `deliverFromRemote`.
  */
 export type SseRelayOptions = {
+  /**
+   * Which in-process activity events this relay forwards to ITS agent.
+   *
+   * The activity bus is global to the page, so with two concurrent sessions —
+   * site co-browse and the agent playground — each relay forwarded the other's
+   * traffic and every agent saw every other agent's navigations. Returning
+   * `false` drops the event for this relay only.
+   *
+   * Omitted means forward everything, which is the historical behaviour and
+   * correct for the common single-session case. A throwing predicate drops that
+   * one event and keeps the subscription: a host predicate is host code, and
+   * one bad event must not silently end forwarding for the session — that looks
+   * exactly like the agent going quiet.
+   */
+  activityFilter?: (event: AgentActivityEvent) => boolean;
+  /**
+   * Identity stamped on the relay's own connect/disconnect activity.
+   *
+   * These were emitted with a literal `agentId: "agent"`, which made two
+   * sessions' connect events indistinguishable — and unfilterable, since there
+   * was nothing to tell them apart by.
+   */
+  agent?: { id: string; name?: string; color?: string };
   baseUrl: string;
   sessionId: string;
   token: string;
@@ -192,9 +216,9 @@ export class SseRelayTransport implements Transport {
       this.peers.add(subscriberId);
       this.notifyPeers();
       emitActivity({
-        agentId: "agent",
-        agentName: "Agent",
-        agentColor: "#a855f7",
+        agentId: this.opts.agent?.id ?? "agent",
+        agentName: this.opts.agent?.name ?? "Agent",
+        agentColor: this.opts.agent?.color ?? "#a855f7",
         action: "agent_connected",
         timestamp: Date.now(),
         target: { kind: "navigation", label: "Agent connected" },
@@ -208,9 +232,9 @@ export class SseRelayTransport implements Transport {
       this.notifyPeers();
       if (this.peers.size === 0) {
         emitActivity({
-          agentId: "agent",
-          agentName: "Agent",
-          agentColor: "#a855f7",
+          agentId: this.opts.agent?.id ?? "agent",
+          agentName: this.opts.agent?.name ?? "Agent",
+          agentColor: this.opts.agent?.color ?? "#a855f7",
           action: "agent_disconnected",
           timestamp: Date.now(),
           target: { kind: "navigation", label: "Agent disconnected" },
@@ -242,6 +266,18 @@ export function attachSseRelay(server: MicroMcpServer, options: SseRelayOptions)
   // tree-shaken out.
   import("../presence/registry").then(({ onActivity }) => {
     const off = onActivity((event) => {
+      if (options.activityFilter) {
+        let keep: boolean;
+        try {
+          keep = options.activityFilter(event);
+        } catch {
+          // Host code threw. Drop this event, keep the subscription — the
+          // alternative is a session that goes permanently silent because one
+          // event was shaped unexpectedly.
+          return;
+        }
+        if (!keep) return;
+      }
       transport.send({
         jsonrpc: "2.0",
         method: "notifications/agent_activity",

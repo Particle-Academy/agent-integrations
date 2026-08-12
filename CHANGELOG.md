@@ -11,6 +11,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-08-11
+
+### Fixed
+
+- **Two concurrent relay sessions leaked each other's activity** (#6, item 4).
+
+  `attachSseRelay` subscribes to the in-process activity bus and forwarded every
+  event it saw. That bus is global to the page, so running the site co-browse
+  relay alongside the agent playground's meant each agent received the other's
+  navigations and clicks, and the presence overlay attributed them to whoever
+  was nearest.
+
+- **The relay's own connect/disconnect events carried a hardcoded
+  `agentId: "agent"`.** Two sessions' connect events were therefore identical,
+  and unfilterable — there was nothing to tell them apart by. They now carry the
+  session's configured `agent`, falling back to the old literal.
+
+### Added
+
+- **`activityFilter` on `SseRelayOptions` and `useCoBrowseSession`** — a
+  predicate deciding which events this relay forwards.
+
+  Omitted, everything is forwarded, which is the historical behaviour and right
+  for the single-session case; **consumers with one session do nothing.** A
+  throwing predicate drops that one event and keeps the subscription, because a
+  host predicate is host code and a session that goes permanently silent looks
+  exactly like an agent that has died.
+
+- **`agent` on `SseRelayOptions`**, passed through by `useCoBrowseSession` from
+  the identity it already had.
+
+### Notes
+
+- This is the standalone half of #6 item 4. The rest — one merged session with
+  one tool surface — needs a decision about whether a mounted playground page
+  contributes its bridges permanently or only while mounted, and that does not
+  belong inside a bug fix. The leak is the part that is visibly wrong today, and
+  it is fixed independently of how that question is answered.
+
+
 ## [0.39.1] — 2026-08-10
 
 ### Fixed

@@ -4,6 +4,7 @@ import { attachInProcess } from "../mcp/transports";
 import { attachSseRelay, type RelayState, type SseRelayTransport } from "./sse-relay";
 import { createSessionDescriptor, type SessionDescriptor } from "./token";
 import { emitActivity } from "../presence/registry";
+import type { AgentActivityEvent } from "../presence/types";
 import { registerNavigationBridge, type NavigationBridgeAdapter } from "../bridges/navigation";
 
 /** A thing the human did, surfaced so the connected agent stays aware. */
@@ -22,6 +23,17 @@ export type UseCoBrowseSessionOptions = {
   adapter: NavigationBridgeAdapter;
   /** Identity for the agent's presence (cursor/log color + name). */
   agent?: { id: string; name?: string; color?: string };
+  /**
+   * Which activity events this session forwards to its agent.
+   *
+   * Only needed when a page runs MORE THAN ONE session — site co-browse plus
+   * the agent playground, say. The activity bus is global to the page, so
+   * without a filter each relay forwards the other's traffic and every agent
+   * sees every other agent's navigations.
+   *
+   * Omitted forwards everything, which is right for the single-session case.
+   */
+  activityFilter?: (event: AgentActivityEvent) => boolean;
   /** Relay base path. Default "/agent-relay" (the generic frame broker). */
   relayBaseUrl?: string;
   /** MCP server info advertised to the agent. */
@@ -123,7 +135,17 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
     if (!response.ok) {
       throw new Error(`Relay registration failed (${response.status})`);
     }
-    const relay = attachSseRelay(server, { baseUrl: relayBaseUrl, sessionId: descriptor.id, token: descriptor.token });
+    // Pass the session's agent identity down so the relay stamps its own
+    // connect/disconnect events with it, and so a host that runs a SECOND
+    // session (the agent playground alongside site co-browse) has something to
+    // scope on. Without an `agent` this behaves exactly as before.
+    const relay = attachSseRelay(server, {
+      baseUrl: relayBaseUrl,
+      sessionId: descriptor.id,
+      token: descriptor.token,
+      agent: options.agent,
+      activityFilter: options.activityFilter,
+    });
     relay.onStateChange(setRelayState);
     relay.onPeersChange(setAgentCount);
     relayRef.current = relay;
