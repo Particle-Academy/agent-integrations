@@ -42,6 +42,16 @@ export type FilesBridgeAdapter = {
   listChildren: (path: string) => Promise<FileEntry[]> | FileEntry[];
   /** Optional (snapshot mode): fetch/refresh a snapshot subtree so an agent can pull remote state on demand. */
   requestSnapshot?: (path: string, depth?: number) => Promise<FileSnapshotNode[]> | FileSnapshotNode[];
+  /**
+   * Create a folder. **Supplying this is the opt-in** — `files_create_folder`
+   * is registered only when it is present, so an agent cannot be handed a write
+   * a host never wired, and the advertised tool list tells the truth about what
+   * is possible.
+   *
+   * Pairs with `FileBrowser`'s `onCreateFolder` (react-fancy 5.18+): the same
+   * operation the human has, given to the agent.
+   */
+  createFolder?: (input: { parentPath: string; name: string }) => Promise<void> | void;
 };
 
 export type FilesBridgeOptions = {
@@ -60,6 +70,16 @@ export type FilesBridgeOptions = {
    * SOLELY responsible for sandboxing what `listChildren`/`requestSnapshot` expose.
    */
   root?: string;
+  /**
+   * Stage writes for human confirmation. Default **true**, matching the
+   * catalog bridge's destructive ops.
+   *
+   * This bridge writes to a filesystem on the strength of a model's output, so
+   * the safe mode is the default and turning it off is the deliberate act.
+   */
+  pendingMode?: boolean;
+  /** Host confirm hook for staged writes. Resolves true to proceed. */
+  confirm?: (req: { action: string; path: string; label: string }) => Promise<boolean> | boolean;
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
@@ -74,6 +94,21 @@ const MAX_SNAPSHOT_DEPTH = 8;
  * `..` pass (resolved within root by the host). String-level only — see the
  * `root` docs: hosts over a real fs must ALSO realpath to defeat symlinks.
  */
+/**
+ * Why a folder NAME cannot be used, or `null`.
+ *
+ * `assertPathWithinRoot` inspects the parent path; the name is appended to it
+ * afterwards, so `{ parentPath: "/root", name: "../.." }` clears that check and
+ * still escapes. A name containing a separator is not a name.
+ */
+export function invalidFolderName(name: string): string | null {
+  const trimmed = name.trim();
+  if (trimmed === "") return "A folder name is required.";
+  if (trimmed.includes("/") || trimmed.includes("\\")) return "A folder name may not contain a path separator.";
+  if (trimmed === "." || trimmed === "..") return "That folder name is reserved.";
+  return null;
+}
+
 export function assertPathWithinRoot(root: string, path: string): void {
   const segments = path.replace(/[\\/]+/g, "/").split("/");
   if (segments.includes("..")) {
@@ -125,6 +160,7 @@ const asPaths = (v: unknown): string[] => {
 export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions): Bridge {
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
+  const pendingMode = options.pendingMode ?? true;
   const disposers: Array<() => void> = [];
 
   // Reject traversal / out-of-root paths before they reach the adapter (no-op
@@ -323,6 +359,53 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
     },
     fTarget,
   );
+
+  // ───────────── Write (staged) ─────────────
+
+  if (adapter.createFolder) {
+    reg(
+      "files_create_folder",
+      "Create a folder inside `parentPath`. Staged for human confirmation unless the host disabled pendingMode.",
+      {
+        parentPath: { type: "string", description: "Directory to create in; defaults to the current directory." },
+        name: { type: "string", description: "The new folder's name. A leaf name — no separators." },
+        confirm: { type: "boolean", description: "Acknowledge a staged write when the host wired no confirm hook." },
+      },
+      ["name"],
+      async (args) => {
+        const parentPath = guard(args.parentPath !== undefined ? str(args.parentPath) : adapter.getPath());
+        const name = str(args.name).trim();
+
+        const invalid = invalidFolderName(name);
+        if (invalid) return errorResult(invalid);
+
+        const label = `${parentPath}/${name}`;
+
+        if (pendingMode) {
+          if (options.confirm) {
+            const ok = await options.confirm({ action: "files_create_folder", path: label, label });
+            if (!ok) return errorResult(`Declined: create folder ${label} (human did not confirm).`);
+          } else if (args.confirm !== true) {
+            return errorResult(
+              `Staged: create folder ${label}. Re-call with confirm:true to proceed.`,
+            );
+          }
+        }
+
+        try {
+          await adapter.createFolder!({ parentPath, name });
+        } catch (e) {
+          // The host's filesystem is the authority on what is allowed —
+          // permissions, name rules, a race with another writer. Reporting its
+          // refusal as success would tell the agent a folder exists that does not.
+          return errorResult(e instanceof Error ? e.message : String(e));
+        }
+
+        return textResult(`Created folder ${label}.`, { parentPath, name, path: label });
+      },
+      (args) => ({ kind: "directory", path: `${str(args.parentPath)}/${str(args.name)}`, label: str(args.name) }),
+    );
+  }
 
   // ───────────── Snapshot (streamed remote trees) ─────────────
 

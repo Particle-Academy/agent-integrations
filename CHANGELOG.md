@@ -11,6 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-08-11
+
+### Added
+
+- **`files_create_folder` — the files bridge's first write.** The bridge shipped
+  read-only and said so; react-fancy 5.18.0 then gave `FileBrowser` an opt-in
+  New Folder button, so a human could create a folder and an agent could not.
+
+  **Opt-in via the adapter:** no `createFolder` on your `FilesBridgeAdapter`, no
+  tool. A host that never wired creation cannot have an agent create anything,
+  and the advertised tool list stays honest about what is possible.
+
+  **Staged by default.** `pendingMode` defaults to `true`, matching the catalog
+  bridge's destructive ops — this writes to a filesystem on the strength of a
+  model's output, so the safe mode is the default and turning it off is the
+  deliberate act. Wire `confirm` for a human prompt, or let the agent
+  acknowledge with `confirm: true`.
+
+  **Names are validated separately from paths.** `assertPathWithinRoot` inspects
+  the PARENT; the name is appended afterwards, so `{ parentPath: "/root",
+  name: "../.." }` clears the root check and still escapes. Separators, `.` and
+  `..` are rejected as names. Exported as `invalidFolderName` if a host wants
+  the same rule.
+
+  An adapter rejection surfaces as a tool error rather than success — the host's
+  filesystem is the authority, and reporting its refusal as success would tell
+  the agent a folder exists that does not.
+
+
 ## [0.40.0] - 2026-08-11
 
 ### Fixed
