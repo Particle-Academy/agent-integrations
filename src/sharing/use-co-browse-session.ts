@@ -6,6 +6,7 @@ import { createSessionDescriptor, type SessionDescriptor } from "./token";
 import { emitActivity } from "../presence/registry";
 import type { AgentActivityEvent } from "../presence/types";
 import { registerNavigationBridge, type NavigationBridgeAdapter } from "../bridges/navigation";
+import { BridgeContributions, type BridgeContribution } from "./bridge-contributions";
 
 /** A thing the human did, surfaced so the connected agent stays aware. */
 export type CoBrowseUserEvent =
@@ -38,7 +39,15 @@ export type UseCoBrowseSessionOptions = {
   relayBaseUrl?: string;
   /** MCP server info advertised to the agent. */
   info?: { name: string; version: string; instructions?: string };
-  /** Register extra bridges (forms/screens/…) on the same server. */
+  /**
+   * Register extra bridges (forms/screens/…) on the same server, once, at
+   * construction.
+   *
+   * For a surface that comes and goes with navigation use
+   * {@link CoBrowseSession.contributeBridges} instead: this callback fires
+   * exactly once while the server is built, so a page mounted afterwards can
+   * never contribute through it, and one that unmounts can never withdraw.
+   */
   extraBridges?: (server: MicroMcpServer) => void;
   /** CSRF token for the relay register/unregister POSTs. */
   csrfToken?: () => string | null | undefined;
@@ -48,6 +57,21 @@ export type UseCoBrowseSessionOptions = {
 
 export type CoBrowseSession = {
   server: MicroMcpServer | null;
+  /**
+   * Contribute bridges for as long as the returned disposer is uncalled —
+   * "site tools always; page tools while mounted".
+   *
+   * Call it from a page's mount effect and return its disposer:
+   *
+   * ```tsx
+   * useEffect(() => contributeBridges((server) =>
+   *   registerArtboardBridge(server, { adapter }).dispose), []);
+   * ```
+   *
+   * Safe to call before sharing starts — the contribution is applied to the
+   * server as soon as one exists, and re-applied if the session is restarted.
+   */
+  contributeBridges: (contribute: BridgeContribution) => () => void;
   session: SessionDescriptor | null;
   relayState: RelayState;
   /**
@@ -88,6 +112,10 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
   const relayBaseUrl = options.relayBaseUrl ?? "/agent-relay";
 
   const serverRef = useRef<MicroMcpServer | null>(null);
+  // Survives re-renders AND server rebuilds: a page's contribution outlives any
+  // one session, which is the entire reason this is not a captured callback.
+  const contributionsRef = useRef<BridgeContributions>(null as unknown as BridgeContributions);
+  if (!contributionsRef.current) contributionsRef.current = new BridgeContributions();
   const relayRef = useRef<SseRelayTransport | null>(null);
   const detachInProc = useRef<(() => void) | null>(null);
   const disposeBridge = useRef<(() => void) | null>(null);
@@ -107,6 +135,9 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
     });
     const bridge = registerNavigationBridge(server, { adapter, agent, pendingMode: options.pendingMode });
     extraBridges?.(server);
+    // Apply whatever pages are already mounted, and keep the registry attached
+    // so later mounts/unmounts add and withdraw live.
+    contributionsRef.current.bind(server);
     const inProc = attachInProcess(server);
     detachInProc.current = () => inProc.close();
     disposeBridge.current = bridge.dispose;
@@ -115,6 +146,7 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
     return () => {
       relayRef.current?.close();
       relayRef.current = null;
+      contributionsRef.current.unbind();
       disposeBridge.current?.();
       detachInProc.current?.();
       serverRef.current = null;
@@ -188,8 +220,16 @@ export function useCoBrowseSession(options: UseCoBrowseSessionOptions): CoBrowse
     });
   }, []);
 
+  // Stable identity: a page passes this straight into a mount effect, so a new
+  // function each render would re-register its bridges on every render.
+  const contributeBridges = useCallback(
+    (contribute: BridgeContribution) => contributionsRef.current.add(contribute),
+    [],
+  );
+
   return {
     server: serverRef.current,
+    contributeBridges,
     session,
     relayState,
     agentConnected: agentCount > 0,

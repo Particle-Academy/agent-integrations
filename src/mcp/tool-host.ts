@@ -57,12 +57,41 @@ export interface ToolHost {
 export class ToolRegistry implements ToolHost {
   protected readonly tools = new Map<string, RegisteredTool>();
 
+  /**
+   * Tools that existed and were withdrawn, kept so a call that races an unmount
+   * can say WHICH thing happened.
+   *
+   * The tool surface is dynamic by design — "site tools always, page tools while
+   * mounted" — so an agent deciding to call a tool while the human navigates
+   * away is normal traffic, not an edge case. Reporting that as `Unknown tool`
+   * is the least useful thing available: it reads as "the agent is broken" or
+   * "you asked for something imaginary", when the truth is "that surface just
+   * closed".
+   *
+   * Names only. Nothing about the handler is retained, so this cannot keep a
+   * disposed surface alive.
+   */
+  protected readonly withdrawn = new Set<string>();
+
   registerTool(definition: ToolDefinition, handler: ToolHandler): () => void {
     this.tools.set(definition.name, { definition, handler });
+    // A remounted surface must stop apologising for a previous unmount.
+    this.withdrawn.delete(definition.name);
     this.onToolsChanged();
     return () => {
-      if (this.tools.delete(definition.name)) this.onToolsChanged();
+      if (this.tools.delete(definition.name)) {
+        this.withdrawn.add(definition.name);
+        this.onToolsChanged();
+      }
     };
+  }
+
+  /** Why `name` is not callable, phrased for whoever has to act on it. */
+  protected missingToolMessage(name: string): string {
+    return this.withdrawn.has(name)
+      ? `Tool "${name}" was withdrawn: the surface it targets is no longer mounted. `
+        + `Call tools/list for the current surface — the site-wide tools remain available.`
+      : `Unknown tool: ${name}`;
   }
 
   getTool(name: string): RegisteredTool | null {
@@ -76,7 +105,7 @@ export class ToolRegistry implements ToolHost {
   async callTool(name: string, args: JsonObject = {}): Promise<CallToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
-      throw new Error(`Unknown tool: ${name}`);
+      throw new Error(this.missingToolMessage(name));
     }
     return tool.handler(args);
   }

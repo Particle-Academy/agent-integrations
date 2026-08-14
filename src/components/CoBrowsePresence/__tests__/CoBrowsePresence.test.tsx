@@ -18,6 +18,7 @@ const descriptor = { id: "kO7bI73O", token: "secret-token-value", display: "secr
 
 const makeSession = (over: Partial<CoBrowseSession> = {}): CoBrowseSession => ({
   server: null,
+  contributeBridges: () => () => {},
   session: descriptor,
   relayState: "open",
   agentConnected: false,

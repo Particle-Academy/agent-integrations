@@ -209,6 +209,13 @@ export {
   type CoBrowseUserEvent,
 } from "./sharing/use-co-browse-session";
 
+/**
+ * "Site tools always; page tools while mounted" — the registry behind
+ * `CoBrowseSession.contributeBridges`, exported for hosts that drive a server
+ * without the React hook.
+ */
+export { BridgeContributions, type BridgeContribution } from "./sharing/bridge-contributions";
+
 // Components
 export { AgentPanel } from "./components/AgentPanel";
 export type { AgentPanelProps, AgentActivity } from "./components/AgentPanel";

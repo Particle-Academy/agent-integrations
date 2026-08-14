@@ -11,6 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-08-14
+
+Implements the decided co-browse design — **site tools always; page tools while mounted** (#7). The cross-session activity leak, the other half of #6 item 4, shipped separately in 0.40.0.
+
+### Added
+
+- **`contributeBridges` on the `useCoBrowseSession` result** — a page contributes bridges for as long as the returned disposer is uncalled:
+
+  ```tsx
+  useEffect(() => contributeBridges((server) =>
+    registerArtboardBridge(server, { adapter }).dispose), []);
+  ```
+
+  `extraBridges` already existed and was already called, so the plumbing looked done. It could not express this design, because it fires **exactly once while the server is built**: a page mounting afterwards never gets a chance to contribute, and one that unmounts can never withdraw. Both failures are silent — the agent simply never sees those tools, or keeps ones aimed at a surface that is gone. Contributions are therefore a registry applied when a server appears, re-applied if the session is restarted under a still-mounted page, and withdrawn on unmount.
+
+  Safe to call before sharing starts. `extraBridges` is unchanged and still works for bridges that live for the whole session.
+
+- **`BridgeContributions`** — the registry itself, exported for hosts not using the React hook.
+
+### Changed
+
+- **A call to a withdrawn tool now says so.** A dynamic tool surface means an agent calling a tool while the human navigates away is normal traffic, not an edge case, and it previously produced `Unknown tool: x` — indistinguishable from a name that never existed, and the least useful thing to say while a human is watching. A withdrawn tool now reports that the surface it targets is no longer mounted and points at `tools/list`, while a genuinely unknown name still reports `Unknown tool`. Re-registering clears it, so a remounted surface stops apologising.
+
+  **What you must do:** nothing, unless you match on the exact error string for a tool that was withdrawn rather than never registered.
+
+### Notes
+
+- No new notification machinery was needed for withdrawal: bridge disposers already unregister their tools, `ToolRegistry` fires `onToolsChanged`, and `MicroMcpServer` already broadcasts `notifications/tools/list_changed`. Verified before building — note that grepping for `unregisterTool` under-reports this, because bridges use the disposer `registerTool` returns.
+- The **sandbox side is not done**: `CoBrowseProvider` still passes no contributions, so nothing exercises this in the showcase yet.
+
 ## [0.41.0] - 2026-08-11
 
 ### Added

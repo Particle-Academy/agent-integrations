@@ -129,7 +129,7 @@ export class MicroMcpServer extends ToolRegistry {
         }
         const tool = this.tools.get(name);
         if (!tool) {
-          throw rpcError(JSONRPC_METHOD_NOT_FOUND, `Unknown tool: ${name}`);
+          throw rpcError(JSONRPC_METHOD_NOT_FOUND, this.missingToolMessage(name));
         }
         const result = await tool.handler(args, { transport });
         return result satisfies CallToolResult;
