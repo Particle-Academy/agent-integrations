@@ -34,6 +34,15 @@ export type Subscriber = {
   direction: Direction;
   queue: string[];
   resolveNext: ((frame: string | null) => void) | null;
+  /**
+   * The caller-supplied client label, when one was given.
+   *
+   * Used to route a RESPONSE back to whoever asked. Without it the broker
+   * cannot tell two holders of one bearer token apart, and every reply goes to
+   * every subscriber -- so a second token holder passively receives the results
+   * of everyone else's tool calls without making one.
+   */
+  client?: string;
 };
 
 export type RelayBrokerOptions = {
@@ -72,6 +81,9 @@ export class RelayBroker {
   private readonly store: Store;
   /** Per-session, per-direction subscriber list. */
   private subs: Map<string, Map<string, Map<string, Subscriber>>> = new Map();
+
+  /** Per-session map of JSON-RPC request id -> the client that asked. */
+  private callers: Map<string, Map<string, string>> = new Map();
   private reaper?: ReturnType<typeof setInterval>;
 
   constructor(opts: RelayBrokerOptions = {}) {
@@ -90,6 +102,7 @@ export class RelayBroker {
   dispose() {
     if (this.reaper) clearInterval(this.reaper);
     this.subs.clear();
+    this.callers.clear();
   }
 
   /** Register a session id + token. Idempotent — same id+token re-registers,
@@ -115,6 +128,7 @@ export class RelayBroker {
     if (!this.validate(id, token)) return false;
     this.store.deleteSession(id);
     this.subs.delete(id);
+    this.callers.delete(id);
     return true;
   }
 
@@ -169,12 +183,19 @@ export class RelayBroker {
   dropSession(id: string): void {
     this.store.deleteSession(id);
     this.subs.delete(id);
+    this.callers.delete(id);
   }
 
   /** Push a frame onto the inbound queue (external agent → browser). */
-  inbox(id: string, token: string, payload: string): boolean {
+  inbox(id: string, token: string, payload: string, opts: { client?: string } = {}): boolean {
     if (!this.validate(id, token)) return false;
     if (!this.isFrame(payload)) return false;
+
+    // Remember WHO asked, so the reply can go back to them alone.
+    if (opts.client !== undefined) {
+      this.rememberCaller(id, payload, opts.client);
+    }
+
     this.fanOut(id, "inbound", payload);
     return true;
   }
@@ -183,7 +204,27 @@ export class RelayBroker {
   outbox(id: string, token: string, payload: string): boolean {
     if (!this.validate(id, token)) return false;
     if (!this.isFrame(payload)) return false;
-    this.fanOut(id, "outbound", payload);
+
+    // A RESPONSE goes to the caller. A NOTIFICATION goes to everyone.
+    //
+    // `relay-protocol.md` has always said "tool-call replies go back on the
+    // transport that originated the call"; the relay broadcast them instead.
+    // Combined with a bearer token that carries no per-agent identity, that
+    // meant a second token holder passively received the results of everyone
+    // else's calls -- turning a share link from "you may act here" into "you
+    // may watch everyone acting here", which nobody chose.
+    //
+    // Notifications stay broadcast: presence, activity and server-pushed state
+    // answer nobody and are meant for every attached client. Narrowing those
+    // would break the collaboration this exists to serve.
+    const target = this.callerFor(id, payload);
+
+    if (target === null) {
+      this.fanOut(id, "outbound", payload);
+      return true;
+    }
+
+    this.fanOutTo(id, "outbound", payload, target);
     return true;
   }
 
@@ -191,10 +232,16 @@ export class RelayBroker {
    * Subscribe to a session's queue for one direction. Returns an iterable
    * the caller (an HTTP handler) pumps as SSE.
    */
-  subscribe(id: string, token: string, direction: Direction): SubscribeResult {
+  subscribe(id: string, token: string, direction: Direction, opts: { client?: string } = {}): SubscribeResult {
     if (!this.validate(id, token)) return { ok: false, reason: "invalid_token" };
     const subscriberId = randomBytes(8).toString("hex");
-    const subscriber: Subscriber = { id: subscriberId, direction, queue: [], resolveNext: null };
+    const subscriber: Subscriber = {
+      id: subscriberId,
+      direction,
+      queue: [],
+      resolveNext: null,
+      client: opts.client,
+    };
     this.getDirSubs(id, direction).set(subscriberId, subscriber);
 
     // Notify the inbound side (= browser) that an outbound subscriber
@@ -272,6 +319,119 @@ export class RelayBroker {
     return byDir;
   }
 
+  /**
+   * Record which client asked, keyed by JSON-RPC id.
+   *
+   * Only for REQUESTS — a frame with both an `id` and a `method`. A
+   * notification answers nobody and a response is not a question.
+   */
+  private rememberCaller(sessionId: string, payload: string, client: string): void {
+    const frame = this.parseFrame(payload);
+    if (!frame || frame.id === undefined || frame.id === null || typeof frame.method !== "string") {
+      return;
+    }
+
+    let byId = this.callers.get(sessionId);
+    if (!byId) {
+      byId = new Map();
+      this.callers.set(sessionId, byId);
+    }
+
+    // BOUNDED. A session that asks for hours must not grow this without limit,
+    // and an unanswered request would otherwise sit here forever. Oldest out
+    // first; losing the oldest correlation degrades to "delivered to nobody",
+    // which fails closed rather than open.
+    if (byId.size >= 1000) {
+      const oldest = byId.keys().next();
+      if (!oldest.done) byId.delete(oldest.value);
+    }
+
+    byId.set(String(frame.id), client);
+  }
+
+  /**
+   * The client a RESPONSE belongs to, or `null` when the frame is a broadcast.
+   *
+   * Returns the empty string for a response whose id nobody is recorded as
+   * having asked — routed to NOBODY rather than to everyone. Broadcasting an
+   * uncorrelated reply "just in case" is precisely the leak being closed.
+   */
+  private callerFor(sessionId: string, payload: string): string | null {
+    const frame = this.parseFrame(payload);
+
+    // Not a response: no id, or it carries a method (a request/notification).
+    if (!frame || frame.id === undefined || frame.id === null || typeof frame.method === "string") {
+      return null;
+    }
+
+    // LEGACY MODE is decided by whether any subscriber IDENTIFIED ITSELF, not
+    // by whether a correlation happens to have been recorded yet.
+    //
+    // Keying on the correlation map was wrong in a way a test caught: a
+    // labelled client that has subscribed but not yet asked leaves the map
+    // empty, and an unsolicited response would then broadcast to everyone --
+    // the leak reopening in the window before the first call.
+    //
+    // If nobody labelled themselves, every client is legacy and broadcast is
+    // the only thing that can work; narrowing would break them in silence.
+    if (!this.anyIdentifiedSubscriber(sessionId)) {
+      return null;
+    }
+
+    const byId = this.callers.get(sessionId);
+    const key = String(frame.id);
+    const client = byId?.get(key);
+
+    // CONSUMED. Correlation is not a standing subscription: leaving it would
+    // let a replayed frame with the same id be delivered again, and would make
+    // the map a slow leak on a long session.
+    byId?.delete(key);
+
+    return client ?? "";
+  }
+
+  /**
+   * Has any subscriber on this session told the broker who it is?
+   *
+   * The discriminator between a scoped session and a legacy one. Checked across
+   * BOTH directions: the page subscribes inbound and rarely labels itself, so
+   * asking only about the outbound side would misread a scoped session whose
+   * agents have not yet attached.
+   */
+  private anyIdentifiedSubscriber(sessionId: string): boolean {
+    const dirs = this.subs.get(sessionId);
+    if (!dirs) return false;
+
+    for (const dir of dirs.values()) {
+      for (const sub of dir.values()) {
+        if (sub.client !== undefined) return true;
+      }
+    }
+
+    return false;
+  }
+
+  private parseFrame(payload: string): { id?: unknown; method?: unknown } | null {
+    try {
+      const parsed: unknown = JSON.parse(payload);
+      return parsed && typeof parsed === "object" ? (parsed as { id?: unknown; method?: unknown }) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Deliver to the subscribers of one client only. */
+  private fanOutTo(sessionId: string, direction: Direction, payload: string, client: string) {
+    const dir = this.subs.get(sessionId)?.get(direction);
+    if (!dir) return;
+
+    for (const sub of dir.values()) {
+      if (sub.client !== client) continue;
+      sub.queue.push(payload);
+      sub.resolveNext?.(sub.queue.shift() ?? null);
+    }
+  }
+
   private fanOut(sessionId: string, direction: Direction, payload: string) {
     const dir = this.subs.get(sessionId)?.get(direction);
     if (!dir) return;
@@ -327,6 +487,7 @@ export class RelayBroker {
         }
       }
       this.subs.delete(id);
+    this.callers.delete(id);
       this.store.deleteSession(id);
     }
   }

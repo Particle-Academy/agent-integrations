@@ -11,6 +11,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-08-26
+
+### Security
+
+- **A relay session token granted READ ACCESS TO EVERY PARTICIPANT'S TRAFFIC,
+  not just the ability to act.** If you run the HTTP relay with more than one
+  agent attached to a session, take this release.
+
+  Two decisions, each defensible alone: `fanOut` pushed every frame to every
+  subscriber on that direction, and the session token is bearer authority with
+  no per-agent identity. **Together, a second holder of the token passively
+  received the results of everyone else's tool calls without making one** — and
+  on a live application page those results carry whatever the bridges expose.
+
+  A share link that grants *action* is something a host can reason about. One
+  that grants *surveillance of other participants* is a different offer, and
+  nobody chose it — it fell out of the composition.
+
+  It also contradicted our own spec: `relay-protocol.md` has always said "tool-
+  call replies go back on the transport that originated the call". The relay
+  never implemented that, so this restores documented behaviour rather than
+  inventing new behaviour.
+
+  **What to do:** send a `client` query parameter on both your subscription and
+  your posts, with the same value:
+
+  ```
+  GET  /sse/{session}?token=…&client=worker-7
+  POST /inbound/{session}?token=…&client=worker-7
+  ```
+
+  Replies then reach only that client. **Notifications are unchanged** and still
+  broadcast — presence, activity and server-pushed state answer nobody and are
+  meant for every attached client.
+
+  A client sending no label still gets the old broadcast, because narrowing it
+  would break existing clients in silence. But a session where **any** subscriber
+  identifies itself switches to scoped routing, and an uncorrelated response then
+  reaches nobody rather than everyone.
+
+  **This does not fix the token itself.** Possession is still authority for every
+  registered tool: no expiry beyond a 4h idle timeout, no audience binding, no
+  per-token tool subset, no way to tell two holders apart. That is a design
+  question, and it is now written down rather than merely true.
+
+  Reported by the Prism harness, composing two answers given separately — each
+  piece defensible, the composition the defect, and nothing looking at
+  compositions.
+
 ## [0.43.0] - 2026-08-26
 
 ### Added

@@ -182,8 +182,13 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
         return json(res, 410, { error: "session_gone" });
       }
 
+      // `client` identifies WHICH agent is calling, so its reply can be routed
+      // back to it alone. Optional: a client that sends none gets the legacy
+      // broadcast, which is the only thing that can work for it.
+      const client = getQuery(req).get("client") ?? undefined;
+
       const ok = direction === "inbound"
-        ? broker.inbox(session, token, body)
+        ? broker.inbox(session, token, body, { client })
         : broker.outbox(session, token, body);
       return json(res, ok ? 200 : 401, ok ? { ok: true } : { error: "invalid_token_or_frame" });
     };
@@ -203,7 +208,13 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
     const token = q.get("token") ?? "";
     const direction = q.get("direction") === "outbound" ? "outbound" : "inbound";
 
-    const sub = broker.subscribe(session, token, direction);
+    // The SAME `client` the agent posts under, so a reply can find its way
+    // back. An agent that subscribes with a label and posts without one (or
+    // vice versa) simply does not correlate and its replies go nowhere -- which
+    // fails closed, and is the right way round for a leak fix.
+    const sub = broker.subscribe(session, token, direction, {
+      client: getQuery(req).get("client") ?? undefined,
+    });
     if (!sub.ok) {
       res.statusCode = 401;
       res.setHeader("content-type", "text/event-stream");

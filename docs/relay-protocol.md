@@ -46,6 +46,39 @@ For direct peer connections (no server hop), open a data channel and pipe frames
 
 The browser opens a long-lived `EventSource` to a relay service (e.g. a Cloudflare Worker) that also accepts `POST /mcp/{session}` from external agents. The relay forwards each request as an SSE event and accepts responses via a paired POST endpoint.
 
+## Multiple clients, and who sees a reply
+
+**A tool reply goes to the client that asked. Notifications go to everyone.**
+
+Identify yourself with a `client` query parameter on BOTH your subscription and
+your posts — the same value on each:
+
+```
+GET  /sse/{session}?token=…&client=worker-7
+POST /inbound/{session}?token=…&client=worker-7
+```
+
+The broker records which client sent each JSON-RPC request id and delivers the
+matching response to that client alone. Notifications (frames with no `id`)
+still reach every subscriber, because presence, activity and server-pushed state
+answer nobody and are meant for all of them.
+
+**Why this is not optional in a shared session.** The relay broadcast every
+frame, and the session token carries no per-agent identity — so a second holder
+of the token did not merely gain the ability to call tools, they *passively
+received the results of everyone else's calls* without making one. On a live
+application page those results carry whatever the bridges expose. That turned a
+share link from "you may act here" into "you may watch everyone acting here",
+which nobody chose: it fell out of two independently sensible decisions meeting.
+
+A client that sends no `client` label still gets the old broadcast — narrowing
+it would break existing clients in silence — but a session where **any**
+subscriber identifies itself switches to scoped routing, and an uncorrelated
+response then reaches nobody rather than everyone. Fail closed.
+
+Fixed in 0.44.0. Reported by the Prism harness, composing two separate answers
+about fan-out and token semantics.
+
 ## Multiple clients
 
 A single `MicroMcpServer` can have multiple transports attached at once (e.g. an in-page agent **and** an external relay). Each receives all server-pushed notifications; tool-call replies go back on the transport that originated the call.
