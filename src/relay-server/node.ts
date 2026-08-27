@@ -148,6 +148,15 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
       const token = getQuery(req).get("token") ?? "";
 
       if (direction === "unregister") {
+        // Unregistering a session that is already gone is a SUCCESS, not an
+        // auth failure. The caller wanted it gone and it is gone; reporting
+        // `invalid_token` for a correct token would make a clean shutdown look
+        // like a broken one, and a client retrying it would loop.
+        const state = broker.check(session, token);
+        if (!state.ok && state.reason === "session_gone") {
+          return json(res, 200, { ok: true, alreadyGone: true });
+        }
+
         const ok = broker.unregister(session, token);
         return json(res, ok ? 200 : 401, ok ? { ok: true } : { error: "invalid_token" });
       }
@@ -156,6 +165,23 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
       try { body = await readBody(req); } catch (e) {
         return json(res, 413, { error: e instanceof Error ? e.message : "payload_error" });
       }
+      // A GONE SESSION IS REPORTED AS ITSELF, with 410, before the frame is
+      // even considered.
+      //
+      // Every failure here used to come back as `401 invalid_token_or_frame`,
+      // so an agent whose page had simply closed was told its credentials or
+      // its JSON were wrong. A relay session ending is the NORMAL end of a
+      // lifecycle -- the browser is the server and nothing persists -- so it is
+      // the one outcome a server-side client must be able to recognise.
+      //
+      // 410 Gone rather than 404: the session existed and is now over, which is
+      // exactly what the status means, and it distinguishes "this is finished"
+      // from "you have the wrong URL".
+      const auth = broker.check(session, token);
+      if (!auth.ok && auth.reason === "session_gone") {
+        return json(res, 410, { error: "session_gone" });
+      }
+
       const ok = direction === "inbound"
         ? broker.inbox(session, token, body)
         : broker.outbox(session, token, body);

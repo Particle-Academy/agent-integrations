@@ -11,6 +11,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-08-26
+
+### Added
+
+- **`RelayBroker.check()` — "the session is gone" is now reportable, and
+  distinct from "your token is wrong".**
+
+  A relay session ends when the page closes or its TTL elapses, and that is the
+  NORMAL end of a lifecycle rather than an error: the browser is the server, it
+  owns the tools and the state, and nothing persists across restarts. So it is
+  the one outcome every server-side client has to be able to recognise.
+
+  It was not reportable. `validate()` returned a bare boolean for three
+  different states — no credentials, session gone, wrong token — and the HTTP
+  layer mapped all of them to `401 invalid_token`. **An agent holding a
+  perfectly good token against a closed page was told its credentials were
+  wrong.** Not a missing signal; an actively misleading one, which sends the
+  reader to debug an auth path that was never the problem.
+
+  A gone session now answers **`410 Gone`** with `{"error": "session_gone"}`.
+  `410` rather than `404` because the session existed and is now over, which
+  separates "this is finished" from "you have the wrong URL".
+
+  Two deliberate limits: a wrong token on a LIVE session is still
+  `invalid_token` (answering otherwise would tell an unauthenticated caller
+  which sessions exist), and unregistering an already-gone session now SUCCEEDS
+  with `{ok: true, alreadyGone: true}` — the caller wanted it gone and it is
+  gone, and reporting an auth failure there makes a clean shutdown look broken
+  and a retrying client loop.
+
+  **Do you have to do anything?** No. `check()` is additive and `validate()`
+  keeps its boolean contract, with a test pinning that. If you consume the HTTP
+  relay, you may now receive `410` where you previously received `401`, which is
+  the point.
+
+  Documented in [`docs/relay-server.md`](./docs/relay-server.md).
+
+  Requested by the Prism harness while designing a non-Node relay client: a dead
+  session must fail clearly "rather than looking like a page with no tools". The
+  reality was one notch worse than the shape they were guarding against.
+
 ## [0.42.0] - 2026-08-14
 
 Implements the decided co-browse design — **site tools always; page tools while mounted** (#7). The cross-session activity leak, the other half of #6 item 4, shipped separately in 0.40.0.

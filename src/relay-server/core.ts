@@ -118,15 +118,57 @@ export class RelayBroker {
     return true;
   }
 
-  /** Validate an authenticated touch and slide the TTL forward. */
-  validate(id: string, token: string): boolean {
-    if (!id || !token) return false;
+  /**
+   * Validate an authenticated touch, saying WHY when it fails.
+   *
+   * `session_gone` and `invalid_token` are different facts and a client acts on
+   * them differently. A gone session means the page has closed or the TTL has
+   * elapsed — the NORMAL end of a relay lifecycle, since the browser is the
+   * server and no state persists across restarts. A bad token means the caller
+   * is wrong.
+   *
+   * They were collapsed into one boolean and reported as `invalid_token`, so an
+   * agent holding a perfectly good token against a closed page was told its
+   * credentials were wrong. Not a missing signal — an actively misleading one,
+   * which sends the reader to debug an auth path that was never the problem.
+   *
+   * Missing credentials stay `invalid_token`: a request that never named a
+   * session has not discovered a dead one.
+   *
+   * The reason is deliberately NOT widened to cover a wrong token on a live
+   * session — answering `session_gone` there would tell an unauthenticated
+   * caller which sessions exist.
+   *
+   * Requested by the Prism harness while designing a non-Node relay client.
+   */
+  check(id: string, token: string): { ok: true } | { ok: false; reason: "invalid_token" | "session_gone" } {
+    if (!id || !token) return { ok: false, reason: "invalid_token" };
+
     const s = this.store.getSession(id);
-    if (!s) return false;
-    if (!timingSafeEqualHex(s.tokenHash, sha256Hex(token))) return false;
+    if (!s) return { ok: false, reason: "session_gone" };
+
+    if (!timingSafeEqualHex(s.tokenHash, sha256Hex(token))) {
+      return { ok: false, reason: "invalid_token" };
+    }
+
     s.lastSeen = Date.now();
     this.store.putSession(s);
-    return true;
+    return { ok: true };
+  }
+
+  /**
+   * Validate an authenticated touch and slide the TTL forward.
+   *
+   * Kept as-is for existing callers; `check()` is the one that says why.
+   */
+  validate(id: string, token: string): boolean {
+    return this.check(id, token).ok;
+  }
+
+  /** Drop a session — the page closed, or a test needs it gone. */
+  dropSession(id: string): void {
+    this.store.deleteSession(id);
+    this.subs.delete(id);
   }
 
   /** Push a frame onto the inbound queue (external agent → browser). */

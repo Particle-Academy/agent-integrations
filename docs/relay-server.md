@@ -18,6 +18,40 @@ across restarts.
   Code → the relay is hosted somewhere reachable from both the browser and the
   agent's machine.
 
+## When a session is gone
+
+A relay session ends when the page closes or its TTL elapses. That is the
+**normal** end of a lifecycle, not an error condition: the browser is the server,
+it owns the tools and the state, and nothing persists across restarts.
+
+So a client must be able to tell "this session is over" from "your credentials
+are wrong". The broker reports them separately:
+
+| condition | `check()` | HTTP |
+|---|---|---|
+| live session, good token | `{ok: true}` | `200` |
+| session never existed, or has expired | `{ok: false, reason: "session_gone"}` | **`410 Gone`** |
+| wrong token on a LIVE session | `{ok: false, reason: "invalid_token"}` | `401` |
+| no session id or no token supplied | `{ok: false, reason: "invalid_token"}` | `401` |
+
+`410` rather than `404`: the session existed and is now over, which is what the
+status means, and it separates "this is finished" from "you have the wrong URL".
+
+Two deliberate choices:
+
+- **A wrong token on a live session is never `session_gone`.** Answering
+  otherwise would tell an unauthenticated caller which sessions exist.
+- **Unregistering an already-gone session succeeds** (`{ok: true, alreadyGone:
+  true}`). The caller wanted it gone and it is gone; reporting an auth failure
+  for a correct token would make a clean shutdown look broken, and a client
+  retrying it would loop.
+
+Every failure previously came back as `401 invalid_token_or_frame`, so an agent
+whose page had simply closed was told its credentials or its JSON were wrong —
+an actively misleading answer that sends the reader to debug an auth path that
+was never the problem. `validate()` still returns a boolean for existing
+callers; `check()` is the one that says why.
+
 ## Connecting a client to a session
 
 This doc covers running the **broker**. The agent connects from the other end
