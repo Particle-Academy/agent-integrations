@@ -22,6 +22,18 @@ export type McpServerOptions = {
   capabilities?: ServerCapabilities;
   /** Free-text instructions surfaced to clients during initialize. */
   instructions?: string;
+  /**
+   * The protocol revisions this server speaks, NEWEST FIRST.
+   *
+   * `initialize` echoes the client's requested revision when it is in this
+   * list, and answers the first entry otherwise — the spec's rule, which leaves
+   * the client to decide whether it can live with the answer.
+   *
+   * Defaults to `[MCP_PROTOCOL_VERSION]`: one revision, answered whatever the
+   * client asks, which is exactly what this server did before the option
+   * existed. Only list a revision the tools you register are correct under.
+   */
+  protocolVersions?: readonly string[];
 };
 
 export type Transport = {
@@ -47,17 +59,28 @@ export type Transport = {
  */
 export class MicroMcpServer extends ToolRegistry {
   private transports = new Set<Transport>();
-  private notifyListChangedScheduled = false;
+  /**
+   * Transports owed a `tools/list_changed` at the end of this tick. Empty when
+   * none is scheduled. See {@link scheduleListChangedNotification}.
+   */
+  private listChangedOwed = new Set<Transport>();
 
   readonly info: ServerInfo;
   readonly capabilities: ServerCapabilities;
   readonly instructions?: string;
+  readonly protocolVersions: readonly string[];
 
   constructor(options: McpServerOptions) {
     super();
     this.info = options.info;
     this.capabilities = options.capabilities ?? { tools: { listChanged: true } };
     this.instructions = options.instructions;
+    if (options.protocolVersions && options.protocolVersions.length === 0) {
+      // No answer exists for a client's initialize. Fail here, next to the
+      // mistake, rather than in a handshake nobody is watching.
+      throw new Error("MicroMcpServer: protocolVersions is empty — a server must speak at least one protocol revision.");
+    }
+    this.protocolVersions = options.protocolVersions ? [...options.protocolVersions] : [MCP_PROTOCOL_VERSION];
   }
 
   attach(transport: Transport): () => void {
@@ -112,7 +135,7 @@ export class MicroMcpServer extends ToolRegistry {
     switch (method) {
       case "initialize":
         return {
-          protocolVersion: MCP_PROTOCOL_VERSION,
+          protocolVersion: this.negotiate(params?.protocolVersion),
           capabilities: this.capabilities,
           serverInfo: this.info,
           ...(this.instructions ? { instructions: this.instructions } : {}),
@@ -143,12 +166,35 @@ export class MicroMcpServer extends ToolRegistry {
     }
   }
 
+  /** The revision to answer `initialize` with: the one asked for if spoken, else the newest. */
+  private negotiate(requested: unknown): string {
+    return typeof requested === "string" && this.protocolVersions.includes(requested)
+      ? requested
+      : this.protocolVersions[0];
+  }
+
+  /**
+   * Tell the transports that SAW the old tool list that it changed.
+   *
+   * Changes in one tick coalesce into one notification. The recipients are the
+   * transports attached at the moment of a change, not at the moment the
+   * notification goes out: a transport attached afterwards never had the old
+   * list, so "your list is stale" is noise to it — and on stdio, where a host
+   * builds the server and attaches stdin/stdout in the same tick, it was the
+   * first frame a client received, before it had even sent `initialize`.
+   */
   private scheduleListChangedNotification(): void {
-    if (this.notifyListChangedScheduled) return;
-    this.notifyListChangedScheduled = true;
+    if (this.transports.size === 0) return;
+    const scheduled = this.listChangedOwed.size > 0;
+    for (const t of this.transports) this.listChangedOwed.add(t);
+    if (scheduled) return;
     queueMicrotask(() => {
-      this.notifyListChangedScheduled = false;
-      this.broadcast({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+      const owed = this.listChangedOwed;
+      this.listChangedOwed = new Set();
+      for (const t of owed) {
+        // Detached since the change: it is not listening any more.
+        if (this.transports.has(t)) t.send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+      }
     });
   }
 

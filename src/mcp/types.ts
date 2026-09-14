@@ -73,17 +73,38 @@ export type InitializeResult = {
 };
 
 export type ToolInputSchema = {
+  /** The JSON Schema dialect, when a server states it (e.g. draft-07). */
+  $schema?: string;
   type: "object";
   properties?: Record<string, JsonValue>;
   required?: string[];
   additionalProperties?: boolean;
 };
 
+/** Behaviour hints a client may use when presenting or gating a tool. */
+export type ToolAnnotations = {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+};
+
+/**
+ * A tool as `tools/list` reports it. Every field is passed to the client
+ * verbatim, so the optional ones below are the spec's, not extensions.
+ */
 export type ToolDefinition = {
   name: string;
   title?: string;
   description?: string;
   inputSchema: ToolInputSchema;
+  /** JSON Schema for `structuredContent`, when the tool returns it. */
+  outputSchema?: ToolInputSchema;
+  annotations?: ToolAnnotations;
+  /** 2025-11-25: whether the tool may run as a task. */
+  execution?: { taskSupport?: "forbidden" | "optional" | "required" };
+  _meta?: { [key: string]: JsonValue };
 };
 
 export type ContentBlock =

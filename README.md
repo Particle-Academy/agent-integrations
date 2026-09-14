@@ -113,6 +113,38 @@ await host.callTool("sheet_set_cell", { address: "B3", value: 42 });
 
 Need both? `MicroMcpServer` extends `ToolRegistry`, so the same instance serves direct in-process calls **and** SSE-relayed remote agents at the same time. Bridges accept either — every `register*Bridge(host, …)` signature takes a `ToolHost`.
 
+## A headless MCP server over stdio
+
+For a Node process that an MCP client launches as a subprocess (Claude Code,
+Codex, Cursor, Claude Desktop), import the two **headless** subpaths. Neither
+reaches React or the DOM: `/mcp` imports no package at all, and `/mcp/stdio`
+imports only Node built-ins — a test walks both import graphs to keep it so.
+
+```ts
+import { MicroMcpServer } from "@particle-academy/agent-integrations/mcp";
+import { attachStdio } from "@particle-academy/agent-integrations/mcp/stdio";
+
+const server = new MicroMcpServer({
+  info: { name: "my-server", version: "1.0.0" },
+  // Newest first. initialize echoes the client's revision when it is listed,
+  // and answers the first entry otherwise. Omit to answer MCP_PROTOCOL_VERSION.
+  protocolVersions: ["2025-11-25", "2025-06-18", "2024-11-05"],
+});
+server.registerTool({ name: "hello", inputSchema: { type: "object" } }, () => ({
+  content: [{ type: "text", text: "hi" }],
+}));
+
+attachStdio(server); // stdin/stdout; pass { input, output } for other streams
+```
+
+stdout carries protocol frames and nothing else — log to stderr. A line that is
+not a JSON-RPC message is reported through `onError` (stderr by default) and
+skipped rather than ending the session, and replies still in flight when stdin
+ends are delivered before the transport closes.
+
+Import `/mcp/stdio` only from Node. Browser bundles import `/mcp`, which never
+pulls it in.
+
 ## Connect an agent to your app — `<ConnectorButtons>`
 
 The step *before* presence: getting your MCP server installed in the user's

@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     mcp: "src/mcp/index.ts",
+    "mcp-stdio": "src/mcp/stdio.ts",
     "bridges-whiteboard": "src/bridges/whiteboard.ts",
     "bridges-artboard": "src/bridges/artboard.ts",
     "bridges-flow": "src/bridges/flow.ts",
@@ -44,6 +45,7 @@ export default defineConfig({
     entry: [
       "src/index.ts",
       "src/mcp/index.ts",
+      "src/mcp/stdio.ts",
       "src/bridges/whiteboard.ts",
       "src/bridges/artboard.ts",
       "src/bridges/flow.ts",

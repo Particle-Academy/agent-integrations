@@ -11,6 +11,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-09-13
+
+**What to do: nothing, unless you want the new pieces.** Every change below is
+additive or only removes a notification nobody could have used. The default
+`initialize` answer is byte-for-byte what 0.44.0 sent.
+
+### Added
+
+- **`@particle-academy/agent-integrations/mcp/stdio` — a stdio transport, so a
+  headless Node MCP server needs no third-party SDK.** `attachStdio(server)`
+  serves newline-delimited JSON-RPC on stdin/stdout, the framing every MCP
+  client uses to launch a server as a subprocess; pass `{ input, output }` for
+  other streams.
+
+  It exists because `fancy-flow-mcp-js` was built on `@modelcontextprotocol/sdk`
+  for want of one, and that dependency was refused. It is its own subpath, and
+  NODE ONLY: browser bundles import `/mcp`, which never reaches it.
+
+  - A bad line costs that line, not the session: a line that is not JSON, or is
+    JSON but not one JSON-RPC message (a number, `null`, a batch), goes to
+    `onError` — stderr by default — and nothing is written to stdout for it.
+  - Replies still in flight when stdin ends are delivered before it closes, so
+    `printf '<request>\n' | server` gets its answer.
+  - Input is decoded as bytes, not chunk by chunk, so a multi-byte character
+    split across a chunk boundary survives.
+
+- **`protocolVersions` on `MicroMcpServer`** — the revisions a server speaks,
+  newest first. `initialize` now echoes the client's requested revision when it
+  is listed and answers the first entry otherwise, which is the spec's rule.
+  **Omit it and nothing changes:** the default is `[MCP_PROTOCOL_VERSION]`, one
+  revision answered whatever is asked, exactly as before. An empty list throws
+  at construction rather than in a handshake.
+
+- **`ToolDefinition` names the spec's optional fields** — `outputSchema`,
+  `annotations` (new `ToolAnnotations` type), `execution` (2025-11-25 task
+  support), `_meta`, and `$schema` on the input schema. They were always passed
+  to `tools/list` verbatim; now they typecheck, and a test pins that they reach
+  the client.
+
+- **A test that walks the import graphs of `/mcp` and `/mcp/stdio`** and fails
+  if either reaches a package (`/mcp`) or anything but a Node built-in
+  (`/mcp/stdio`). The root and most subpaths import React by design; one
+  careless re-export would break every headless host that chose the subpath to
+  avoid it, and nothing else here would notice, because every other test runs
+  with React installed.
+
+### Fixed
+
+- **`notifications/tools/list_changed` is no longer sent to a transport attached
+  AFTER the change.** It went to every transport attached when the notification
+  flushed at the end of the tick, so a transport attached in the same tick as a
+  registration was told a list it never had was stale. On stdio that was the
+  first frame a client received — before it had sent `initialize` — whenever a
+  host registered tools and attached in one go, which is the natural way to
+  write a stdio server. Changes still coalesce to one notification per tick, and
+  a transport attached between two changes still hears about the second.
+
+  **What to do:** nothing. A transport attached after a change receives the
+  current list from `tools/list`, which it has to call anyway.
+
 ## [0.44.0] - 2026-08-26
 
 ### Security
