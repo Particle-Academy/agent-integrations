@@ -50,8 +50,21 @@ const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 };
 
+/**
+ * React is optional for a different reason than the feature peers, so it is
+ * not one of them here.
+ *
+ * `fancy-whiteboard` & co are optional because most consumers never use that
+ * surface, and the root barrel must not force them on anyone. React is optional
+ * because HEADLESS SUBPATHS (`/mcp`, `/relay-server`, the bridges) must not force
+ * it on a Node host — while the root barrel IS the React UI, and importing React
+ * there is its job. Which entries may import React is held by
+ * src/__tests__/react-peer.test.ts.
+ */
+const REACT_PEERS = ["react", "react-dom"];
+
 const OPTIONAL_PEERS = Object.entries(pkg.peerDependenciesMeta ?? {})
-  .filter(([, meta]) => meta?.optional)
+  .filter(([name, meta]) => meta?.optional && !REACT_PEERS.includes(name))
   .map(([name]) => name);
 
 interface BridgeFacts {

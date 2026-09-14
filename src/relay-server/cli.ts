@@ -1,61 +1,43 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
+import { parseRelayArgs } from "./args";
+import { describeCorsPolicy } from "./cors";
 import { createNodeRelay } from "./node";
 
 /**
- * `agent-integrations-relay` — standalone Node HTTP server hosting the
- * SSE+POST relay broker. End users hit `Start share` on a /ui/demos
- * page, get a session URL pointing at this service, and paste it into
- * their MCP client. No state persists across restarts.
+ * `agent-integrations-relay` — standalone Node HTTP server hosting the relay
+ * broker. End users hit `Start share` on a demo page, get a session URL pointing
+ * at this service, and paste it into their MCP client. No state persists across
+ * restarts.
  *
- * Flags:
- *   --port <n>          Listen port. Default 8787.
- *   --host <addr>       Bind address. Default 127.0.0.1 (loopback). Pass
- *                       0.0.0.0 to expose on all interfaces (warns).
- *   --prefix <path>     URL path prefix (no trailing slash). Default "".
- *                       Useful when mounting behind a reverse proxy.
- *   --ttl-ms <n>        Session TTL ms. Default 14_400_000 (4h).
- *   --cors <origin>     Access-Control-Allow-Origin. Default "*".
- *   -h, --help          Show this help.
+ * Settings resolve flag → env var → default; see ./args.ts and HELP below.
  *
- * Health: any request to `/` returns 200 OK so platform health checks
- * pass without authenticating.
+ * Health: any request to `/` returns 200 OK so platform health checks pass
+ * without authenticating.
  */
 async function main() {
-  const argv = process.argv.slice(2);
-  let port = Number(process.env.PORT ?? 8787);
-  // Loopback by default: this relay fronts terminal_run (RCE) and register is
-  // unauthenticated, so it must not listen on all interfaces unless the operator
-  // explicitly opts in with --host 0.0.0.0.
-  let host = process.env.HOST ?? "127.0.0.1";
-  let prefix = process.env.PREFIX ?? "";
-  let ttlMs = Number(process.env.TTL_MS ?? 4 * 60 * 60 * 1000);
-  let cors = process.env.CORS_ALLOW_ORIGIN ?? "*";
-
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    switch (a) {
-      case "--port": port = Number(argv[++i]); break;
-      case "--host": host = argv[++i]; break;
-      case "--prefix": prefix = argv[++i]; break;
-      case "--ttl-ms": ttlMs = Number(argv[++i]); break;
-      case "--cors": cors = argv[++i]; break;
-      case "-h":
-      case "--help":
-        process.stdout.write(HELP);
-        process.exit(0);
-      default:
-        process.stderr.write(`[relay] unknown flag: ${a}\n`);
-        process.exit(2);
-    }
-  }
-
-  if (!Number.isFinite(port) || port <= 0) {
-    process.stderr.write(`[relay] invalid --port: ${port}\n`);
+  const parsed = parseRelayArgs(process.argv.slice(2), process.env);
+  if (!parsed.ok) {
+    process.stderr.write(`[relay] ${parsed.error}\n`);
     process.exit(2);
   }
 
-  const relay = createNodeRelay({ pathPrefix: prefix, ttlMs, corsAllowOrigin: cors });
+  const { config } = parsed;
+  if (config.help) {
+    process.stdout.write(HELP);
+    process.exit(0);
+  }
+
+  for (const warning of config.warnings) {
+    process.stderr.write(`[relay] WARNING: ${warning}\n`);
+  }
+
+  const { port, host, prefix, ttlMs, cors } = config;
+  const relay = createNodeRelay({
+    pathPrefix: prefix,
+    ttlMs,
+    corsAllowOrigin: cors.kind === "any" ? "*" : cors.origins.join(","),
+  });
 
   const server = createServer((req, res) => {
     // Health: GET / always 200 so platform health checks succeed without auth.
@@ -77,10 +59,12 @@ async function main() {
         `Only do this behind an authenticating proxy / trusted network.\n`,
     );
   }
+
+  const corsSource = { flag: "--cors", env: "CORS_ALLOW_ORIGIN", default: "default" }[config.sources.cors];
   server.listen(port, host, () => {
     process.stdout.write(
       `[relay] listening on http://${host}:${port}${prefix || ""} ` +
-        `(ttl=${Math.round(ttlMs / 1000)}s, cors=${cors})\n`,
+        `(ttl=${Math.round(ttlMs / 1000)}s, cors=${describeCorsPolicy(cors)} from ${corsSource})\n`,
     );
   });
 
@@ -104,8 +88,15 @@ Options:
                       Pass 0.0.0.0 to expose on all interfaces (prints a warning).
   --prefix <path>     URL path prefix (env: PREFIX). Default "".
   --ttl-ms <n>        Session TTL ms (env: TTL_MS). Default 14_400_000.
-  --cors <origin>     CORS Access-Control-Allow-Origin (env: CORS_ALLOW_ORIGIN). Default "*".
+  --cors <origins>    Allowed browser origins (env: CORS_ALLOW_ORIGIN). Default "*".
+                      "*", or a comma-separated list such as
+                      "https://example.com,https://www.example.com". May be
+                      repeated. A listed Origin is echoed back with Vary: Origin;
+                      an unlisted one gets no Access-Control-Allow-Origin.
   -h, --help          Show this help.
+
+Precedence: a flag wins over its env var, which wins over the default. An env
+var that a flag overrides is reported at startup. An empty env var is unset.
 
 Endpoints (under --prefix):
   POST  /register                          { session, token } → { ok: true }
@@ -113,8 +104,13 @@ Endpoints (under --prefix):
   POST  /<session>/outbox?token=...        body: JSON-RPC frame
   GET   /<session>/events?token=...&direction=inbound|outbound
                                            Server-sent events stream
+  GET   /<session>/poll?token=...&direction=inbound|outbound&wait=<ms>&subscriber=<id>
+                                           Long-poll → { subscriber, frames }
   POST  /<session>/unregister?token=...    Tear down session
   GET   /                                  Healthcheck → 200
+
+A session that has ended answers 410 {"error":"session_gone"} on every session
+route; a wrong or missing token answers 401.
 `;
 
 main().catch((e) => {

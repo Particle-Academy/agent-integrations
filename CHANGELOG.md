@@ -11,6 +11,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-09-13
+
+**What to do — for most consumers, nothing.** The Node relay gains a long-poll
+route, a CORS list that works, and a `410` on the one route that still said
+`401`. Check these four cases:
+
+1. **You run `agent-integrations-relay` behind Cloudflare** (or any CDN that
+   resets long streams): upgrade the relay, and install
+   `@particle-academy/fancy-cf-relay` in the browser app so its receive leg
+   polls. Agents on `mcp-relay-client` poll already.
+2. **Your relay config is invalid** — `--cors` / `CORS_ALLOW_ORIGIN` /
+   `corsAllowOrigin` mixing `*` with origins, empty, `null`, or an entry with
+   a path. The CLI now exits `2` at startup and `createNodeRelay` throws. Fix the
+   value; before, it produced a header no browser accepted.
+3. **Your client treats `401` from `GET /{session}/events` as "the page
+   closed"**: that answer is now `410`. Handle `410` as the end of the session;
+   `401` still means a wrong or missing token.
+4. **Your app imports this package's React entries without React in its own
+   dependencies**, relying on npm to install the peer: add `react` and
+   `react-dom` (^19) yourself. An app rendering React components has them.
+
+### Added
+
+- **Long-poll receive leg on the Node relay: `GET {prefix}/{session}/poll`.**
+  Cloudflare's HTTP/3 edge resets long-lived SSE streams, so a Node relay behind
+  it had no working receive leg — `/poll` answered `404`, while the PHP relay in
+  px-ui-sandbox, `fancy-cf-relay` (browser) and `mcp-relay-client` (agent) all
+  speak poll. Same contract as the PHP relay:
+  `?token&direction=inbound|outbound&wait=<ms>&subscriber=<id>[&client]` →
+  `200 { subscriber, frames: ["<raw frame>", …] }`. `wait` is clamped to
+  0–25000 ms (default 20000) and returns early the moment a frame is queued.
+  Frames queue between polls; an aborted poll takes nothing; a poller idle for
+  60 s is dropped (`pollIdleMs`), and an agent's departure is announced to the
+  page with `notifications/peer_left`. An outbound poller is announced once, not
+  once per poll. Reply scoping by `client` works as on SSE, and a poll cannot
+  adopt a streaming subscriber's id. The first three tests mirror px-ui-sandbox's
+  `AgentRelayPollTest.php` case for case.
+  - `RelayBroker#poll()` and the `PollResult` type, for custom adapters;
+    `relay.poll` on `createNodeRelay()` for piecemeal mounting —
+    `app.get("/mcp-relay/:s/poll", relay.poll)`.
+  - A gone session answers `410 {"error":"session_gone"}` here too.
+
+### Changed
+
+- **`--cors` / `corsAllowOrigin` take a real origin list.** The option was
+  documented as "comma-separated origins (or `*`)" and sent the string verbatim,
+  so `--cors "https://particle.academy,https://www.particle.academy"` produced one
+  `Access-Control-Allow-Origin` header that no browser matches. Now a listed
+  request `Origin` is echoed back, every response carries `Vary: Origin`, and an
+  unlisted origin gets no allow-origin header at all. `*` still sends `*`.
+  Entries are normalised to what a browser sends (`HTTPS://Example.com:443/` →
+  `https://example.com`), `--cors` may be repeated, and an invalid value fails
+  at startup (see "What to do" 2). **Do:** nothing, unless your value was
+  invalid.
+
+- **Settings precedence is documented and reported: flag, then env var, then
+  default.** It was always flag-first — so `CORS_ALLOW_ORIGIN` did nothing
+  whenever a start script passed `--cors`, while a deploy README said to set it
+  to override the start script. Flag-first is kept (it is what every setting
+  does, and what `docker run … --host 127.0.0.1` against the Dockerfile's
+  `HOST=0.0.0.0` needs); what changed is that a flag overriding a different env
+  var now prints `[relay] WARNING: CORS_ALLOW_ORIGIN=… is ignored: --cors … was
+  passed`, and the startup line names the CORS policy's source. An env var set
+  to the empty string counts as unset (it used to become an empty header).
+  **Do:** nothing; if you see the warning, edit the flag, not the env var.
+
+- **`react` and `react-dom` are optional peers.** Headless hosts — a stdio MCP
+  server importing `/mcp` and `/mcp/stdio`, a Node relay, a bridge on a server —
+  no longer get React installed through this package. Measured on clean
+  installs: `agent-integrations` alone is 6 packages with 0.45.0 (react,
+  react-dom, scheduler among them) and 3 with 0.46.0, and all 27 subpaths
+  outside the React list below import (ESM) and require (CJS) with no React
+  present. React stays declared with its range, so a UI consumer on the wrong
+  React is still told. (`fancy-flow-mcp-js` still receives React today, from
+  `@particle-academy/fancy-flow`'s own required peer; with that one also made
+  optional, its tree measured 5 packages, no React, and its stdio server
+  answered `initialize` and `tools/list`.) A new test fails if
+  any entry outside the React ones (root, `/bridges/tui`, `/sheets-adapter`,
+  `/connectors`, `/components/shared-whiteboard`, `/presence`, `/heuristics`,
+  `/undo`) starts importing React. **Do:** see "What to do" 4.
+
+### Fixed
+
+- **`GET /{session}/events` answers `410 session_gone` for an ended session**,
+  as `docs/relay-server.md` promises for every route. 0.43.0 taught the POST
+  routes the distinction and left `events` on the boolean check, so an agent
+  re-attaching to a closed page was told `401 invalid_token` — the misleading
+  answer 0.43.0 existed to remove, on the route a reconnecting client hits
+  first. The body stays SSE-shaped: `event: error` / `data: session_gone`.
+  `RelayBroker#subscribe()` now returns `reason: "session_gone"` for it too.
+- **An SSE stream open when its session ends is closed.** `unregister`,
+  `dropSession` and the TTL reaper dropped subscribers without waking them
+  (the reaper did wake them), so a stream stayed open, heartbeating, for a
+  session that no longer existed. The client now reconnects and learns `410`.
+- **Frames fanned out in the same tick are all delivered to a streaming
+  subscriber.** The resolver handing a frame to a parked generator stayed set
+  until the generator resumed a microtask later, so a second frame in the same
+  tick called the already-settled resolver after shifting its frame off the
+  queue, and that frame was lost.
+- **`allowedOrigins` no longer answers an unlisted origin with
+  `Access-Control-Allow-Origin: null`.** Sandboxed iframes and `file://` pages
+  send `Origin: null`, so that value admitted exactly them. No header is sent
+  instead.
+- **Docs that contradicted the code.** `docs/relay-server.md` gave `--host`'s
+  default as `0.0.0.0`; it has been `127.0.0.1` since 0.30.0.
+  `docs/relay-protocol.md` (and this changelog's 0.44.0 entry) showed `client`
+  on `/sse/{session}` and `/inbound/{session}`, which no relay serves; the routes
+  are `/{session}/events` and `/{session}/inbox`. Both docs now cover poll,
+  `410` on every route, CORS lists and precedence; the Forge recipe's
+  `^0.6.1` range is now `>=0.46.0 <2.0`. The README's "the relay fans tool
+  results to all peers" predated 0.44.0's reply scoping.
+
 ## [0.45.0] - 2026-09-13
 
 **What to do: nothing, unless you want the new pieces.** Every change below is
@@ -98,9 +210,12 @@ additive or only removes a notification nobody could have used. The default
   your posts, with the same value:
 
   ```
-  GET  /sse/{session}?token=…&client=worker-7
-  POST /inbound/{session}?token=…&client=worker-7
+  GET  {base}/{session}/events?token=…&direction=outbound&client=worker-7
+  POST {base}/{session}/inbox?token=…&client=worker-7
   ```
+
+  *(Corrected in 0.46.0: this example first read `/sse/{session}` and
+  `/inbound/{session}`, routes no relay has ever served.)*
 
   Replies then reach only that client. **Notifications are unchanged** and still
   broadcast — presence, activity and server-pushed state answer nobody and are

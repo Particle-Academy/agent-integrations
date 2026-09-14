@@ -43,6 +43,21 @@ export type Subscriber = {
    * of everyone else's tool calls without making one.
    */
   client?: string;
+  /**
+   * Present only for a LONG-POLL subscriber, which outlives any one request:
+   * it is read by a series of `GET /poll` calls rather than one open stream,
+   * so it needs its own liveness record.
+   */
+  poll?: {
+    /** Last time a poll started or finished (ms since epoch). */
+    lastSeen: number;
+    /** Polls currently parked on this subscriber. Never pruned while > 0. */
+    parked: number;
+    /** Wake every parked poll — a frame landed, or the session ended. */
+    wakers: Set<() => void>;
+  };
+  /** Set once the subscriber has been ended (unsubscribed, pruned, or its session is gone). */
+  ended?: boolean;
 };
 
 export type RelayBrokerOptions = {
@@ -50,6 +65,13 @@ export type RelayBrokerOptions = {
   ttlMs?: number;
   /** Cleanup tick interval in ms. Default 60 000. */
   reapIntervalMs?: number;
+  /**
+   * A long-poll subscriber that has not polled for this long is dropped (and,
+   * for an outbound one, the page is told the peer left). Checked on the reap
+   * tick. Default 60 000 — the PHP relay's window, and comfortably longer than
+   * the 25 s maximum park, so a healthy poller is never pruned between polls.
+   */
+  pollIdleMs?: number;
   /** Bring-your-own storage layer (redis, etc.). Defaults to in-memory. */
   store?: Store;
 };
@@ -76,8 +98,12 @@ class MemoryStore implements Store {
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{4,64}$/;
 
+/** The subscriber ids this broker hands out — and the only shape a poll may echo back. */
+const SUBSCRIBER_ID_PATTERN = /^[a-f0-9]{16}$/;
+
 export class RelayBroker {
   private readonly ttlMs: number;
+  private readonly pollIdleMs: number;
   private readonly store: Store;
   /** Per-session, per-direction subscriber list. */
   private subs: Map<string, Map<string, Map<string, Subscriber>>> = new Map();
@@ -88,6 +114,7 @@ export class RelayBroker {
 
   constructor(opts: RelayBrokerOptions = {}) {
     this.ttlMs = opts.ttlMs ?? 4 * 60 * 60 * 1000; // 4h
+    this.pollIdleMs = opts.pollIdleMs ?? 60_000;
     this.store = opts.store ?? new MemoryStore();
     const tick = opts.reapIntervalMs ?? 60_000;
     if (tick > 0) {
@@ -101,6 +128,7 @@ export class RelayBroker {
 
   dispose() {
     if (this.reaper) clearInterval(this.reaper);
+    for (const id of [...this.subs.keys()]) this.endSubscribers(id);
     this.subs.clear();
     this.callers.clear();
   }
@@ -127,6 +155,7 @@ export class RelayBroker {
   unregister(id: string, token: string): boolean {
     if (!this.validate(id, token)) return false;
     this.store.deleteSession(id);
+    this.endSubscribers(id);
     this.subs.delete(id);
     this.callers.delete(id);
     return true;
@@ -182,6 +211,7 @@ export class RelayBroker {
   /** Drop a session — the page closed, or a test needs it gone. */
   dropSession(id: string): void {
     this.store.deleteSession(id);
+    this.endSubscribers(id);
     this.subs.delete(id);
     this.callers.delete(id);
   }
@@ -233,7 +263,11 @@ export class RelayBroker {
    * the caller (an HTTP handler) pumps as SSE.
    */
   subscribe(id: string, token: string, direction: Direction, opts: { client?: string } = {}): SubscribeResult {
-    if (!this.validate(id, token)) return { ok: false, reason: "invalid_token" };
+    // check(), not validate(): a stream re-attaching to an ended session must be
+    // told the session is GONE, not that its token is wrong.
+    const auth = this.check(id, token);
+    if (!auth.ok) return auth;
+
     const subscriberId = randomBytes(8).toString("hex");
     const subscriber: Subscriber = {
       id: subscriberId,
@@ -243,38 +277,11 @@ export class RelayBroker {
       client: opts.client,
     };
     this.getDirSubs(id, direction).set(subscriberId, subscriber);
-
-    // Notify the inbound side (= browser) that an outbound subscriber
-    // (= external agent) just connected.
-    if (direction === "outbound") {
-      this.fanOut(
-        id,
-        "inbound",
-        JSON.stringify({
-          jsonrpc: "2.0",
-          method: "notifications/peer_joined",
-          params: { subscriberId, ts: Date.now() },
-        }),
-      );
-    }
-
-    const unsubscribe = () => {
-      this.getDirSubs(id, direction).delete(subscriberId);
-      if (direction === "outbound") {
-        this.fanOut(
-          id,
-          "inbound",
-          JSON.stringify({
-            jsonrpc: "2.0",
-            method: "notifications/peer_left",
-            params: { subscriberId, ts: Date.now() },
-          }),
-        );
-      }
-    };
+    if (direction === "outbound") this.announcePeer(id, "notifications/peer_joined", subscriberId);
 
     /** Async generator the HTTP handler drains. Yields raw frame payloads;
-     *  the handler is responsible for SSE framing (`event: mcp\ndata: …`). */
+     *  the handler is responsible for SSE framing (`event: mcp
+data: …`). */
     const frames = async function* (this: Subscriber): AsyncGenerator<string, void, void> {
       while (true) {
         if (this.queue.length > 0) {
@@ -282,6 +289,9 @@ export class RelayBroker {
           if (next !== undefined) yield next;
           continue;
         }
+        // Checked before parking, not only on wake: a subscriber ended while
+        // the generator was busy yielding has nobody left to wake it.
+        if (this.ended) return;
         const next = await new Promise<string | null>((resolve) => {
           this.resolveNext = resolve;
         });
@@ -297,8 +307,100 @@ export class RelayBroker {
       frames: frames(),
       unsubscribe: () => {
         // Wake the generator and let it return cleanly.
-        subscriber.resolveNext?.(null);
-        unsubscribe();
+        this.endSubscriber(subscriber);
+        this.removeSubscriber(id, subscriber);
+      },
+    };
+  }
+
+  /**
+   * Attach a LONG-POLL subscriber, or re-attach the one a previous poll created.
+   *
+   * The CDN-safe receive leg: a series of short requests instead of one open
+   * stream, because Cloudflare's HTTP/3 edge resets long-lived SSE. Same
+   * contract as the PHP relay in px-ui-sandbox and the one
+   * `@particle-academy/fancy-cf-relay` and `mcp-relay-client` speak:
+   *
+   * - The first poll gets a fresh 16-hex subscriber id; the client echoes it back
+   *   as `subscriber` on every later poll and reads the same queue.
+   * - An id in that shape that this session does not know (pruned, say) is
+   *   adopted as a NEW subscriber under that id, as the PHP relay does, so a
+   *   client that went quiet and came back keeps its identity.
+   * - An id belonging to a STREAMING subscriber is never adopted: one queue read
+   *   by two consumers splits its frames between them.
+   *
+   * Frames queue on the subscriber between polls, so nothing is lost in the gap
+   * between one request ending and the next arriving. A poller that stops is
+   * pruned after `pollIdleMs`.
+   */
+  poll(
+    id: string,
+    token: string,
+    direction: Direction,
+    opts: { subscriber?: string; client?: string } = {},
+  ): PollResult {
+    const auth = this.check(id, token);
+    if (!auth.ok) return auth;
+
+    const dir = this.getDirSubs(id, direction);
+    const requested = opts.subscriber && SUBSCRIBER_ID_PATTERN.test(opts.subscriber) ? opts.subscriber : undefined;
+    const existing = requested ? dir.get(requested) : undefined;
+
+    let subscriber: Subscriber;
+    let created: boolean;
+    if (existing?.poll) {
+      subscriber = existing;
+      created = false;
+    } else {
+      const subscriberId = requested && !existing ? requested : randomBytes(8).toString("hex");
+      subscriber = {
+        id: subscriberId,
+        direction,
+        queue: [],
+        resolveNext: null,
+        client: opts.client,
+        poll: { lastSeen: Date.now(), parked: 0, wakers: new Set() },
+      };
+      dir.set(subscriberId, subscriber);
+      created = true;
+      if (direction === "outbound") this.announcePeer(id, "notifications/peer_joined", subscriberId);
+    }
+
+    const state = subscriber.poll!;
+    state.lastSeen = Date.now();
+
+    return {
+      ok: true,
+      subscriberId: subscriber.id,
+      created,
+      wait: async (ms: number, signal?: AbortSignal): Promise<string[]> => {
+        state.parked++;
+        state.lastSeen = Date.now();
+        try {
+          if (subscriber.queue.length === 0 && ms > 0 && !subscriber.ended && !signal?.aborted) {
+            await new Promise<void>((resolve) => {
+              const done = () => {
+                clearTimeout(timer);
+                signal?.removeEventListener("abort", done);
+                state.wakers.delete(done);
+                resolve();
+              };
+              const timer = setTimeout(done, ms);
+              state.wakers.add(done);
+              signal?.addEventListener("abort", done, { once: true });
+            });
+          }
+          // An aborted poll takes NOTHING: its response will never be read, and
+          // a frame handed to it would be a frame nobody receives.
+          if (signal?.aborted) return [];
+          return subscriber.queue.splice(0);
+        } finally {
+          state.parked--;
+          state.lastSeen = Date.now();
+        }
+      },
+      requeue: (frames: string[]) => {
+        if (frames.length > 0 && !subscriber.ended) subscriber.queue.unshift(...frames);
       },
     };
   }
@@ -427,17 +529,91 @@ export class RelayBroker {
 
     for (const sub of dir.values()) {
       if (sub.client !== client) continue;
-      sub.queue.push(payload);
-      sub.resolveNext?.(sub.queue.shift() ?? null);
+      this.deliver(sub, payload);
     }
   }
 
   private fanOut(sessionId: string, direction: Direction, payload: string) {
     const dir = this.subs.get(sessionId)?.get(direction);
     if (!dir) return;
-    for (const sub of dir.values()) {
-      sub.queue.push(payload);
-      sub.resolveNext?.(sub.queue.shift() ?? null);
+    for (const sub of dir.values()) this.deliver(sub, payload);
+  }
+
+  /**
+   * Hand one frame to one subscriber.
+   *
+   * The resolver is CLEARED before it is called. It used to stay set until the
+   * generator resumed on a later microtask, so a second frame in the same tick
+   * called an already-settled resolver — a no-op — after shifting its frame out
+   * of the queue, and that frame was lost. Cleared first, the second frame just
+   * waits in the queue for the generator to come back for it.
+   */
+  private deliver(sub: Subscriber, payload: string) {
+    if (sub.ended) return;
+    sub.queue.push(payload);
+
+    const resolve = sub.resolveNext;
+    if (resolve) {
+      sub.resolveNext = null;
+      resolve(sub.queue.shift() ?? null);
+      return;
+    }
+
+    if (sub.poll) for (const wake of [...sub.poll.wakers]) wake();
+  }
+
+  /** Tell the page (the inbound side) that an agent arrived or left. */
+  private announcePeer(sessionId: string, method: "notifications/peer_joined" | "notifications/peer_left", subscriberId: string) {
+    this.fanOut(sessionId, "inbound", JSON.stringify({ jsonrpc: "2.0", method, params: { subscriberId, ts: Date.now() } }));
+  }
+
+  /** End one subscriber: close its stream, or release its parked polls. Idempotent. */
+  private endSubscriber(sub: Subscriber) {
+    if (sub.ended) return;
+    sub.ended = true;
+
+    const resolve = sub.resolveNext;
+    sub.resolveNext = null;
+    resolve?.(null);
+
+    if (sub.poll) for (const wake of [...sub.poll.wakers]) wake();
+  }
+
+  /**
+   * End every subscriber of a session whose session is going away.
+   *
+   * Streams used to be dropped from the map WITHOUT being woken, so an SSE leg
+   * stayed open, heartbeating, for a session that no longer existed — and its
+   * client could not learn the page had closed. Ended, the stream closes, the
+   * client reconnects, and `events` answers 410.
+   */
+  private endSubscribers(sessionId: string) {
+    const dirs = this.subs.get(sessionId);
+    if (!dirs) return;
+    for (const dir of dirs.values()) for (const sub of dir.values()) this.endSubscriber(sub);
+  }
+
+  /** Remove a subscriber from its session, announcing an agent's departure once. */
+  private removeSubscriber(sessionId: string, sub: Subscriber) {
+    const dir = this.subs.get(sessionId)?.get(sub.direction);
+    // Look it up rather than recreating the maps: a session that has already
+    // been dropped must not grow an empty entry back, nor announce to nobody.
+    if (!dir || dir.get(sub.id) !== sub) return;
+    dir.delete(sub.id);
+    if (sub.direction === "outbound") this.announcePeer(sessionId, "notifications/peer_left", sub.id);
+  }
+
+  /** Drop long-poll subscribers that stopped polling. Never one with a poll parked. */
+  private prunePollers(now: number) {
+    for (const [sessionId, dirs] of this.subs) {
+      for (const dir of dirs.values()) {
+        for (const sub of [...dir.values()]) {
+          if (!sub.poll || sub.poll.parked > 0) continue;
+          if (now - sub.poll.lastSeen <= this.pollIdleMs) continue;
+          this.endSubscriber(sub);
+          this.removeSubscriber(sessionId, sub);
+        }
+      }
     }
   }
 
@@ -478,20 +654,35 @@ export class RelayBroker {
   }
 
   private reap() {
-    const cutoff = Date.now() - this.ttlMs;
+    const now = Date.now();
+    const cutoff = now - this.ttlMs;
     for (const id of this.store.expiredSessionIds(cutoff)) {
-      const dirs = this.subs.get(id);
-      if (dirs) {
-        for (const dir of dirs.values()) {
-          for (const sub of dir.values()) sub.resolveNext?.(null);
-        }
-      }
+      this.endSubscribers(id);
       this.subs.delete(id);
-    this.callers.delete(id);
+      this.callers.delete(id);
       this.store.deleteSession(id);
     }
+    this.prunePollers(now);
   }
 }
+
+export type PollResult =
+  | { ok: false; reason: "invalid_token" | "session_gone" }
+  | {
+      ok: true;
+      /** The id the client must echo back as `subscriber` on its next poll. */
+      subscriberId: string;
+      /** Whether this poll created the subscriber (and, outbound, announced it). */
+      created: boolean;
+      /**
+       * Park up to `ms` for frames, then take everything queued. Returns at once
+       * when frames are already waiting, when `ms` is 0, or when the session
+       * ends. An aborted `signal` returns `[]` and takes nothing.
+       */
+      wait: (ms: number, signal?: AbortSignal) => Promise<string[]>;
+      /** Put frames back at the head of the queue — a response that could not be written. */
+      requeue: (frames: string[]) => void;
+    };
 
 export type SubscribeResult =
   | { ok: false; reason: string }

@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
 import { RelayBroker, type RelayBrokerOptions } from "./core";
+import { allowOriginFor, parseCorsOrigins, type CorsPolicy } from "./cors";
 
 /**
  * Node HTTP adapter for {@link RelayBroker}. Returns a single request
@@ -17,23 +18,51 @@ import { RelayBroker, type RelayBrokerOptions } from "./core";
  *   app.post("/mcp-relay/:s/inbox",       relay.inbox);
  *   app.post("/mcp-relay/:s/outbox",      relay.outbox);
  *   app.get ("/mcp-relay/:s/events",      relay.events);
+ *   app.get ("/mcp-relay/:s/poll",        relay.poll);
  *   app.post("/mcp-relay/:s/unregister",  relay.unregister);
  */
+
+/** Longest a single poll may park, in ms — the PHP relay's cap, kept identical. */
+export const POLL_MAX_WAIT_MS = 25_000;
+
+/** Park window when a poll names none, in ms — fancy-cf-relay's default. */
+export const POLL_DEFAULT_WAIT_MS = 20_000;
+
+/**
+ * The park window a poll asked for, clamped to 0..{@link POLL_MAX_WAIT_MS}.
+ *
+ * Absent means the default; present but not a number means 0, which is what
+ * the PHP relay's integer cast makes of it — a malformed hint returns at once
+ * rather than parking for a length nobody chose.
+ */
+export function pollWaitMs(raw: string | null | undefined): number {
+  if (raw === null || raw === undefined) return POLL_DEFAULT_WAIT_MS;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(Math.max(n, 0), POLL_MAX_WAIT_MS);
+}
 
 export type NodeRelayOptions = RelayBrokerOptions & {
   /** URL path prefix (without trailing slash). Default `""` — handlers
    *  expect paths like `/register`, `/{id}/inbox`, etc. directly. */
   pathPrefix?: string;
-  /** Comma-separated origins (or `*`) for CORS. Default `*` — relays
-   *  are typically called cross-origin from the demo host. */
+  /**
+   * Browser origins allowed to read relay responses: `*`, or a comma-separated
+   * list of origins (`"https://example.com,https://www.example.com"`).
+   * Default `*` — relays are typically called cross-origin from the demo host.
+   *
+   * A list is enforced per request: a listed `Origin` is echoed back as
+   * `Access-Control-Allow-Origin` with `Vary: Origin`, and an unlisted one
+   * gets no allow-origin header at all. `*` mixed into a list, an empty value,
+   * `null` or an entry with a path throws here, at construction.
+   */
   corsAllowOrigin?: string;
   /**
-   * Strict browser-origin allow-list. When set, only these Origins get a
-   * matching `Access-Control-Allow-Origin` (the request's own Origin is
-   * reflected, never `*`), which blunts DNS-rebinding + hostile cross-origin
-   * pages from reading relay responses. Recommended for any browser-facing
-   * deployment. When unset, `corsAllowOrigin` (default `*`) is used and the
-   * session token is the only auth — pair that with a loopback bind.
+   * The same allow-list as an array. When non-empty it takes precedence over
+   * `corsAllowOrigin`. Recommended for any browser-facing deployment: it blunts
+   * DNS rebinding and hostile cross-origin pages reading relay responses. When
+   * neither names origins, `*` is used and the session token is the only auth
+   * — pair that with a loopback bind.
    */
   allowedOrigins?: string[];
 };
@@ -51,26 +80,32 @@ export type NodeRelay = {
   inbox: NodeHandler;
   outbox: NodeHandler;
   events: NodeHandler;
+  /** Long-poll receive leg — the CDN-safe alternative to `events`. */
+  poll: NodeHandler;
   unregister: NodeHandler;
 };
 
 export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
   const broker = new RelayBroker(opts);
   const prefix = (opts.pathPrefix ?? "").replace(/\/$/, "");
-  const cors = opts.corsAllowOrigin ?? "*";
-
-  const allowedOrigins = opts.allowedOrigins;
+  // Parsed once, here, so a bad policy fails at startup rather than in a browser.
+  const cors: CorsPolicy =
+    opts.allowedOrigins && opts.allowedOrigins.length > 0
+      ? parseCorsOrigins(opts.allowedOrigins)
+      : parseCorsOrigins(opts.corsAllowOrigin ?? "*");
 
   function setCorsHeaders(res: ServerResponse, req?: IncomingMessage) {
-    if (allowedOrigins && allowedOrigins.length) {
-      // Strict mode: reflect the request Origin only when it's allow-listed;
-      // otherwise emit an origin that no browser will match.
-      const origin = req?.headers.origin;
-      res.setHeader("access-control-allow-origin", origin && allowedOrigins.includes(origin) ? origin : "null");
-      res.setHeader("vary", "origin");
-    } else {
-      res.setHeader("access-control-allow-origin", cors);
+    if (cors.kind === "list") {
+      // The answer depends on who asked, so say so to every cache in between —
+      // including on a refusal, or a cached refusal could be served to a listed
+      // origin.
+      res.setHeader("vary", "Origin");
     }
+    const origin = req?.headers.origin;
+    const allow = allowOriginFor(cors, typeof origin === "string" ? origin : undefined);
+    // No header at all for an unlisted origin. Not `null`: sandboxed iframes and
+    // file:// pages send `Origin: null`, so that value would admit exactly them.
+    if (allow !== null) res.setHeader("access-control-allow-origin", allow);
     res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
     // `authorization` is forward-compat for a header-borne session token.
     res.setHeader("access-control-allow-headers", "content-type, x-csrf-token, accept, authorization");
@@ -216,7 +251,10 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
       client: getQuery(req).get("client") ?? undefined,
     });
     if (!sub.ok) {
-      res.statusCode = 401;
+      // 410 for a session that has ended, as on every other route; 401 only for
+      // a wrong or missing token. EventSource treats either as final, so a
+      // browser stops reconnecting to a page that is gone.
+      res.statusCode = sub.reason === "session_gone" ? 410 : 401;
       res.setHeader("content-type", "text/event-stream");
       res.write(`event: error\ndata: ${sub.reason}\n\n`);
       return res.end();
@@ -259,6 +297,51 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
   };
 
   /**
+   * Long-poll receive leg: `GET /{session}/poll?token&direction&wait&subscriber&client`.
+   *
+   * Answers `200 { subscriber, frames }` once a frame is queued or the park
+   * window (`wait`, ms, clamped to 0..25000) runs out. Short requests survive a
+   * Cloudflare HTTP/3 edge that resets long-lived SSE streams. Parking is ~free
+   * on the Node event loop, unlike PHP-FPM where it holds a worker.
+   */
+  const poll: NodeHandler = async (req, res) => {
+    setCorsHeaders(res, req);
+    if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
+    if (req.method !== "GET") return json(res, 405, { error: "method_not_allowed" });
+    const session = extractSession(req, prefix);
+    if (!session) return json(res, 400, { error: "missing_session" });
+    const q = getQuery(req);
+    const direction = q.get("direction") === "outbound" ? "outbound" : "inbound";
+
+    const attached = broker.poll(session, q.get("token") ?? "", direction, {
+      subscriber: q.get("subscriber") ?? undefined,
+      client: q.get("client") ?? undefined,
+    });
+    if (!attached.ok) {
+      return json(res, attached.reason === "session_gone" ? 410 : 401, { error: attached.reason });
+    }
+
+    // `res` 'close' fires when the client goes away before we answer. `req`
+    // 'close' is not a disconnect signal: on a bodiless GET it can fire as soon
+    // as the request has been read.
+    const gone = new AbortController();
+    const onClose = () => { if (!res.writableEnded) gone.abort(); };
+    res.on("close", onClose);
+
+    const frames = await attached.wait(pollWaitMs(q.get("wait")), gone.signal);
+    res.off("close", onClose);
+
+    if (gone.signal.aborted || res.destroyed) {
+      // Nobody will read this answer. Put back anything taken for it.
+      attached.requeue(frames);
+      return;
+    }
+
+    res.setHeader("cache-control", "no-store");
+    return json(res, 200, { subscriber: attached.subscriberId, frames });
+  };
+
+  /**
    * Single handler — routes based on method + path. Useful for mounting
    * via `http.createServer(relay.handler)` without an Express layer.
    */
@@ -269,17 +352,18 @@ export function createNodeRelay(opts: NodeRelayOptions = {}): NodeRelay {
     }
     const rest = pathname.slice(prefix.length); // "/register", "/<id>/inbox", etc.
     if (rest === "/register") return register(req, res);
-    const m = /^\/([A-Za-z0-9_-]{4,64})\/(inbox|outbox|events|unregister)$/.exec(rest);
+    const m = /^\/([A-Za-z0-9_-]{4,64})\/(inbox|outbox|events|poll|unregister)$/.exec(rest);
     if (!m) return json(res, 404, { error: "not_found" });
     const route = m[2];
     if (route === "inbox") return inbox(req, res);
     if (route === "outbox") return outbox(req, res);
     if (route === "events") return events(req, res);
+    if (route === "poll") return poll(req, res);
     if (route === "unregister") return unregister(req, res);
     return json(res, 404, { error: "not_found" });
   };
 
-  return { broker, handler, register, inbox, outbox, events, unregister };
+  return { broker, handler, register, inbox, outbox, events, poll, unregister };
 }
 
 function extractSession(req: IncomingMessage, prefix: string): string | null {

@@ -42,9 +42,43 @@ The agent side connects to the same Reverb channel via your auth bridge and read
 
 For direct peer connections (no server hop), open a data channel and pipe frames through it.
 
-### SSE + POST tunnel
+### SSE + POST tunnel (the HTTP relay)
 
-The browser opens a long-lived `EventSource` to a relay service (e.g. a Cloudflare Worker) that also accepts `POST /mcp/{session}` from external agents. The relay forwards each request as an SSE event and accepts responses via a paired POST endpoint.
+What the bundled Node relay (`agent-integrations-relay`, see
+[relay-server.md](./relay-server.md)) and the PHP relay in px-ui-sandbox both
+serve. Every route sits under the relay's base URL, with the session id as the
+first path segment:
+
+```
+POST {base}/register                                   { session, token }
+POST {base}/{session}/inbox?token=…[&client=…]         agent → page   (a JSON-RPC frame)
+POST {base}/{session}/outbox?token=…                   page  → agent  (a JSON-RPC frame)
+GET  {base}/{session}/events?token=…&direction=…[&client=…]   receive leg, SSE
+GET  {base}/{session}/poll?token=…&direction=…&wait=…&subscriber=…[&client=…]
+                                                       receive leg, long-poll
+POST {base}/{session}/unregister?token=…
+```
+
+`direction` names the queue a subscriber READS: the page reads `inbound` (what
+agents sent it) and an agent reads `outbound` (what the page answered).
+
+**Two receive legs, one queue model.** `events` is one long-lived SSE stream of
+`event: mcp
+data: <frame>
+
+`. `poll` is a series of short requests, each
+answering `{ "subscriber": "<id>", "frames": ["<frame>", …] }` as soon as a frame
+is queued or the `wait` window (ms, at most 25000) runs out; the client echoes
+`subscriber` back on the next poll to keep reading the same queue. Use `poll`
+behind a CDN: Cloudflare's HTTP/3 edge resets long-lived SSE streams
+(`net::ERR_QUIC_PROTOCOL_ERROR`), and short requests pass.
+[`@particle-academy/fancy-cf-relay`](https://github.com/Particle-Academy/fancy-cf-relay)
+picks between the two automatically in the browser; `mcp-relay-client` polls.
+
+**A session that has ended answers `410`** (`{"error":"session_gone"}`, or an
+`event: error` / `data: session_gone` SSE body on `events`) on every session
+route. `401` means a wrong or missing token on a live session. An SSE leg open
+when its session ends is closed by the relay.
 
 ## Multiple clients, and who sees a reply
 
@@ -54,9 +88,11 @@ Identify yourself with a `client` query parameter on BOTH your subscription and
 your posts — the same value on each:
 
 ```
-GET  /sse/{session}?token=…&client=worker-7
-POST /inbound/{session}?token=…&client=worker-7
+GET  {base}/{session}/events?token=…&direction=outbound&client=worker-7
+POST {base}/{session}/inbox?token=…&client=worker-7
 ```
+
+A long-poll subscriber labels itself the same way: `GET {base}/{session}/poll?…&client=worker-7`.
 
 The broker records which client sent each JSON-RPC request id and delivers the
 matching response to that client alone. Notifications (frames with no `id`)
@@ -79,7 +115,7 @@ response then reaches nobody rather than everyone. Fail closed.
 Fixed in 0.44.0. Reported by the Prism harness, composing two separate answers
 about fan-out and token semantics.
 
-## Multiple clients
+## Multiple transports on one server
 
 A single `MicroMcpServer` can have multiple transports attached at once (e.g. an in-page agent **and** an external relay). Each receives all server-pushed notifications; tool-call replies go back on the transport that originated the call.
 

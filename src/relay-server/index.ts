@@ -1,5 +1,5 @@
 /**
- * Server-side relay broker for the SSE+POST tunnel documented in
+ * Server-side relay broker for the SSE / long-poll + POST tunnel documented in
  * docs/relay-protocol.md. Hostable in any Node-compatible runtime.
  *
  * Two consumption shapes:
@@ -16,5 +16,14 @@
  * `agent-integrations/sharing` for the client side.
  */
 
-export { RelayBroker, type RelayBrokerOptions, type Direction, type Store, type Session, type Subscriber } from "./core";
+export {
+  RelayBroker,
+  type RelayBrokerOptions,
+  type Direction,
+  type Store,
+  type Session,
+  type Subscriber,
+  type SubscribeResult,
+  type PollResult,
+} from "./core";
 export { createNodeRelay, type NodeRelay, type NodeRelayOptions, type NodeHandler } from "./node";

@@ -323,9 +323,16 @@ to you:
   `confirm` argument that would apply it (revoking the last passkey is a lockout).
   `passkey_list` re-projects onto the public summary fields, so handing it your
   ORM model cannot leak a public key, a user handle, or a signature counter.
-- **The relay fans tool results + activity to all peers.** The terminal bridge
-  redacts raw command bytes from broadcast meta, but any `structuredContent` you
-  return is visible to every connected peer — don't return secrets.
+- **Activity reaches every peer; tool results reach the caller only if clients
+  label themselves.** Since 0.44.0 a reply goes only to the client that asked
+  when clients send a `client` query parameter; unlabelled clients still get
+  every frame. Notifications are always broadcast. The terminal bridge redacts
+  raw command bytes from broadcast meta, but treat anything you return as
+  visible to every holder of the token — don't return secrets.
+- **The relay serves SSE and long-poll.** Behind Cloudflare (whose HTTP/3 edge
+  resets long SSE streams) install `@particle-academy/fancy-cf-relay` so the
+  browser polls; see `docs/relay-server.md`. Pass `--cors` a list of your
+  sites' origins rather than leaving `*` on a public relay.
 
 ## Status
 
