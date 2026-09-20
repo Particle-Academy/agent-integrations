@@ -147,7 +147,7 @@ export type PasskeyBridgeOptions = {
    * Also route `passkey_rename` through {@link confirm}. Off by default: a
    * rename is cosmetic, reversible and pushed onto the undo stack. Worth turning
    * on where the label itself carries trust — a rogue credential relabelled
-   * "Glenn's iPhone" survives a human's audit of the list.
+   * "Avery's iPhone" survives a human's audit of the list.
    */
   confirmRename?: boolean;
   /**

@@ -684,7 +684,7 @@ These are the kit 0.5 platform floors, applied across every package at once so a
   `passkey_rename` is immediate and undoable via `agent_undo`. Set
   `confirmRename: true` to route it through a host `confirm` hook as well — worth
   it where the label carries trust, since a rogue credential relabelled
-  "Glenn's iPhone" survives a human's audit of the list.
+  "Avery's iPhone" survives a human's audit of the list.
 
 ### Note
 
