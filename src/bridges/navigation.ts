@@ -35,6 +35,17 @@ export type PageSnapshot = {
   revision?: number;
 };
 
+/**
+ * Structured page text. Preferred over a plain string from `read()`: the bridge
+ * can then put every page-supplied string on its own single line and keep the
+ * outline. A plain string is untrusted as a whole and is rendered as ONE line.
+ */
+export type PageReadout = {
+  title: string;
+  headings: Array<{ level: number; text: string }>;
+  text: string;
+};
+
 /** A write the host may want the human to confirm (trust-but-verify). */
 export type NavigationConfirmRequest = {
   action: "submit" | "click";
@@ -62,8 +73,8 @@ export type NavigationBridgeAdapter = {
   getRevision?: () => MaybePromise<number>;
   /** Snapshot of the page's actionable elements (stable handles + labels). */
   describe: () => MaybePromise<PageSnapshot>;
-  /** Visible text / heading outline for grounding (optional). */
-  read?: () => MaybePromise<string>;
+  /** Visible text / heading outline for grounding (optional). Prefer a {@link PageReadout}. */
+  read?: () => MaybePromise<string | PageReadout>;
   /** Navigate to a URL (host wires to router.visit). */
   visit: (url: string) => void | Promise<void>;
   back?: () => void | Promise<void>;
@@ -101,6 +112,48 @@ export type NavigationBridgeOptions = {
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
 
+// ───────────── Text safety ─────────────
+//
+// Every string below the adapter is page-supplied, and the page may be hostile.
+// The tool TEXT is what lands in the agent's context, so a line break inside a
+// label would let the page write its own lines there: a forged action, a forged
+// heading, forged tool framing. Each page string is therefore rendered on ONE
+// line, with C0/C1 controls and the Unicode line/paragraph separators replaced,
+// and capped. (Control characters are tested by code point, so no escape
+// sequence is involved.)
+
+const isControl = (code: number) =>
+  code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
+
+/** One line, controls replaced by spaces, whitespace collapsed, capped at `max`. */
+function oneLine(value: unknown, max: number): string {
+  const raw = typeof value === "string" ? value : value == null ? "" : String(value);
+  // Bound the work on a hostile multi-megabyte string before scanning it.
+  const bounded = raw.length > max * 4 ? raw.slice(0, max * 4) : raw;
+  let out = "";
+  for (const c of bounded) out += isControl(c.charCodeAt(0)) ? " " : c;
+  out = out.replace(/\s+/g, " ").trim();
+  return out.length > max ? out.slice(0, max - 3) + "..." : out;
+}
+
+/**
+ * A handle shown verbatim must not be able to imitate the `[handle] role:`
+ * syntax, so only this charset is shown as-is. Anything else — spaces,
+ * brackets, controls, or a `~`, which is reserved so a page cannot squat on an
+ * alias — is shown as a bridge-minted `~N` alias that resolves back to it.
+ */
+const SAFE_HANDLE = /^[A-Za-z0-9_.:#@/-]{1,80}$/;
+
+const CAP = { url: 500, title: 200, role: 40, label: 200, heading: 200, text: 4000, error: 300, headings: 50 };
+
+function formatReadout(r: string | PageReadout): string {
+  if (typeof r === "string") return oneLine(r, CAP.text);
+  const headings = (Array.isArray(r.headings) ? r.headings : [])
+    .slice(0, CAP.headings)
+    .map((h) => `H${Math.min(6, Math.max(1, Math.trunc(Number(h?.level)) || 1))}: ${oneLine(h?.text, CAP.heading)}`);
+  return [oneLine(r.title, CAP.title), ...headings, "", oneLine(r.text, CAP.text)].join("\n");
+}
+
 /**
  * registerNavigationBridge — site-wide co-browsing. Lets a connected agent
  * navigate, scroll, and (with staged confirm) fill + click any page, addressed
@@ -128,6 +181,13 @@ export function registerNavigationBridge(
     return null;
   };
 
+  /** Alias → page handle, from the latest page_describe. */
+  let aliases = new Map<string, string>();
+  /** The handle the adapter knows, for a handle the agent passed back. */
+  const pageHandle = (handle: string) => aliases.get(handle) ?? handle;
+  /** A failure message that may carry page-supplied text. */
+  const failure = (message: unknown, fallback: string) => errorResult(oneLine(message ?? fallback, CAP.error) || fallback);
+
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
   const target = (label: string, elementId?: string): AgentTarget => ({
@@ -149,7 +209,8 @@ export function registerNavigationBridge(
       try {
         return await handler(args);
       } catch (e) {
-        return errorResult(e instanceof Error ? e.message : String(e));
+        // A transport into the page can surface the page's own error text.
+        return failure(e instanceof Error ? e.message : String(e), `${name} failed`);
       }
     };
     const final = activity
@@ -181,17 +242,30 @@ export function registerNavigationBridge(
     {},
     [],
     async () => {
-      const snap = await adapter.describe();
+      const raw = await adapter.describe();
+      const next = new Map<string, string>();
+      const actions = (Array.isArray(raw.actions) ? raw.actions : []).map((a) => {
+        const handle = String(a.handle ?? "");
+        if (SAFE_HANDLE.test(handle)) return a;
+        const alias = `~${next.size}`;
+        next.set(alias, handle);
+        return { ...a, handle: alias };
+      });
+      aliases = next;
+      const snap: PageSnapshot = { ...raw, actions };
       const revision = await adapter.getRevision?.();
       if (revision !== undefined) {
         snap.revision = revision;
         groundedRevision = revision;
       }
       const text = [
-        `URL: ${snap.url}`,
-        `Title: ${snap.title}`,
+        `URL: ${oneLine(snap.url, CAP.url)}`,
+        `Title: ${oneLine(snap.title, CAP.title)}`,
         "",
-        ...snap.actions.map((a) => `[${a.handle}] ${a.role}: ${a.label}${a.destructive ? " (destructive)" : ""}`),
+        ...actions.map(
+          (a) =>
+            `[${a.handle}] ${oneLine(a.role, CAP.role)}: ${oneLine(a.label, CAP.label)}${a.destructive ? " (destructive)" : ""}`,
+        ),
       ].join("\n");
       return textResult(text, snap);
     },
@@ -203,7 +277,10 @@ export function registerNavigationBridge(
     "Read the page's visible text / heading outline for grounding.",
     {},
     [],
-    async () => textResult(adapter.read ? await adapter.read() : "(host did not provide page text)"),
+    async () => {
+      const r = adapter.read ? await adapter.read() : undefined;
+      return textResult(r == null ? "(host did not provide page text)" : formatReadout(r));
+    },
     () => target("Read page"),
   );
 
@@ -215,11 +292,12 @@ export function registerNavigationBridge(
     async (args) => {
       const stale = await staleIntent();
       if (stale) return stale;
-      const handle = String(args.handle ?? "");
+      const shown = String(args.handle ?? "");
+      const handle = pageHandle(shown);
       const action = (await adapter.describe()).actions.find((candidate) => candidate.handle === handle);
-      if (!action) return errorResult(`No element for handle "${handle}"`);
-      return textResult(`Focused ${handle}`, {
-        handle,
+      if (!action) return failure(`No element for handle "${shown}"`, "No element for that handle");
+      return textResult(`Focused ${oneLine(shown, CAP.label)}`, {
+        handle: shown,
         rect: (await adapter.rectFor?.(handle)) ?? undefined,
       });
     },
@@ -310,13 +388,17 @@ export function registerNavigationBridge(
     async (args) => {
       const stale = await staleIntent();
       if (stale) return stale;
-      const handle = typeof args.handle === "string" ? args.handle : undefined;
+      const shown = typeof args.handle === "string" ? args.handle : undefined;
+      const handle = shown === undefined ? undefined : pageHandle(shown);
       await adapter.scrollTo({
         handle,
         x: typeof args.x === "number" ? args.x : undefined,
         y: typeof args.y === "number" ? args.y : undefined,
       });
-      return textResult("Scrolled", handle ? { handle, rect: (await adapter.rectFor?.(handle)) ?? undefined } : undefined);
+      return textResult(
+        "Scrolled",
+        handle ? { handle: shown, rect: (await adapter.rectFor?.(handle)) ?? undefined } : undefined,
+      );
     },
     () => target("Scroll"),
   );
@@ -348,10 +430,15 @@ export function registerNavigationBridge(
     async (args) => {
       const stale = await staleIntent();
       if (stale) return stale;
-      const handle = String(args.handle ?? "");
+      const shown = String(args.handle ?? "");
+      const handle = pageHandle(shown);
       const res = await adapter.setField(handle, args.value);
-      if (!res.ok) return errorResult(res.error ?? `Could not set ${handle}`);
-      return textResult(`${handle} ← ${JSON.stringify(args.value)}`, { handle, value: args.value, rect: (await adapter.rectFor?.(handle)) ?? undefined });
+      if (!res.ok) return failure(res.error, `Could not set ${oneLine(shown, CAP.label)}`);
+      return textResult(`${oneLine(shown, CAP.label)} ← ${JSON.stringify(args.value)}`, {
+        handle: shown,
+        value: args.value,
+        rect: (await adapter.rectFor?.(handle)) ?? undefined,
+      });
     },
     (args) => target(`Set ${String(args.handle ?? "")}`, String(args.handle ?? "")),
   );
@@ -364,7 +451,8 @@ export function registerNavigationBridge(
     async (args) => {
       const stale = await staleIntent();
       if (stale) return stale;
-      const handle = String(args.handle ?? "");
+      const shown = String(args.handle ?? "");
+      const handle = pageHandle(shown);
       const action = (await adapter.describe()).actions.find((a) => a.handle === handle);
       const rect = (await adapter.rectFor?.(handle)) ?? undefined; // capture before the click may navigate away
       if (pendingMode && action?.destructive && adapter.confirm) {
@@ -372,8 +460,8 @@ export function registerNavigationBridge(
         if (!ok) return errorResult("Declined by user");
       }
       const res = await adapter.click(handle);
-      if (!res.ok) return errorResult(res.error ?? `Could not click ${handle}`);
-      return textResult(`Clicked ${handle}`, { handle, rect });
+      if (!res.ok) return failure(res.error, `Could not click ${oneLine(shown, CAP.label)}`);
+      return textResult(`Clicked ${oneLine(shown, CAP.label)}`, { handle: shown, rect });
     },
     (args) => target(`Click ${String(args.handle ?? "")}`, String(args.handle ?? "")),
   );
@@ -386,15 +474,16 @@ export function registerNavigationBridge(
     async (args) => {
       const stale = await staleIntent();
       if (stale) return stale;
-      const handle = String(args.handle ?? "");
+      const shown = String(args.handle ?? "");
+      const handle = pageHandle(shown);
       const rect = (await adapter.rectFor?.(handle)) ?? undefined; // capture before the submit navigates
       if (pendingMode && adapter.confirm) {
         const ok = await adapter.confirm({ action: "submit", handle, label: handle });
         if (!ok) return errorResult("Declined by user");
       }
       const res = await adapter.submit(handle);
-      if (!res.ok) return errorResult(res.error ?? "Submit failed");
-      return textResult(`Submitted ${handle}`, { handle, rect });
+      if (!res.ok) return failure(res.error, "Submit failed");
+      return textResult(`Submitted ${oneLine(shown, CAP.label)}`, { handle: shown, rect });
     },
     (args) => target(`Submit ${String(args.handle ?? "")}`, String(args.handle ?? "")),
   );

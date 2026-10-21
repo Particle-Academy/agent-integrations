@@ -314,7 +314,16 @@ const adapter = createRemoteNavigationAdapter({
 registerNavigationBridge(server, { adapter });
 ```
 
-Adapter methods may now return promises; the bridge awaits every call.
+Adapter methods may return promises; the bridge awaits every call.
+
+The page is treated as hostile all the way into the agent's context. The
+bridge renders every page-supplied string on one line, with control characters
+removed and the length capped, so a label cannot forge an extra action or
+heading line. A handle that could pass for action syntax is shown as a `~N`
+alias, and every handle-taking tool maps it back. For `read()`, return a
+`PageReadout` (`{ title, headings, text }`) rather than a string. The bridge
+can then keep the outline one heading per line, while a plain string is
+rendered as one line.
 
 ## Tools shipped (whiteboard bridge)
 

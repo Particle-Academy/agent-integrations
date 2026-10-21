@@ -14,6 +14,7 @@ import type {
   NavigationBridgeAdapter,
   NavigationConfirmRequest,
   PageAction,
+  PageReadout,
   PageSnapshot,
 } from "../bridges/navigation";
 import { DOM_NAVIGATION_METHODS, type ActionResult, type DomNavigationMethod, type HandleRect } from "./agent";
@@ -94,6 +95,18 @@ function coerceSnapshot(v: unknown): PageSnapshot {
   return { url: str(o.url), title: str(o.title), actions };
 }
 
+/** A plain string stays a string (the bridge renders it as one line). */
+function coerceReadout(v: unknown): string | PageReadout {
+  if (typeof v === "string") return v;
+  const o = isObj(v) ? v : {};
+  const headings = (Array.isArray(o.headings) ? o.headings : []).flatMap((h) =>
+    isObj(h) && typeof h.text === "string" && typeof h.level === "number" && Number.isFinite(h.level)
+      ? [{ level: h.level, text: h.text }]
+      : [],
+  );
+  return { title: str(o.title), headings, text: str(o.text) };
+}
+
 function coerceResult(v: unknown): ActionResult {
   const o = isObj(v) ? v : {};
   return { ok: o.ok === true, error: typeof o.error === "string" ? o.error : undefined };
@@ -122,7 +135,7 @@ export function createRemoteNavigationAdapter(options: RemoteNavigationAdapterOp
       return { url: str(loc.url), title: str(loc.title) };
     },
     describe: async () => coerceSnapshot(await call("describe")),
-    read: async () => str(await call("read")),
+    read: async () => coerceReadout(await call("read")),
     visit: async (url) => {
       await call("visit", url);
     },

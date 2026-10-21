@@ -139,7 +139,7 @@ describe("the page is hostile: results are coerced to the declared shapes", () =
     });
     expect(await adapter.click("ok")).toEqual({ ok: false, error: undefined });
     expect(await adapter.rectFor!("ok")).toBeNull();
-    expect(await adapter.read!()).toBe("");
+    expect(await adapter.read!()).toEqual({ title: "", headings: [], text: "" });
   });
 });
 

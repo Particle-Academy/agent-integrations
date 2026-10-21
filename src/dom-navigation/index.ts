@@ -43,5 +43,6 @@ export type {
   NavigationBridgeAdapter,
   NavigationConfirmRequest,
   PageAction,
+  PageReadout,
   PageSnapshot,
 } from "../bridges/navigation";

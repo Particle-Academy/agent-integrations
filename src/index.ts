@@ -148,6 +148,7 @@ export {
   type NavigationBridgeAdapter,
   type NavigationBridgeOptions,
   type PageAction,
+  type PageReadout,
   type PageSnapshot,
   type NavigationConfirmRequest,
 } from "./bridges/navigation";

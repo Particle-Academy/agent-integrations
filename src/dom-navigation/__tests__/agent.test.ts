@@ -138,7 +138,8 @@ describe("masking: sensitive values never leave the page", () => {
     `);
     const agent = createDomNavigationAgent();
     const snap = agent.describe();
-    const wire = JSON.stringify(snap) + agent.read();
+    const wire = JSON.stringify(snap) + JSON.stringify(agent.read());
+    expect(wire).toContain("visible");
     for (const secret of ["hunter2", "4242424242424242", "123456", "private-value", "private-textarea"]) {
       expect(wire).not.toContain(secret);
     }
@@ -266,12 +267,16 @@ describe("click, submit, rectFor, read", () => {
     expect(agent.rectFor("missing")).toBeNull();
   });
 
-  it("read() returns title, heading outline and main text", () => {
+  it("read() returns title, heading outline and main text, structured", () => {
     page(`<header>Skip me</header><main><h1>Top</h1><h2>Sub</h2><p>Body   copy</p></main>`, "Doc");
-    const text = createDomNavigationAgent().read();
-    expect(text.split("\n").slice(0, 3)).toEqual(["Doc", "H1: Top", "H2: Sub"]);
-    expect(text).toContain("TopSubBody copy");
-    expect(text).not.toContain("Skip me");
+    const r = createDomNavigationAgent().read();
+    expect(r.title).toBe("Doc");
+    expect(r.headings).toEqual([
+      { level: 1, text: "Top" },
+      { level: 2, text: "Sub" },
+    ]);
+    expect(r.text).toContain("TopSubBody copy");
+    expect(r.text).not.toContain("Skip me");
   });
 });
 

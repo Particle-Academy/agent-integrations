@@ -23,7 +23,7 @@
  * - Handles are compared as plain strings, never spliced into a CSS selector,
  *   so a crafted handle cannot change what a lookup matches.
  */
-import type { PageAction, PageSnapshot } from "../bridges/navigation";
+import type { PageAction, PageReadout, PageSnapshot } from "../bridges/navigation";
 
 /** Elements the walker considers actionable. */
 export const INTERACTIVE =
@@ -218,9 +218,17 @@ function isField(el: Element): el is FieldElement {
 }
 
 /**
- * Set a field's value so a React-controlled input sees the change: call the
- * PROTOTYPE setter (React shadows `value` on the instance with its value
- * tracker), then dispatch bubbling `input` + `change`.
+ * Set a field's value so a React-controlled input sees the change.
+ *
+ * - Text, textarea, select: call the PROTOTYPE `value` setter (React shadows
+ *   `value` on the instance with its value tracker), then dispatch bubbling
+ *   `input` + `change`.
+ * - Checkbox, radio: React's onChange for these listens to `click`, not
+ *   `input` / `change`, so the write is a real `click()` — the browser toggles
+ *   the box and fires click, input and change itself. Only when the state
+ *   actually differs, so setting the current value is a no-op rather than a
+ *   toggle. A radio cannot be unchecked by clicking it; that one case falls
+ *   back to the setter.
  */
 export function setNativeValue(el: FieldElement, value: unknown): void {
   const view = (el.ownerDocument.defaultView ?? globalThis) as typeof globalThis;
@@ -230,8 +238,15 @@ export function setNativeValue(el: FieldElement, value: unknown): void {
   };
   const t = tag(el);
   if (t === "INPUT" && ((el as HTMLInputElement).type === "checkbox" || (el as HTMLInputElement).type === "radio")) {
+    const input = el as HTMLInputElement;
+    const want = Boolean(value);
+    if (input.checked === want) return;
+    if (input.type === "checkbox" || want) {
+      input.click();
+      return;
+    }
     const setter = Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, "checked")?.set;
-    setter?.call(el, Boolean(value));
+    setter?.call(el, false);
     fire();
     return;
   }
@@ -246,15 +261,19 @@ export function setNativeValue(el: FieldElement, value: unknown): void {
   fire();
 }
 
-/** Visible text / heading outline, with sensitive text removed. */
-export function readPage(doc: Document = document): string {
+/**
+ * Visible text / heading outline, with sensitive text removed. Structured, so
+ * the bridge can render each page-supplied string on its own single line.
+ */
+export function readPage(doc: Document = document): PageReadout {
   const main = doc.querySelector("main") ?? doc.body;
-  if (!main) return doc.title;
-  const heads = Array.from(main.querySelectorAll("h1, h2, h3"))
-    .map((h) => `${h.tagName}: ${safeText(h).trim()}`)
-    .filter(Boolean);
+  if (!main) return { title: doc.title, headings: [], text: "" };
+  const headings = Array.from(main.querySelectorAll("h1, h2, h3")).map((h) => ({
+    level: Number(h.tagName.slice(1)),
+    text: safeText(h).trim(),
+  }));
   const text = safeText(main).replace(/\s+/g, " ").trim().slice(0, 4000);
-  return [doc.title, ...heads, "", text].join("\n");
+  return { title: doc.title, headings, text };
 }
 
 export type DomNavigationAgentOptions = {
@@ -272,7 +291,7 @@ export type DomNavigationAgentOptions = {
 export type DomNavigationAgent = {
   getLocation(): { url: string; title: string };
   describe(): PageSnapshot;
-  read(): string;
+  read(): PageReadout;
   /** Navigate. Only http(s) or same-site paths; deferred a tick so a remote call returns first. */
   visit(url: string): void;
   back(): void;
