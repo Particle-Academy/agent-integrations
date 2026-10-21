@@ -1,4 +1,5 @@
 import { defineConfig } from "tsup";
+import { domNavigationInjectPlugin } from "./scripts/dom-navigation-inject-plugin";
 
 export default defineConfig({
   entry: {
@@ -26,6 +27,9 @@ export default defineConfig({
     "bridges-doc": "src/bridges/doc.ts",
     "bridges-cms": "src/bridges/cms.ts",
     "bridges-tui": "src/bridges/tui.ts",
+    "bridges-navigation": "src/bridges/navigation.ts",
+    "dom-navigation": "src/dom-navigation/index.ts",
+    "dom-navigation-script": "src/dom-navigation/script.ts",
     "human-plus": "src/human-plus/index.ts",
     "human-plus-node": "src/human-plus/file-store.ts",
     "sheets-adapter": "src/sheets-adapter.ts",
@@ -67,6 +71,9 @@ export default defineConfig({
       "src/bridges/doc.ts",
       "src/bridges/cms.ts",
       "src/bridges/tui.ts",
+      "src/bridges/navigation.ts",
+      "src/dom-navigation/index.ts",
+      "src/dom-navigation/script.ts",
       "src/human-plus/index.ts",
       "src/human-plus/file-store.ts",
       "src/sheets-adapter.ts",
@@ -96,4 +103,7 @@ export default defineConfig({
     "@particle-academy/fancy-features",
   ],
   treeshake: true,
+  // `./dom-navigation/script` exports the in-page walker as an injectable IIFE
+  // string, bundled here from src/dom-navigation/inject.ts.
+  esbuildPlugins: [domNavigationInjectPlugin("src/dom-navigation/inject.ts")],
 });

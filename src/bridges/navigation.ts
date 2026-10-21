@@ -42,33 +42,39 @@ export type NavigationConfirmRequest = {
   label: string;
 };
 
+type MaybePromise<T> = T | Promise<T>;
+
 /**
  * Host-provided adapter. In the sandbox this is backed by Inertia's `router` +
- * a DOM walker (see resources/js/agent/CoBrowseProvider.tsx). Every method
- * works on stable handles, never raw selectors.
+ * the DOM walker from `@particle-academy/agent-integrations/dom-navigation`.
+ * Every method works on stable handles, never raw selectors.
+ *
+ * Any method may return a Promise: a host driving a page it does not run in
+ * (an Electron WebContentsView, via `createRemoteNavigationAdapter`) can only
+ * answer asynchronously. The bridge awaits every call.
  */
 export type NavigationBridgeAdapter = {
   /** Optional fancy-screens screen id for presence targeting. */
   screenId?: string;
   /** Current location. */
-  getLocation: () => { url: string; title: string };
+  getLocation: () => MaybePromise<{ url: string; title: string }>;
   /** Current human-control revision. Omit to disable stale-intent protection. */
-  getRevision?: () => number;
+  getRevision?: () => MaybePromise<number>;
   /** Snapshot of the page's actionable elements (stable handles + labels). */
-  describe: () => PageSnapshot;
+  describe: () => MaybePromise<PageSnapshot>;
   /** Visible text / heading outline for grounding (optional). */
-  read?: () => string;
+  read?: () => MaybePromise<string>;
   /** Navigate to a URL (host wires to router.visit). */
   visit: (url: string) => void | Promise<void>;
   back?: () => void | Promise<void>;
   forward?: () => void | Promise<void>;
   /** Scroll to coords or to a handle's element. */
-  scrollTo: (opts: { x?: number; y?: number; handle?: string }) => void;
-  scrollBy: (dy: number) => void;
+  scrollTo: (opts: { x?: number; y?: number; handle?: string }) => void | Promise<void>;
+  scrollBy: (dy: number) => void | Promise<void>;
   /** Set a field's value by handle (host dispatches input/change for React). */
-  setField: (handle: string, value: unknown) => { ok: boolean; error?: string };
+  setField: (handle: string, value: unknown) => MaybePromise<{ ok: boolean; error?: string }>;
   /** Activate an element by handle. */
-  click: (handle: string) => { ok: boolean; error?: string };
+  click: (handle: string) => MaybePromise<{ ok: boolean; error?: string }>;
   /** Submit a form by handle. */
   submit: (handle: string) => Promise<{ ok: boolean; error?: string }> | { ok: boolean; error?: string };
   /**
@@ -76,7 +82,7 @@ export type NavigationBridgeAdapter = {
    * highlight). Returned in tool `meta.rect` so `<CoBrowseCursorLayer>` can show
    * the agent acting on the page. Optional — omit and there's just no cursor.
    */
-  rectFor?: (handle: string) => { x: number; y: number; width: number; height: number } | null;
+  rectFor?: (handle: string) => MaybePromise<{ x: number; y: number; width: number; height: number } | null>;
   /**
    * Trust-but-verify hook. When `pendingMode` is on, `page_submit` and
    * destructive `page_click` route through this; the host shows a prompt and
@@ -111,8 +117,8 @@ export function registerNavigationBridge(
   const disposers: Array<() => void> = [];
   let groundedRevision: number | null = null;
 
-  const staleIntent = () => {
-    const current = adapter.getRevision?.();
+  const staleIntent = async () => {
+    const current = await adapter.getRevision?.();
     if (current === undefined) return null;
     if (groundedRevision === null || groundedRevision !== current) {
       return errorResult(
@@ -174,9 +180,9 @@ export function registerNavigationBridge(
     "Describe the current page: its URL, title, and the interactive elements you can act on (each with a stable `handle`, role, and label). Call this first, and again after navigating.",
     {},
     [],
-    () => {
-      const snap = adapter.describe();
-      const revision = adapter.getRevision?.();
+    async () => {
+      const snap = await adapter.describe();
+      const revision = await adapter.getRevision?.();
       if (revision !== undefined) {
         snap.revision = revision;
         groundedRevision = revision;
@@ -197,7 +203,7 @@ export function registerNavigationBridge(
     "Read the page's visible text / heading outline for grounding.",
     {},
     [],
-    () => textResult(adapter.read ? adapter.read() : "(host did not provide page text)"),
+    async () => textResult(adapter.read ? await adapter.read() : "(host did not provide page text)"),
     () => target("Read page"),
   );
 
@@ -206,15 +212,15 @@ export function registerNavigationBridge(
     "Move the agent's visible focus to an interactive element by stable handle without activating it.",
     { handle: { type: "string" } },
     ["handle"],
-    (args) => {
-      const stale = staleIntent();
+    async (args) => {
+      const stale = await staleIntent();
       if (stale) return stale;
       const handle = String(args.handle ?? "");
-      const action = adapter.describe().actions.find((candidate) => candidate.handle === handle);
+      const action = (await adapter.describe()).actions.find((candidate) => candidate.handle === handle);
       if (!action) return errorResult(`No element for handle "${handle}"`);
       return textResult(`Focused ${handle}`, {
         handle,
-        rect: adapter.rectFor?.(handle) ?? undefined,
+        rect: (await adapter.rectFor?.(handle)) ?? undefined,
       });
     },
     (args) => target(`Focus ${String(args.handle ?? "")}`, String(args.handle ?? "")),
@@ -228,7 +234,7 @@ export function registerNavigationBridge(
     { url: { type: "string", description: "Path like /packages or an absolute URL." } },
     ["url"],
     async (args) => {
-      const stale = staleIntent();
+      const stale = await staleIntent();
       if (stale) return stale;
       const url = String(args.url ?? "");
       if (!url) return errorResult("url is required");
@@ -243,7 +249,7 @@ export function registerNavigationBridge(
           `Refusing to navigate to a '${scheme}:' URL. Only http(s) URLs or same-site paths are allowed.`,
         );
       }
-      const from = adapter.getLocation().url;
+      const from = (await adapter.getLocation()).url;
       await adapter.visit(url);
       pushUndoEntry(agent.id, {
         timestamp: Date.now(),
@@ -268,7 +274,7 @@ export function registerNavigationBridge(
     {},
     [],
     async () => {
-      const stale = staleIntent();
+      const stale = await staleIntent();
       if (stale) return stale;
       if (!adapter.back) return errorResult("Host did not provide back navigation.");
       await adapter.back();
@@ -283,7 +289,7 @@ export function registerNavigationBridge(
     {},
     [],
     async () => {
-      const stale = staleIntent();
+      const stale = await staleIntent();
       if (stale) return stale;
       if (!adapter.forward) return errorResult("Host did not provide forward navigation.");
       await adapter.forward();
@@ -301,16 +307,16 @@ export function registerNavigationBridge(
       y: { type: "number" },
     },
     [],
-    (args) => {
-      const stale = staleIntent();
+    async (args) => {
+      const stale = await staleIntent();
       if (stale) return stale;
       const handle = typeof args.handle === "string" ? args.handle : undefined;
-      adapter.scrollTo({
+      await adapter.scrollTo({
         handle,
         x: typeof args.x === "number" ? args.x : undefined,
         y: typeof args.y === "number" ? args.y : undefined,
       });
-      return textResult("Scrolled", handle ? { handle, rect: adapter.rectFor?.(handle) ?? undefined } : undefined);
+      return textResult("Scrolled", handle ? { handle, rect: (await adapter.rectFor?.(handle)) ?? undefined } : undefined);
     },
     () => target("Scroll"),
   );
@@ -320,10 +326,10 @@ export function registerNavigationBridge(
     "Scroll the page by a vertical delta in pixels (negative scrolls up).",
     { dy: { type: "number" } },
     ["dy"],
-    (args) => {
-      const stale = staleIntent();
+    async (args) => {
+      const stale = await staleIntent();
       if (stale) return stale;
-      adapter.scrollBy(Number(args.dy ?? 0));
+      await adapter.scrollBy(Number(args.dy ?? 0));
       return textResult(`Scrolled by ${Number(args.dy ?? 0)}px`);
     },
     () => target("Scroll"),
@@ -339,13 +345,13 @@ export function registerNavigationBridge(
       value: { description: "Value to set; type matches the field." },
     },
     ["handle", "value"],
-    (args) => {
-      const stale = staleIntent();
+    async (args) => {
+      const stale = await staleIntent();
       if (stale) return stale;
       const handle = String(args.handle ?? "");
-      const res = adapter.setField(handle, args.value);
+      const res = await adapter.setField(handle, args.value);
       if (!res.ok) return errorResult(res.error ?? `Could not set ${handle}`);
-      return textResult(`${handle} ← ${JSON.stringify(args.value)}`, { handle, value: args.value, rect: adapter.rectFor?.(handle) ?? undefined });
+      return textResult(`${handle} ← ${JSON.stringify(args.value)}`, { handle, value: args.value, rect: (await adapter.rectFor?.(handle)) ?? undefined });
     },
     (args) => target(`Set ${String(args.handle ?? "")}`, String(args.handle ?? "")),
   );
@@ -356,16 +362,16 @@ export function registerNavigationBridge(
     { handle: { type: "string" } },
     ["handle"],
     async (args) => {
-      const stale = staleIntent();
+      const stale = await staleIntent();
       if (stale) return stale;
       const handle = String(args.handle ?? "");
-      const action = adapter.describe().actions.find((a) => a.handle === handle);
-      const rect = adapter.rectFor?.(handle) ?? undefined; // capture before the click may navigate away
+      const action = (await adapter.describe()).actions.find((a) => a.handle === handle);
+      const rect = (await adapter.rectFor?.(handle)) ?? undefined; // capture before the click may navigate away
       if (pendingMode && action?.destructive && adapter.confirm) {
         const ok = await adapter.confirm({ action: "click", handle, label: action.label });
         if (!ok) return errorResult("Declined by user");
       }
-      const res = adapter.click(handle);
+      const res = await adapter.click(handle);
       if (!res.ok) return errorResult(res.error ?? `Could not click ${handle}`);
       return textResult(`Clicked ${handle}`, { handle, rect });
     },
@@ -378,10 +384,10 @@ export function registerNavigationBridge(
     { handle: { type: "string" } },
     ["handle"],
     async (args) => {
-      const stale = staleIntent();
+      const stale = await staleIntent();
       if (stale) return stale;
       const handle = String(args.handle ?? "");
-      const rect = adapter.rectFor?.(handle) ?? undefined; // capture before the submit navigates
+      const rect = (await adapter.rectFor?.(handle)) ?? undefined; // capture before the submit navigates
       if (pendingMode && adapter.confirm) {
         const ok = await adapter.confirm({ action: "submit", handle, label: handle });
         if (!ok) return errorResult("Declined by user");

@@ -149,6 +149,44 @@ describe("registerNavigationBridge", () => {
     expect(adapter.submit).toHaveBeenCalledWith("signup");
   });
 
+  it("works unchanged over an ASYNC adapter (a host process driving a page it does not run in)", async () => {
+    const host = new ToolRegistry();
+    const { adapter: sync } = makeAdapter();
+    const rect = { x: 1, y: 2, width: 3, height: 4 };
+    let revision = 7;
+    const adapter: NavigationBridgeAdapter = {
+      ...sync,
+      getLocation: async () => sync.getLocation(),
+      getRevision: async () => revision,
+      describe: async () => sync.describe(),
+      read: async () => "async text",
+      setField: vi.fn(async () => ({ ok: true })),
+      click: vi.fn(async () => ({ ok: true })),
+      scrollTo: vi.fn(async () => {}),
+      scrollBy: vi.fn(async () => {}),
+      rectFor: async () => rect,
+    };
+    registerNavigationBridge(host, { adapter });
+
+    const described = await host.callTool("page_describe", {});
+    expect(described.isError).toBeFalsy();
+    expect(text(described)).toContain("[h1] link: Packages");
+    expect(described.structuredContent).toMatchObject({ revision: 7 });
+    expect(text(await host.callTool("page_read", {}))).toBe("async text");
+
+    const set = await host.callTool("page_set_field", { handle: "name", value: "Ada" });
+    expect(set.structuredContent).toMatchObject({ handle: "name", rect });
+    const click = await host.callTool("page_click", { handle: "h1" });
+    expect(click.structuredContent).toMatchObject({ handle: "h1", rect });
+    expect((await host.callTool("page_focus", { handle: "h1" })).structuredContent).toMatchObject({ rect });
+
+    revision += 1;
+    const stale = await host.callTool("page_click", { handle: "h1" });
+    expect(stale.isError).toBe(true);
+    expect(text(stale)).toContain("Human took control");
+    expect(adapter.click).toHaveBeenCalledTimes(1);
+  });
+
   it("page_click stages destructive elements but lets safe ones through", async () => {
     const host = new ToolRegistry();
     const confirm = vi.fn(async () => false);

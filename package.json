@@ -1,6 +1,6 @@
 {
   "name": "@particle-academy/agent-integrations",
-  "version": "0.46.0",
+  "version": "0.47.0",
   "description": "MCP-driven agent presence in collab sessions: per-session micro-MCP server, pluggable bridges to fancy-* packages, and agent UX components (panel + on-canvas cursor).",
   "repository": {
     "type": "git",
@@ -255,6 +255,36 @@
       "require": {
         "types": "./dist/bridges/tui.d.cts",
         "default": "./dist/bridges-tui.cjs"
+      }
+    },
+    "./bridges/navigation": {
+      "import": {
+        "types": "./dist/bridges/navigation.d.ts",
+        "default": "./dist/bridges-navigation.js"
+      },
+      "require": {
+        "types": "./dist/bridges/navigation.d.cts",
+        "default": "./dist/bridges-navigation.cjs"
+      }
+    },
+    "./dom-navigation": {
+      "import": {
+        "types": "./dist/dom-navigation/index.d.ts",
+        "default": "./dist/dom-navigation.js"
+      },
+      "require": {
+        "types": "./dist/dom-navigation/index.d.cts",
+        "default": "./dist/dom-navigation.cjs"
+      }
+    },
+    "./dom-navigation/script": {
+      "import": {
+        "types": "./dist/dom-navigation/script.d.ts",
+        "default": "./dist/dom-navigation-script.js"
+      },
+      "require": {
+        "types": "./dist/dom-navigation/script.d.cts",
+        "default": "./dist/dom-navigation-script.cjs"
       }
     },
     "./human-plus": {

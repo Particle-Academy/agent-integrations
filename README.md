@@ -275,6 +275,47 @@ channel.listenForWhisper("mcp", (frame) => transport.deliverFromRemote(frame));
 
 Agents (Claude Desktop, Cline, custom) connect to the same channel via your auth bridge.
 
+## Drive a page you don't own — `./dom-navigation`
+
+`registerNavigationBridge` (`page_describe`, `page_read`, `page_click`,
+`page_set_field`, `nav_visit`, …) needs an adapter that walks the page's DOM.
+`./dom-navigation` ships that walker framework-free, in two halves:
+
+- **In the page:** `createDomNavigationAgent()` — stable handles
+  (`data-co-handle` → `name` → `id` → `role#index`), ARIA names, masking of
+  sensitive values (password, `cc-*`, `one-time-code`, `data-private`), field
+  writes that React-controlled inputs see, and rects. When your code does not
+  run in the page, inject `DOM_NAVIGATION_SCRIPT` from `./dom-navigation/script`
+  instead: a self-contained IIFE (no module system) that installs
+  `globalThis.__fancyDomNavigation`. Re-injecting is a no-op.
+- **In the host:** `createRemoteNavigationAdapter({ transport })` — a
+  `NavigationBridgeAdapter` over any `{ call(method, args): Promise<unknown> }`.
+  Results from the page are coerced to the declared shapes; the page is hostile.
+
+Electron, with the walker in an isolated world so the page cannot reach it:
+
+```ts
+import { DOM_NAVIGATION_SCRIPT } from "@particle-academy/agent-integrations/dom-navigation/script";
+import { createRemoteNavigationAdapter, domNavigationCallScript } from "@particle-academy/agent-integrations/dom-navigation";
+import { registerNavigationBridge } from "@particle-academy/agent-integrations/bridges/navigation";
+
+const WORLD = 1001;
+const wc = view.webContents;
+const inject = () => wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: DOM_NAVIGATION_SCRIPT }]);
+wc.on("dom-ready", inject); // every document needs its own copy
+
+const adapter = createRemoteNavigationAdapter({
+  transport: {
+    call: (method, args) =>
+      wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: domNavigationCallScript(method, args) }]),
+  },
+  confirm: (req) => askTheHuman(req), // without this, submits + destructive clicks are NOT staged
+});
+registerNavigationBridge(server, { adapter });
+```
+
+Adapter methods may now return promises; the bridge awaits every call.
+
 ## Tools shipped (whiteboard bridge)
 
 | Tool | Purpose |

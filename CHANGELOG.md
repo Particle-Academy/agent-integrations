@@ -11,7 +11,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-21
+
+**What to do — nothing, unless you want to drive a page you don't run in.** One
+type widened (see Changed); implementations of `NavigationBridgeAdapter` keep
+compiling.
+
+### Added
+
+- **`./dom-navigation` — the co-browse DOM walker, framework-free.** It lived
+  only inside px-ui-sandbox's `CoBrowseProvider`. Now: `createDomNavigationAgent()`
+  for code in the page (`describe`, `read`, `setField`, `click`, `submit`,
+  `rectFor`, `visit`, `scrollTo`, … plus a serialisable `call(method, args)`),
+  and `createRemoteNavigationAdapter({ transport, confirm?, getRevision?, screenId? })`
+  for a host process that reaches the page over `executeJavaScript`, a
+  MessagePort or anything else carrying `{ call(method, args): Promise<unknown> }`.
+  `domNavigationCallScript(method, args)` builds the expression for
+  `executeJavaScript`. Results from the page are coerced to the declared shapes
+  and malformed entries dropped: the page is hostile input.
+- **`./dom-navigation/script` — `DOM_NAVIGATION_SCRIPT`**, the in-page half as a
+  self-contained IIFE string with no module system, for
+  `executeJavaScriptInIsolatedWorld`. It installs `globalThis.__fancyDomNavigation`
+  (`{ protocol: 1, call }`); re-injecting keeps the existing instance.
+- **`./bridges/navigation`** — `registerNavigationBridge` without the root
+  barrel, which is the React UI. A host process no longer has to load React to
+  register the bridge.
+
+### Changed
+
+- **`NavigationBridgeAdapter` methods may return a Promise**, and the bridge now
+  awaits every adapter call. A host driving a page from another process can only
+  answer asynchronously; before this, an async `describe()` made `page_describe`
+  fail. Sync adapters behave exactly as before. **Only if you CALL adapter
+  methods yourself** (rather than implementing them) do you need an `await`,
+  because their return types now include `Promise`.
+
 ### Fixed
+
+- **Native controls with an `id` but no `name` now get the id as their handle.**
+  The walker's documented order is `data-co-handle` → `name` → `id`, but
+  `button.name` / `a.name` / `input.name` is `""`, not null, so the `??` chain
+  never reached the id and those elements got a synthetic `role#index`. Empty
+  attributes now count as absent. Handles for such elements change from
+  `button#3` to their id; re-run `page_describe`, which an agent does anyway.
+- **Sensitive text no longer leaks through `page_read` or a label.** A
+  `<textarea data-private>`'s content is text, so it appeared in `read()` and
+  could become the field's own accessible name. Text inside a sensitive element
+  is now skipped in both.
 
 - **`CHANGELOG.md` is now in the published tarball.** `files` did not whitelist it, so npm never shipped it — and this package puts breaking changes in MINOR releases and tells you in the README to read the entry before taking one. The instruction existed for the author, who has the file, and not for the consumer, who is the only one being instructed. Nothing for you to do; the file simply arrives from this release on.
 
