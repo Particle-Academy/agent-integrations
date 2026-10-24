@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Scoped screen-content bridge:** import `registerScreenDocBridge`,
+  `SCREEN_TEXT_NODE_TYPE`, `DocAdapter`, `ScreenDocBridgeOptions`, `ScreenDocNode`
+  and `ScreenDocOp` from `@particle-academy/agent-integrations/bridges/screen-doc`.
+  Both ESM and CommonJS builds include their type declarations. This complements
+  `bridges/screens`, which navigates between screens rather than editing their
+  contents. **Nothing to do: the root import still works.** The other 22 bridge
+  modules already have scoped exports; no additional missing entry was found.
+- Built-package coverage for every discovered bridge: Node loads all scoped
+  entries through both ESM and CommonJS, and TypeScript checks ESM/CommonJS
+  declaration consumers. `npm test` builds fresh output first, so stale `dist`
+  files cannot hide a missing export.
+
 ### Security
 
 - **Dev toolchain only — no runtime change, nothing for consumers to do.** The

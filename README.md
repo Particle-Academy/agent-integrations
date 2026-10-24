@@ -87,11 +87,19 @@ Every bridge has a matching subpath if you'd rather import surgically:
 | charts              | `…/bridges/charts`                                     |
 | scene               | `…/bridges/scene`                                      |
 | screens             | `…/bridges/screens`                                    |
+| screen contents     | `…/bridges/screen-doc`                                 |
 | passkeys            | `…/bridges/passkeys`                                   |
 | sheets adapter hook | `…/sheets-adapter`                                     |
 | presence            | `…/presence`                                           |
 | undo                | `…/undo`                                               |
 | sharing             | `…/sharing`                                            |
+
+`registerScreensBridge` handles navigation between screens.
+`registerScreenDocBridge` edits the nodes inside one screen and exports its
+`DocAdapter`, `ScreenDocBridgeOptions`, `ScreenDocNode` and `ScreenDocOp` types
+from `@particle-academy/agent-integrations/bridges/screen-doc`. The existing
+root import still works; nothing to do for existing consumers. Use a distinct
+`surface` tool prefix for each concurrently bridged document.
 
 ## When you don't need an MCP server
 

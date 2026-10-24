@@ -194,6 +194,7 @@ export {
 } from "./bridges/cms";
 // The CONTENT of one screen. Pairs with registerScreensBridge above, which moves
 // between screens and treats their contents as opaque.
+// Also available through agent-integrations/bridges/screen-doc, with DocAdapter.
 export {
   registerScreenDocBridge,
   SCREEN_TEXT_NODE_TYPE,

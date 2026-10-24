@@ -34,6 +34,7 @@ import { textResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
 import type { Bridge } from "./types";
 import { registerDocBridge, type DocAdapter, type DocOpTool } from "./doc";
+export type { DocAdapter } from "./doc";
 import {
   childrenOf,
   appendOrder,

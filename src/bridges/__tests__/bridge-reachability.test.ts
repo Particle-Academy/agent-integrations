@@ -33,8 +33,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
  *
  * So the real contract, which is what this file now asserts:
  *
- *   1. Every bridge is reachable by at least one documented route — the root
- *      barrel, or a built subpath.
+ *   1. Every bridge has a built subpath, including bridges also available from
+ *      the root. The built-consumer tests verify the actual JS and declarations.
  *   2. A bridge that imports an OPTIONAL PEER must be reachable by subpath, and
  *      must NOT be in the root barrel. The subpath is its only safe door.
  *   3. A subpath export must actually be built, or the export map points at a
@@ -210,10 +210,10 @@ describe("bridge reachability", () => {
     expect(withPeers.map((b) => `${b.name} -> ${b.peers.join(", ")}`)).toEqual([]);
   });
 
-  it.each(bridges)("$name is reachable by at least one route", ({ name, inBarrel, inExports }) => {
+  it.each(bridges)("$name is reachable through its scoped route", ({ name, inExports }) => {
     expect(
-      inBarrel || inExports,
-      `${name} is in neither the root barrel nor package exports — it exists only inside this repo`,
+      inExports,
+      `${name} has no scoped package export — a root re-export does not supply one`,
     ).toBe(true);
   });
 

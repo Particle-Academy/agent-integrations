@@ -147,6 +147,16 @@
         "default": "./dist/bridges-screens.cjs"
       }
     },
+    "./bridges/screen-doc": {
+      "import": {
+        "types": "./dist/bridges/screen-doc.d.ts",
+        "default": "./dist/bridges-screen-doc.js"
+      },
+      "require": {
+        "types": "./dist/bridges/screen-doc.d.cts",
+        "default": "./dist/bridges-screen-doc.cjs"
+      }
+    },
     "./bridges/slides": {
       "import": {
         "types": "./dist/bridges/slides.d.ts",
@@ -409,6 +419,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "lint": "tsc --noEmit && eslint .",
+    "pretest": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
