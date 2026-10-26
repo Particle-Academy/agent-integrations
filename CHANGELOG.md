@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Update Vitest to 4.1.12 for security fixes; dev toolchain only, nothing to do.
+
 ## [0.48.0] - 2026-10-24
 
 ### Added
