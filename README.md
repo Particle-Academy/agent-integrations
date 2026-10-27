@@ -95,6 +95,51 @@ Every bridge has a matching subpath if you'd rather import surgically:
 | sharing             | `…/sharing`                                            |
 
 `registerScreensBridge` handles navigation between screens.
+
+### Screens bridge: acknowledge after the host commits
+
+Every mutating screens adapter method (`setActive`, `createScreen`,
+`destroyScreen`, `updateScreenContent`) may return `void` **or** a Promise. A
+sync `void` adapter behaves exactly as it always has. When the host's commit is
+asynchronous and authoritative (persisted state, a possible refusal or
+conflict), return a Promise and the bridge waits for it:
+
+- the tool reports success, and emits its `AgentActivity` event, only after the
+  promise resolves;
+- a rejection, or a resolved `{ ok: false, error }`, becomes an error result
+  carrying the host's `error` text (its message only, never a stack), and emits
+  **no** activity;
+- `screens_create` calls `createScreen` and then `setActive`. If `createScreen`
+  fails, `setActive` is never called. If `setActive` fails after a successful
+  create, the result is an **error** saying the screen was created but not
+  activated (with `structuredContent: { id, kind, created: true, activated: false }`),
+  and one activity event is still emitted because the create did commit.
+
+```ts
+import {
+  registerScreensBridge,
+  type ScreensAdapterResult,
+} from "@particle-academy/agent-integrations/bridges/screens";
+
+registerScreensBridge(host, {
+  adapter: {
+    listScreens: () => store.screens,
+    getActive: () => store.activeId,
+    // Resolve once the server has persisted it; refuse with a reason the agent can act on.
+    setActive: async (id): Promise<ScreensAdapterResult> => {
+      const res = await api.post(`/screens/${id}/activate`);
+      return res.ok ? { ok: true } : { ok: false, error: res.reason, code: "conflict" };
+    },
+    createScreen: async (spec) => {
+      await api.post("/screens", spec); // a throw becomes an error result
+    },
+  },
+});
+```
+
+The screens bridge pushes **no undo entries**: `agent_undo` cannot revert a
+screens tool. Keep your own history if you need to.
+
 `registerScreenDocBridge` edits the nodes inside one screen and exports its
 `DocAdapter`, `ScreenDocBridgeOptions`, `ScreenDocNode` and `ScreenDocOp` types
 from `@particle-academy/agent-integrations/bridges/screen-doc`. The existing

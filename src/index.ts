@@ -113,6 +113,9 @@ export {
   type ScreensBridgeAdapter,
   type ScreensBridgeOptions,
   type ScreenSnapshot,
+  type ScreenCreateSpec,
+  type ScreensAdapterResult,
+  type ScreensAdapterCommit,
 } from "./bridges/screens";
 export {
   registerSlidesBridge,

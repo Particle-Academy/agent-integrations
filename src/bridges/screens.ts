@@ -4,6 +4,7 @@ import type { JsonObject } from "../mcp/types";
 import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
+import { emitActivity } from "../presence/registry";
 import type { AgentTarget } from "../presence/types";
 
 /**
@@ -35,12 +36,39 @@ export type ScreenCreateSpec = {
 };
 
 /**
+ * What a mutating adapter method may resolve to, to acknowledge (or refuse)
+ * a commit. `{ ok: false }` is a refusal the agent can act on: `error` is
+ * shown to the agent verbatim, so keep it a human-readable sentence, never a
+ * stack trace or an internal path. `code` is a machine-readable hint
+ * (e.g. `"conflict"`) for the host's own use; it is not shown to the agent.
+ */
+export type ScreensAdapterResult = { ok: true } | { ok: false; error: string; code?: string };
+
+/**
+ * Return type of every mutating adapter method. A sync `void` return keeps
+ * the original behaviour. A Promise makes the bridge WAIT: the tool reports
+ * success, and emits its AgentActivity event, only after the promise
+ * resolves. A rejection or an `{ ok: false }` result becomes an error result
+ * and emits no activity.
+ */
+export type ScreensAdapterCommit = void | Promise<void | ScreensAdapterResult>;
+
+/**
  * Adapter exposes the host's screen-navigation surface to the bridge.
  * Hosts wire this up against react-router, a custom tab state, or the
  * fancy-screens registry — wherever "current screen" lives.
  *
  * The optional create / destroy / update hooks let agents author screens
  * dynamically against a host-defined template catalog.
+ *
+ * Every mutating method may be sync (`void`) or async (`Promise`); see
+ * {@link ScreensAdapterCommit}. Return a Promise when the host's commit is
+ * authoritative — persisted, or able to refuse or conflict — so the agent is
+ * told the truth instead of "success" before anything was committed.
+ *
+ * This bridge pushes NO undo entries: `agent_undo` cannot revert a screens
+ * tool. A host that needs undo for navigation or screen authoring must keep
+ * its own history.
  */
 export type ScreensBridgeAdapter = {
   /** List every available screen. */
@@ -48,13 +76,13 @@ export type ScreensBridgeAdapter = {
   /** Read which screen is currently active. */
   getActive: () => string | null;
   /** Navigate to a screen by id. Host updates router / tab state. */
-  setActive: (screenId: string) => void;
+  setActive: (screenId: string) => ScreensAdapterCommit;
   /** Optional: instantiate a new screen from a template + config. */
-  createScreen?: (spec: ScreenCreateSpec) => void;
+  createScreen?: (spec: ScreenCreateSpec) => ScreensAdapterCommit;
   /** Optional: remove a previously-created screen. */
-  destroyScreen?: (screenId: string) => void;
+  destroyScreen?: (screenId: string) => ScreensAdapterCommit;
   /** Optional: shallow-merge new config into an existing screen. */
-  updateScreenContent?: (screenId: string, partial: Record<string, unknown>) => void;
+  updateScreenContent?: (screenId: string, partial: Record<string, unknown>) => ScreensAdapterCommit;
   /** Optional: enumerate the kinds the host knows how to instantiate. */
   listKinds?: () => Array<{ kind: string; label?: string; description?: string; configSchema?: unknown }>;
 };
@@ -65,6 +93,41 @@ export type ScreensBridgeOptions = {
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
+
+/**
+ * The agent-facing text for a host failure. Only the message is used — never
+ * `stack`, which carries file paths — matching the other bridges. A message
+ * that itself embeds stack frames is cut at the first frame. A non-Error
+ * rejection (a plain object, a response) has no reliable message, so it gets
+ * the fallback rather than "[object Object]".
+ */
+function hostErrorMessage(e: unknown, fallback: string): string {
+  let msg: string | undefined;
+  if (e instanceof Error) msg = e.message;
+  else if (typeof e === "string") msg = e;
+  else if (e && typeof e === "object" && typeof (e as { message?: unknown }).message === "string") {
+    msg = (e as { message: string }).message;
+  }
+  const firstFrame = msg ? msg.search(/\n\s+at\s/) : -1;
+  if (msg && firstFrame >= 0) msg = msg.slice(0, firstFrame);
+  msg = msg?.trim();
+  return msg ? msg : fallback;
+}
+
+type CommitOutcome = { ok: true } | { ok: false; error: string };
+
+/** Run one adapter commit, await it, and normalise every way it can fail. */
+async function commit(run: () => ScreensAdapterCommit, fallback: string): Promise<CommitOutcome> {
+  try {
+    const r = await run();
+    if (r && typeof r === "object" && r.ok === false) {
+      return { ok: false, error: hostErrorMessage(r.error, fallback) };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: hostErrorMessage(e, fallback) };
+  }
+}
 
 /**
  * registerScreensBridge — top-level navigation bridge so agents can
@@ -103,7 +166,7 @@ export function registerScreensBridge(
   ) => {
     const wrapped = async (args: JsonObject) => {
       try { return await handler(args); }
-      catch (e) { return errorResult(e instanceof Error ? e.message : String(e)); }
+      catch (e) { return errorResult(hostErrorMessage(e, `${name} failed.`)); }
     };
     const final = isMutation
       ? wrapToolWithActivity(wrapped, {
@@ -170,20 +233,49 @@ export function registerScreensBridge(
       config: { type: "object", description: "Template-specific config (e.g. { fields: [...] } for a form)." },
     },
     ["id", "kind"],
-    (args) => {
-      if (!adapter.createScreen) return errorResult("Host did not provide createScreen.");
+    async (args) => {
+      const createScreen = adapter.createScreen;
+      if (!createScreen) return errorResult("Host did not provide createScreen.");
       const id = String(args.id);
       const kind = String(args.kind);
       if (adapter.listScreens().find((s) => s.id === id)) {
         return errorResult(`Screen ${id} already exists. Use screens_destroy first or pick a fresh id.`);
       }
-      adapter.createScreen({
+      const created = await commit(() => createScreen({
         id,
         title: typeof args.title === "string" ? args.title : undefined,
         kind,
         config: (args.config && typeof args.config === "object") ? args.config as Record<string, unknown> : undefined,
-      });
-      adapter.setActive(id);
+      }), `Host failed to create screen "${id}".`);
+      // Nothing was created, so there is nothing to activate.
+      if (!created.ok) return errorResult(created.error);
+
+      const activated = await commit(() => adapter.setActive(id), `Host failed to activate screen "${id}".`);
+      if (!activated.ok) {
+        // Partial commit: the screen EXISTS but is not showing. Reported as an
+        // error so an agent branching on isError does not go on to tell the
+        // human "look at the new screen". The create DID commit, though, and
+        // every committed mutation must be observable, so its activity is
+        // emitted here by hand (wrapToolWithActivity skips error results).
+        const state = { id, kind, created: true, activated: false };
+        emitActivity({
+          agentId: agent.id,
+          agentName: agent.name,
+          agentColor: agent.color,
+          target: target(id),
+          action: "screens_create",
+          timestamp: Date.now(),
+          meta: state,
+        });
+        return {
+          ...errorResult(
+            `Screen "${id}" was created but not activated: ${activated.error} ` +
+              "The screen exists; do not call screens_create again. " +
+              "Call screens_navigate to show it, or screens_destroy to remove it.",
+          ),
+          structuredContent: state,
+        };
+      }
       return textResult(`Created ${kind} screen "${id}"`, { id, kind });
     },
     true,
@@ -195,13 +287,15 @@ export function registerScreensBridge(
     "Remove a previously-created screen. Active screen falls back to the first remaining one (or null).",
     { id: { type: "string" } },
     ["id"],
-    (args) => {
-      if (!adapter.destroyScreen) return errorResult("Host did not provide destroyScreen.");
+    async (args) => {
+      const destroyScreen = adapter.destroyScreen;
+      if (!destroyScreen) return errorResult("Host did not provide destroyScreen.");
       const id = String(args.id);
       if (!adapter.listScreens().find((s) => s.id === id)) {
         return errorResult(`No screen with id ${id}`);
       }
-      adapter.destroyScreen(id);
+      const done = await commit(() => destroyScreen(id), `Host failed to destroy screen "${id}".`);
+      if (!done.ok) return errorResult(done.error);
       return textResult(`Destroyed screen ${id}`, { id });
     },
     true,
@@ -216,9 +310,15 @@ export function registerScreensBridge(
       layout: { type: "string", enum: ["single", "split-h", "split-v", "grid-2x2", "stack"] },
     },
     ["id", "layout"],
-    (args) => {
-      if (!adapter.updateScreenContent) return errorResult("Host did not provide updateScreenContent.");
-      adapter.updateScreenContent(String(args.id), { layout: String(args.layout) });
+    async (args) => {
+      const updateScreenContent = adapter.updateScreenContent;
+      if (!updateScreenContent) return errorResult("Host did not provide updateScreenContent.");
+      const id = String(args.id);
+      const done = await commit(
+        () => updateScreenContent(id, { layout: String(args.layout) }),
+        `Host failed to change the layout of screen "${id}".`,
+      );
+      if (!done.ok) return errorResult(done.error);
       return textResult(`Layout of ${args.id} → ${args.layout}`, { id: args.id, layout: args.layout });
     },
     true,
@@ -233,11 +333,13 @@ export function registerScreensBridge(
       partial: { type: "object", description: "Shallow-merged into the screen's config." },
     },
     ["id", "partial"],
-    (args) => {
-      if (!adapter.updateScreenContent) return errorResult("Host did not provide updateScreenContent.");
+    async (args) => {
+      const updateScreenContent = adapter.updateScreenContent;
+      if (!updateScreenContent) return errorResult("Host did not provide updateScreenContent.");
       const id = String(args.id);
       const partial = (args.partial && typeof args.partial === "object") ? args.partial as Record<string, unknown> : {};
-      adapter.updateScreenContent(id, partial);
+      const done = await commit(() => updateScreenContent(id, partial), `Host failed to update screen "${id}".`);
+      if (!done.ok) return errorResult(done.error);
       return textResult(`Updated content of ${id}`, { id });
     },
     true,
@@ -249,13 +351,14 @@ export function registerScreensBridge(
     "Switch the human's view to a different screen. The host updates its router / tab state and re-renders.",
     { screen: { type: "string", description: "Screen id to activate." } },
     ["screen"],
-    (args) => {
+    async (args) => {
       const screenId = String(args.screen ?? "");
       const screens = adapter.listScreens();
       if (!screens.find((s) => s.id === screenId)) {
         return errorResult(`No screen registered with id "${screenId}". Call screens_list first.`);
       }
-      adapter.setActive(screenId);
+      const done = await commit(() => adapter.setActive(screenId), `Host failed to navigate to screen "${screenId}".`);
+      if (!done.ok) return errorResult(done.error);
       return textResult(`Navigated to ${screenId}`, { screen: screenId });
     },
     true,

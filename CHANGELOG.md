@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Screens bridge acknowledges host commits.** `setActive`, `createScreen`,
+  `destroyScreen` and `updateScreenContent` on `ScreensBridgeAdapter` may now
+  return a Promise resolving to `void` or the new exported
+  `ScreensAdapterResult` (`{ ok: true } | { ok: false; error; code? }`). The
+  bridge awaits it: success, and the `AgentActivity` event, are reported only
+  after the host commits; a rejection or `{ ok: false }` becomes an error result
+  with the host's message (never a stack) and emits no activity.
+  `ScreensAdapterCommit` and `ScreenCreateSpec` are now exported from the root
+  as well as `…/bridges/screens`. **Nothing to do:** sync `void` adapters behave
+  exactly as before.
+- `screens_create` no longer calls `setActive` when `createScreen` fails. When
+  the create commits but activation fails, it returns an error stating the
+  screen was created but not activated (`structuredContent` carries
+  `created: true, activated: false`) and still emits one activity event for the
+  committed create.
+
+### Fixed
+
+- **Screens bridge reported success before an async host had committed.** The
+  adapter methods were typed `void` and called without `await`, so a host with a
+  persisted or refusable commit got "success" and an activity event first, and a
+  rejection surfaced as an unhandled promise rejection instead of a tool error.
+  The bridge pushes no undo entries; that is unchanged and now documented.
+
 ### Security
 
 - Update Vitest to 4.1.12 for security fixes; dev toolchain only, nothing to do.
