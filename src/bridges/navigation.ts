@@ -334,11 +334,11 @@ export function registerNavigationBridge(
         bridgeId: "navigation",
         action: "nav_visit",
         label: `Navigate to ${url}`,
-        undo: () => {
-          adapter.visit(from);
+        undo: async () => {
+          await adapter.visit(from);
         },
-        redo: () => {
-          adapter.visit(url);
+        redo: async () => {
+          await adapter.visit(url);
         },
       });
       return textResult(`Navigated to ${url}`, { url });

@@ -287,8 +287,8 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
         bridgeId: catalogId,
         action: "catalog_create_product",
         label: `Created product ${product.id} (${product.name})`,
-        undo: () => void adapter.products.remove(product.id),
-        redo: () => void adapter.createProduct({ ...product }),
+        undo: async () => { await adapter.products.remove(product.id); },
+        redo: async () => { await adapter.createProduct({ ...product }); },
       });
       return textResult(`Created product ${product.id} (${product.name})`, product);
     },
@@ -330,8 +330,8 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
         bridgeId: catalogId,
         action: "catalog_create_price",
         label: `Created price ${price.id} on ${productId}`,
-        undo: () => void adapter.prices.remove(price.id),
-        redo: () => void adapter.createPrice({ ...price }),
+        undo: async () => { await adapter.prices.remove(price.id); },
+        redo: async () => { await adapter.createPrice({ ...price }); },
       });
       return textResult(`Created ${type} price ${price.id} on ${productId}`, price);
     },
@@ -358,8 +358,8 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
         bridgeId: catalogId,
         action: "catalog_delete_product",
         label: `Deleted product ${id} (${product.name})`,
-        undo: () => void adapter.createProduct({ ...snapshot }),
-        redo: () => void adapter.products.remove(id),
+        undo: async () => { await adapter.createProduct({ ...snapshot }); },
+        redo: async () => { await adapter.products.remove(id); },
       });
       return textResult(`Deleted product ${id}`, { id });
     },
@@ -384,8 +384,8 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
         bridgeId: catalogId,
         action: "catalog_delete_price",
         label: `Deleted price ${id}`,
-        undo: () => void adapter.createPrice({ ...snapshot }),
-        redo: () => void adapter.prices.remove(id),
+        undo: async () => { await adapter.createPrice({ ...snapshot }); },
+        redo: async () => { await adapter.prices.remove(id); },
       });
       return textResult(`Deleted price ${id}`, { id });
     },

@@ -335,8 +335,8 @@ export function registerPasskeyBridge(host: ToolHost, options: PasskeyBridgeOpti
         bridgeId: surfaceId,
         action: "passkey_rename",
         label: `Renamed passkey to ${name || "(unnamed)"}`,
-        undo: () => void adapter.rename({ id, name: previous }),
-        redo: () => void adapter.rename({ id, name }),
+        undo: async () => { await adapter.rename({ id, name: previous }); },
+        redo: async () => { await adapter.rename({ id, name }); },
       });
 
       return textResult(`Renamed passkey ${id} to ${name || "(unnamed)"}`, { id, name, previous });

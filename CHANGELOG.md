@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`agent_undo` / `agent_redo` reported success before an async host had
+  committed** for the catalog (`catalog_create_product`, `catalog_create_price`,
+  `catalog_delete_product`, `catalog_delete_price`), features (`features_grant`,
+  `features_revoke`), passkeys (`passkey_rename`) and navigation (`nav_visit`)
+  bridges. Their undo and redo steps called the adapter method with `void` (or,
+  for `nav_visit`, without `await`) and dropped its promise, so the tool
+  answered first and a host rejection was lost or escaped as an unhandled
+  promise rejection. The steps now await the adapter: the tool resolves only once
+  the host commits, and a rejection fails the tool call with the host's error.
+  A failed step is handled exactly as a synchronous throw always has been: the
+  entry is dropped, leaving neither an undo nor a redo for it. **Nothing to do:**
+  sync adapters behave as before.
+
 ## [0.49.0] - 2026-10-27
 
 ### Added

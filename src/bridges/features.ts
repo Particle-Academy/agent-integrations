@@ -292,8 +292,8 @@ export function registerFeaturesBridge(host: ToolHost, options: FeaturesBridgeOp
         action: "features_grant",
         label: `Granted group ${groupKey}`,
         // Only reverse if WE added it (idempotent assign — don't revoke a pre-existing grant).
-        undo: () => { if (!already) void adapter.detachGroup(args.subject, groupKey); },
-        redo: () => void adapter.assignGroup(args.subject, groupKey),
+        undo: async () => { if (!already) await adapter.detachGroup(args.subject, groupKey); },
+        redo: async () => { await adapter.assignGroup(args.subject, groupKey); },
       });
       return textResult(`Granted group ${groupKey}`, { subject: args.subject, group: groupKey });
     },
@@ -317,8 +317,8 @@ export function registerFeaturesBridge(host: ToolHost, options: FeaturesBridgeOp
         bridgeId: featuresId,
         action: "features_revoke",
         label: `Revoked group ${groupKey}`,
-        undo: () => { if (had) void adapter.assignGroup(args.subject, groupKey); },
-        redo: () => void adapter.detachGroup(args.subject, groupKey),
+        undo: async () => { if (had) await adapter.assignGroup(args.subject, groupKey); },
+        redo: async () => { await adapter.detachGroup(args.subject, groupKey); },
       });
       return textResult(`Revoked group ${groupKey}`, { subject: args.subject, group: groupKey });
     },
