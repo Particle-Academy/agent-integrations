@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-10-27
+
 ### Fixed
 
 - **`agent_undo` / `agent_redo` reported success before an async host had
