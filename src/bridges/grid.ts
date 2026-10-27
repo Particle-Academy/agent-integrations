@@ -80,6 +80,9 @@ export function registerGridBridge(host: ToolHost, options: GridBridgeOptions): 
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = `grid:${adapter.id}`;
 
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
@@ -124,6 +127,7 @@ export function registerGridBridge(host: ToolHost, options: GridBridgeOptions): 
           inputSchema: { type: "object", properties: properties as never, required, additionalProperties: false },
         },
         final as never,
+        { owner: bridgeId },
       ),
     );
   };
@@ -310,7 +314,7 @@ export function registerGridBridge(host: ToolHost, options: GridBridgeOptions): 
   }
 
   return {
-    id: `grid:${adapter.id}`,
+    id: bridgeId,
     title: adapter.title ?? adapter.id,
     dispose: () => {
       for (const d of disposers) d();

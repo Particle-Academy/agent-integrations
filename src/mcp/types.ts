@@ -123,10 +123,36 @@ export type CallToolResult = {
 export type ToolCallContext = { transport?: unknown };
 export type ToolHandler = (args: JsonObject, context?: ToolCallContext) => Promise<CallToolResult> | CallToolResult;
 
+/**
+ * Options for `ToolHost.registerTool`.
+ *
+ * Tool names are one namespace shared by every bridge and agent on a host, so a
+ * name belongs to whoever registered it. A second registrant for a held name is
+ * refused rather than silently replacing the first.
+ */
+export type RegisterToolOptions = {
+  /**
+   * Who is registering — a stable identity for the surface, e.g. the bridge id
+   * (`"whiteboard"`, `"chart:revenue"`). The SAME owner may register a name it
+   * already holds again; that replaces the tool, which is what a React remount
+   * needs. A different owner is refused. A registration without an owner is a
+   * registrant nobody can identify, so it never matches another one.
+   */
+  owner?: string;
+  /**
+   * Take the name over whoever holds it. The explicit opt-in for the one thing
+   * `registerTool` used to do implicitly; reach for it only when replacing
+   * another registrant's tool is the point.
+   */
+  replace?: boolean;
+};
+
 /** Internal record kept by the server. */
 export type RegisteredTool = {
   definition: ToolDefinition;
   handler: ToolHandler;
+  /** The registrant that holds this name, when it identified itself. */
+  owner?: string;
 };
 
 export const MCP_PROTOCOL_VERSION = "2025-06-18";

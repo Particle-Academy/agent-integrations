@@ -11,6 +11,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: `registerTool` refuses a tool name already held by a different
+  registrant.** It used to replace the existing tool silently, so when two
+  bridges or two agents in one app registered the same name, the second won.
+  The first stayed in `tools/list`, but every call reached the second handler
+  and nothing reported it. That breaks multi-agent apps. It now throws an
+  `Error` naming the tool and both owners, and leaves the first registration in
+  place.
+  **What to do:**
+  - **If you only use the bridges, nothing.** Every first-party bridge now
+    registers under its bridge id (`"whiteboard"`, `` `chart:${adapter.id}` ``,
+    `` `form:${adapter.id}` ``, …), so a remount of the same bridge still
+    re-registers, with or without a dispose in between. The shared undo tools
+    (`agent_undo` / `agent_redo` / `agent_history`) register under one owner,
+    `"agent-undo"`, so `ensureUndoToolsRegistered` and a direct
+    `registerUndoTools` call on the same host still coexist, as the showcase
+    playground does. A census of every first-party bridge found **no two
+    bridges sharing a tool name**, and all of them mount on one host together.
+  - **If you mount two instances of a multi-instance bridge on ONE host** (two
+    charts, grids, code editors, forms, scenes, catalogs, feature panels or
+    passkey surfaces with different adapter ids), the second now throws. Their
+    tool names were never instance-scoped, so the second instance had already
+    taken over the first's tools and the first was not drivable. Give each
+    instance its own host, or drive both through one adapter.
+  - **If you call `registerTool` yourself**, pass `{ owner: "<your surface>" }`.
+    The same owner may re-register its own names. A registration with no owner
+    can be identified by nothing, so it never counts as the same registrant:
+    registering an unowned name twice without disposing the first now throws.
+    If you re-register by name on purpose to swap a handler, either pass the
+    same `owner` both times or pass `{ replace: true }`, the explicit opt-in for
+    the old behaviour. No first-party consumer relies on overwriting another
+    registrant: `fancy-flow-mcp-js` registers each name once per server, and
+    the only repeat in the showcase is the playground registering the undo
+    tools itself before its bridges ensure them, which is one owner.
+
+### Added
+
+- `RegisterToolOptions` (`owner`, `replace`), the optional third argument of
+  `ToolHost.registerTool`, exported from the package root and `/mcp`. Custom
+  `ToolHost` implementations keep compiling: the argument is optional.
+
+### Fixed
+
+- **A late disposer no longer withdraws the registration that replaced it.** A
+  disposer used to delete whatever held the name, so a remount whose first
+  cleanup ran after the second mount unregistered the live tool. A disposer now
+  removes only the registration it returned from.
+
 ## [0.50.0] - 2026-10-27
 
 ### Fixed

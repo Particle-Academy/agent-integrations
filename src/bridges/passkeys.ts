@@ -211,6 +211,9 @@ export function registerPasskeyBridge(host: ToolHost, options: PasskeyBridgeOpti
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const surfaceId = adapter.id ?? "passkeys";
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = `passkeys:${surfaceId}`;
 
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
@@ -258,6 +261,7 @@ export function registerPasskeyBridge(host: ToolHost, options: PasskeyBridgeOpti
           },
         },
         final as never,
+        { owner: bridgeId },
       ),
     );
   };
@@ -404,7 +408,7 @@ export function registerPasskeyBridge(host: ToolHost, options: PasskeyBridgeOpti
   // and see the closed-tool-list test that will fail if you do.
 
   return {
-    id: `passkeys:${surfaceId}`,
+    id: bridgeId,
     title: adapter.title ?? "Passkeys",
     dispose: () => {
       for (const d of disposers.splice(0)) d();

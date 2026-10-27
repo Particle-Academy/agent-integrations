@@ -31,6 +31,9 @@ export type GitBridgeOptions = {
 export function registerGitBridge(host: ToolHost, options: GitBridgeOptions): Bridge {
   const agent = { id: "agent", name: "Agent", color: "#a855f7", ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = "git";
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
   const reg = (
@@ -60,7 +63,7 @@ export function registerGitBridge(host: ToolHost, options: GitBridgeOptions): Br
       name,
       description,
       inputSchema: { type: "object", properties: properties as any, required, additionalProperties: false },
-    }, final as any));
+    }, final as any, { owner: bridgeId }));
   };
 
   reg("git_status", "Read normalized working-tree and branch status.", {}, [], async () => {
@@ -115,5 +118,5 @@ export function registerGitBridge(host: ToolHost, options: GitBridgeOptions): Br
     title: { type: "string" }, body: { type: "string" }, sourceBranch: { type: "string" }, targetBranch: { type: "string" }, draft: { type: "boolean" }, apply: { type: "boolean" },
   }, ["title", "sourceBranch", "targetBranch"]);
 
-  return { id: "git", title: "Git", dispose: () => disposers.forEach((dispose) => dispose()) };
+  return { id: bridgeId, title: "Git", dispose: () => disposers.forEach((dispose) => dispose()) };
 }

@@ -46,6 +46,9 @@ export function registerSheetsBridge(
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = "sheets";
 
   // agent_undo / agent_redo / agent_history are registered whenever any bridge
   // mounts, so undo availability doesn't hinge on which bridges are co-present.
@@ -92,6 +95,7 @@ export function registerSheetsBridge(
           inputSchema: { type: "object", properties: properties as any, required, additionalProperties: false },
         },
         final as any,
+        { owner: bridgeId },
       ),
     );
   };
@@ -280,7 +284,7 @@ export function registerSheetsBridge(
   );
 
   return {
-    id: "sheets",
+    id: bridgeId,
     title: "Sheets",
     dispose: () => {
       for (const d of disposers) d();

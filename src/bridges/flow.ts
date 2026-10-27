@@ -110,6 +110,9 @@ export function registerFlowBridge(
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = "flow";
 
   const pendingMode = options.pendingMode ?? false;
   const validateConfigMode = options.validateConfig ?? "reject";
@@ -177,6 +180,7 @@ export function registerFlowBridge(
           inputSchema: { type: "object", properties: properties as any, required, additionalProperties: false },
         },
         final as any,
+        { owner: bridgeId },
       ),
     );
   };
@@ -570,7 +574,7 @@ export function registerFlowBridge(
   );
 
   return {
-    id: "flow",
+    id: bridgeId,
     title: "Flow",
     dispose: () => {
       for (const d of disposers) d();

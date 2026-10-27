@@ -25,6 +25,7 @@ export type {
   JsonObject,
   ToolDefinition,
   ToolHandler,
+  RegisterToolOptions,
   ToolCallContext,
   CallToolResult,
   ContentBlock,

@@ -124,6 +124,9 @@ export function registerFeaturesBridge(host: ToolHost, options: FeaturesBridgeOp
   const pendingMode = options.pendingMode ?? true;
   const featuresId = adapter.id ?? "features";
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = `features:${featuresId}`;
 
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
@@ -162,6 +165,7 @@ export function registerFeaturesBridge(host: ToolHost, options: FeaturesBridgeOp
       host.registerTool(
         { name, description, inputSchema: { type: "object", properties: properties as Record<string, never>, required, additionalProperties: false } },
         final as never,
+        { owner: bridgeId },
       ),
     );
   };
@@ -345,7 +349,7 @@ export function registerFeaturesBridge(host: ToolHost, options: FeaturesBridgeOp
   );
 
   return {
-    id: `features:${featuresId}`,
+    id: bridgeId,
     title: adapter.title ?? "Features",
     dispose: () => {
       for (const d of disposers.splice(0)) d();

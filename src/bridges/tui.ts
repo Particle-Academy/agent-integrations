@@ -28,7 +28,7 @@ export function registerTuiBridge(host: ToolHost, options: TuiBridgeOptions) {
     disposers.push(host.registerTool({ name, description, inputSchema: { type: "object", properties: properties as never, required } }, async (args, context) => {
       try { const result = await handler(args, context); return textResult(typeof result === "string" ? result : JSON.stringify(result), result); }
       catch (error) { return errorResult(error instanceof Error ? error.message : String(error)); }
-    }));
+    }, { owner: "tui" }));
   };
   const publish = async (surfaceId: string, type: string, payload: unknown, actor = defaultActor, priority: HumanPlusPriority = "normal") => options.eventStore.append({ appId: options.appId, sessionId: options.sessionId, surfaceId, type, payload, actor, priority });
 

@@ -69,6 +69,9 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
     const { adapter } = options;
     const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
     const disposers: Array<() => void> = [];
+    // The bridge id is also its registrant identity on the host: the same bridge
+    // may re-register (a remount), a different one claiming a name is refused.
+    const bridgeId = "slides";
 
     // agent_undo / agent_redo / agent_history are registered whenever any bridge
     // mounts, so undo availability doesn't hinge on which bridges are co-present.
@@ -133,6 +136,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
                     },
                 },
                 final as never,
+                { owner: bridgeId },
             ),
         );
     };
@@ -529,7 +533,7 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
     );
 
     return {
-        id: "slides",
+        id: bridgeId,
         title: "Slides",
         dispose: () => {
             for (const d of disposers.splice(0)) d();

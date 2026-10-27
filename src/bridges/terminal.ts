@@ -136,6 +136,9 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
   const pendingMode = options.pendingMode ?? true;
   const screenId = options.screenId ?? options.adapter?.screenId;
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = "terminal";
   const staged = new Map<string, Staged>();
   let seq = 0;
 
@@ -235,6 +238,7 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
           inputSchema: { type: "object", properties: properties as any, required, additionalProperties: false },
         },
         final as any,
+        { owner: bridgeId },
       ),
     );
   };
@@ -469,7 +473,7 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
   }
 
   return {
-    id: "terminal",
+    id: bridgeId,
     title: "Terminal",
     dispose: () => {
       disposers.forEach((d) => d());

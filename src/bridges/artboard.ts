@@ -106,6 +106,9 @@ export function registerArtboardBridge(
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = "artboard";
 
   // Register agent_undo / agent_redo / agent_history once per server. Idempotent.
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
@@ -159,6 +162,7 @@ export function registerArtboardBridge(
           },
         },
         final as any,
+        { owner: bridgeId },
       ),
     );
   };
@@ -546,7 +550,7 @@ export function registerArtboardBridge(
   );
 
   return {
-    id: "artboard",
+    id: bridgeId,
     title: "Artboard",
     dispose: () => {
       for (const d of disposers) d();

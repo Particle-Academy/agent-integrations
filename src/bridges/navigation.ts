@@ -168,6 +168,9 @@ export function registerNavigationBridge(
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const pendingMode = options.pendingMode ?? true;
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = "navigation";
   let groundedRevision: number | null = null;
 
   const staleIntent = async () => {
@@ -230,6 +233,7 @@ export function registerNavigationBridge(
           inputSchema: { type: "object", properties: properties as any, required, additionalProperties: false },
         },
         final as any,
+        { owner: bridgeId },
       ),
     );
   };
@@ -489,7 +493,7 @@ export function registerNavigationBridge(
   );
 
   return {
-    id: "navigation",
+    id: bridgeId,
     title: "Co-browsing",
     dispose: () => {
       for (const d of disposers) d();

@@ -67,6 +67,9 @@ export function registerMapBridge(host: ToolHost, options: MapBridgeOptions): Br
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = "map";
 
   // Register agent_undo / agent_redo / agent_history once per host. Idempotent.
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
@@ -113,6 +116,7 @@ export function registerMapBridge(host: ToolHost, options: MapBridgeOptions): Br
           },
         },
         final as any,
+        { owner: bridgeId },
       ),
     );
   };
@@ -415,7 +419,7 @@ export function registerMapBridge(host: ToolHost, options: MapBridgeOptions): Br
   );
 
   return {
-    id: "map",
+    id: bridgeId,
     title: "Map",
     dispose: () => {
       for (const d of disposers) d();

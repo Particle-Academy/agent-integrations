@@ -163,6 +163,8 @@ export function registerScreenDocBridge(host: ToolHost, options: ScreenDocBridge
         { addressable: authored, syntheticCount },
       );
     }) as never,
+    // Same registrant as the doc bridge above, which registers under its surface.
+    { owner: surface },
   );
 
   return {

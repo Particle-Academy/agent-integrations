@@ -162,6 +162,9 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const pendingMode = options.pendingMode ?? true;
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = "files";
 
   // Reject traversal / out-of-root paths before they reach the adapter (no-op
   // when no root is configured — the adapter is then responsible for sandboxing).
@@ -214,6 +217,7 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
           },
         },
         final as any,
+        { owner: bridgeId },
       ),
     );
   };
@@ -436,7 +440,7 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
   );
 
   return {
-    id: "files",
+    id: bridgeId,
     title: "Files",
     dispose: () => {
       for (const d of disposers) d();

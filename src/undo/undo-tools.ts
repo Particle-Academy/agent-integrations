@@ -14,6 +14,15 @@ export type UndoToolsOptions = {
 const installedHosts = new WeakSet<ToolHost>();
 
 /**
+ * The one owner every copy of the undo tools registers under. They are SHARED
+ * on purpose — every bridge ensures them, and a host may also call
+ * `registerUndoTools` itself — so all of those are the same registrant, and a
+ * second registration replaces the first instead of being refused as a
+ * collision. Anything else claiming `agent_undo` is still refused.
+ */
+const UNDO_TOOLS_OWNER = "agent-undo";
+
+/**
  * ensureUndoToolsRegistered — bridges call this on construction. Safe to
  * call repeatedly with the same server; subsequent calls are no-ops.
  */
@@ -49,6 +58,7 @@ export function registerUndoTools(host: ToolHost, options: UndoToolsOptions = {}
         if (!entry) return errorResult("Nothing to undo.");
         return textResult(`Undid: ${entry.label}`, { entry: serialize(entry) });
       },
+      { owner: UNDO_TOOLS_OWNER },
     ),
   );
 
@@ -68,6 +78,7 @@ export function registerUndoTools(host: ToolHost, options: UndoToolsOptions = {}
         if (!entry) return errorResult("Nothing to redo.");
         return textResult(`Redid: ${entry.label}`, { entry: serialize(entry) });
       },
+      { owner: UNDO_TOOLS_OWNER },
     ),
   );
 
@@ -87,6 +98,7 @@ export function registerUndoTools(host: ToolHost, options: UndoToolsOptions = {}
         const text = history.map((e) => `${new Date(e.timestamp).toISOString()} ${e.bridgeId} ${e.action}: ${e.label}`).join("\n");
         return textResult(text || "(empty)", history);
       },
+      { owner: UNDO_TOOLS_OWNER },
     ),
   );
 

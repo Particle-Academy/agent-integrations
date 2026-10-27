@@ -198,6 +198,17 @@ ends are delivered before the transport closes.
 Import `/mcp/stdio` only from Node. Browser bundles import `/mcp`, which never
 pulls it in.
 
+**A tool name belongs to whoever registered it.** `registerTool` throws when a
+name is already held by a different registrant, and the error names both. Pass
+`{ owner }` to identify yourself: the same owner may register a name again (a
+React remount does), and every bridge already registers under its bridge id.
+Disposing frees the name. To take over another registrant's tool on purpose,
+pass `{ replace: true }`.
+
+```ts
+server.registerTool(definition, handler, { owner: "support-triage" });
+```
+
 ## Connect an agent to your app — `<ConnectorButtons>`
 
 The step *before* presence: getting your MCP server installed in the user's

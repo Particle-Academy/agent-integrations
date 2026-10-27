@@ -2,6 +2,7 @@ import type {
   CallToolResult,
   JsonObject,
   RegisteredTool,
+  RegisterToolOptions,
   ToolDefinition,
   ToolHandler,
 } from "./types";
@@ -20,8 +21,14 @@ import type {
  * (in-process agent calling `host.callTool("sheet_set_cell", { … })`).
  */
 export interface ToolHost {
-  /** Register a tool. Returns a disposer that unregisters it. */
-  registerTool(definition: ToolDefinition, handler: ToolHandler): () => void;
+  /**
+   * Register a tool. Returns a disposer that unregisters it.
+   *
+   * Throws when the name is already held by a DIFFERENT registrant (see
+   * {@link RegisterToolOptions.owner}), unless `replace: true` is passed. The
+   * same owner registering again replaces its own tool.
+   */
+  registerTool(definition: ToolDefinition, handler: ToolHandler, options?: RegisterToolOptions): () => void;
 
   /** Look up an already-registered tool's definition + handler, or null. */
   getTool(name: string): RegisteredTool | null;
@@ -73,14 +80,37 @@ export class ToolRegistry implements ToolHost {
    */
   protected readonly withdrawn = new Set<string>();
 
-  registerTool(definition: ToolDefinition, handler: ToolHandler): () => void {
-    this.tools.set(definition.name, { definition, handler });
+  registerTool(definition: ToolDefinition, handler: ToolHandler, options: RegisterToolOptions = {}): () => void {
+    const name = definition.name;
+    const { owner, replace = false } = options;
+    const held = this.tools.get(name);
+
+    // A name is one surface's. Replacing it silently left the first surface
+    // listed but unreachable — every call went to the second handler and
+    // nothing said so. Only the same identified owner may re-register (a
+    // remount); anyone else must ask for it with `replace: true`.
+    if (held && !replace && (owner === undefined || held.owner !== owner)) {
+      throw new Error(
+        `Tool "${name}" is already registered by ${describeOwner(held.owner)}; `
+          + `${describeOwner(owner)} cannot register it too. `
+          + `Two registrants for one name would leave the first one listed but unreachable. `
+          + `Give one of them a different tool name, dispose the first registration, `
+          + `or pass { replace: true } to take the name over deliberately.`,
+      );
+    }
+
+    const record: RegisteredTool = owner === undefined ? { definition, handler } : { definition, handler, owner };
+    this.tools.set(name, record);
     // A remounted surface must stop apologising for a previous unmount.
-    this.withdrawn.delete(definition.name);
+    this.withdrawn.delete(name);
     this.onToolsChanged();
     return () => {
-      if (this.tools.delete(definition.name)) {
-        this.withdrawn.add(definition.name);
+      // Only withdraw what THIS registration put there. A replaced registration's
+      // disposer often runs late (a remount's cleanup), and must not take its
+      // successor down with it.
+      if (this.tools.get(name) === record) {
+        this.tools.delete(name);
+        this.withdrawn.add(name);
         this.onToolsChanged();
       }
     };
@@ -115,4 +145,10 @@ export class ToolRegistry implements ToolHost {
    * when the tool catalog changes. Default no-op.
    */
   protected onToolsChanged(): void {}
+}
+
+function describeOwner(owner: string | undefined): string {
+  return owner === undefined
+    ? "an unnamed registrant (pass { owner } to registerTool to identify it)"
+    : `"${owner}"`;
 }

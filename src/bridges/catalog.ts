@@ -140,6 +140,9 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
   const pendingMode = options.pendingMode ?? true;
   const catalogId = adapter.id ?? "catalog";
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = `catalog:${catalogId}`;
 
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
@@ -178,6 +181,7 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
       host.registerTool(
         { name, description, inputSchema: { type: "object", properties: properties as Record<string, never>, required, additionalProperties: false } },
         final as never,
+        { owner: bridgeId },
       ),
     );
   };
@@ -461,7 +465,7 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
   );
 
   return {
-    id: `catalog:${catalogId}`,
+    id: bridgeId,
     title: adapter.title ?? "Catalog",
     dispose: () => {
       for (const d of disposers.splice(0)) d();

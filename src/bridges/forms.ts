@@ -113,6 +113,9 @@ export function registerFormBridge(
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const pendingMode = options.pendingMode ?? true;
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = `form:${adapter.id}`;
 
   // agent_undo / agent_redo / agent_history are registered whenever any bridge
   // mounts, so undo availability doesn't hinge on which bridges are co-present.
@@ -160,6 +163,7 @@ export function registerFormBridge(
           inputSchema: { type: "object", properties: properties as any, required, additionalProperties: false },
         },
         final as any,
+        { owner: bridgeId },
       ),
     );
   };
@@ -293,7 +297,7 @@ export function registerFormBridge(
   );
 
   return {
-    id: `form:${formId}`,
+    id: bridgeId,
     title: adapter.title ?? formId,
     dispose: () => {
       for (const d of disposers) d();

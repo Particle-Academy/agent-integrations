@@ -92,6 +92,9 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
   const describeNode =
     options.describeNode ?? ((n: N) => ({ id: n.id, type: n.type, parent: n.parent, props: Object.keys(n.props ?? {}) }));
   const disposers: Array<() => void> = [];
+  // The bridge id is also its registrant identity on the host: the same bridge
+  // may re-register (a remount), a different one claiming a name is refused.
+  const bridgeId = surface;
 
   // agent_undo / agent_redo / agent_history — always present (undo derives from
   // the reducer, so every doc surface gets working undo for free).
@@ -185,6 +188,7 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
       host.registerTool(
         { name, description, inputSchema: { type: "object", properties: properties as never, required, additionalProperties: false } },
         final as never,
+        { owner: bridgeId },
       ),
     );
   };
@@ -371,7 +375,7 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
   );
 
   return {
-    id: surface,
+    id: bridgeId,
     title: surface,
     dispose: () => {
       for (const d of disposers) d();
