@@ -11,6 +11,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Several forms on one host.** A second `registerFormBridge` on the same host
+  now JOINS the existing form tools instead of throwing. Every form tool takes an
+  optional `form` argument (the form's `adapter.id`). It may be omitted while
+  exactly one form is mounted. With two or more, a call without it is refused
+  with the mounted ids listed, and an id that is not mounted is always refused.
+  A new `form_list` tool returns `{ forms: [{ id, title, screenId, fields }] }`.
+  Each registration's `dispose()` removes only that form and settles only its
+  pending writes, with the 0.52.0 "outcome unknown" error. The tools are
+  withdrawn when the last form on the host is disposed. `pendingMode`, the
+  confirm gate, `agent` and the activity target stay per form. This is option A
+  of `docs/multi-form-hosts.md`, which now records what was built.
+  **Nothing to do for a single-form host:** every existing call shape works
+  unchanged. Hosts that gave each form its own MCP host to work around the
+  0.51.0 refusal can now mount them all on one host. Several `<BridgedForm>`s
+  may share one `server`.
+- Internal: `src/bridges/multi-instance.ts` (`joinInstanceRouter`), the shared
+  per-host router behind this. Only the form bridge uses it so far. The design
+  note says what adopting it would take for charts, grids and the other
+  bridges keyed by an adapter id.
+
+### Changed
+
+- The form tools are now registered once per host under the single owner
+  `"form-bridge"`, not `form:<adapter.id>`. An unrelated registrant claiming a
+  form tool name is still refused, and `Bridge.id` is still `form:<adapter.id>`.
+  Their descriptions no longer name a form, because they serve every mounted
+  form. `form_describe` still returns the form's `id` and `title`.
+- `registerFormBridge` throws if `adapter.id` is missing or empty, since it is
+  how agents pick the form. `adapter.id` was already a required `string` in the
+  type, so only code that bypassed the type is affected.
+- Registering a form whose `adapter.id` is already mounted replaces it, as a
+  remount did before. The earlier registration's `dispose()` leaves the newer
+  one in place.
+
 ## [0.52.0] - 2026-10-30
 
 ### Added

@@ -7,6 +7,8 @@ import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 import type { AgentTarget } from "../presence/types";
 import { emitActivity } from "../presence/registry";
 import { commit, hostErrorMessage } from "./host-commit";
+import { joinInstanceRouter, type InstanceRouter } from "./multi-instance";
+import type { CallToolResult } from "../mcp/types";
 
 /**
  * Field descriptor — what the host says about each form field. Mirrors the
@@ -140,13 +142,151 @@ export type FormBridgeOptions = {
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
 
 /**
- * registerFormBridge — wires schema-driven MCP access to a single form.
+ * The one registrant every form tool is held by. The tools are shared by all
+ * forms on a host, so the forms themselves are not separate registrants; an
+ * UNRELATED registrant claiming a form tool name is still refused (0.51.0).
+ */
+const FORM_TOOLS_OWNER = "form-bridge";
+
+/** Every form tool except `form_list` selects its form through this argument. */
+const FORM_ARG = {
+  type: "string",
+  description: "Id of the form to act on (see form_list). Optional while exactly one form is mounted; required when several are.",
+};
+
+type FormToolDef = {
+  name: string;
+  description: string;
+  properties: Record<string, unknown>;
+  required: string[];
+};
+
+/** The shared tool surface, registered once per host however many forms mount. */
+const FORM_TOOL_DEFS: FormToolDef[] = [
+  {
+    name: "form_describe",
+    description: "Describe a form — fields, types, options, required flags. Call this first to know what's fillable.",
+    properties: {},
+    required: [],
+  },
+  { name: "form_get_value", description: "Read a single field's current value.", properties: { field: { type: "string" } }, required: ["field"] },
+  { name: "form_get_values", description: "Read every field's current value as a JSON object.", properties: {}, required: [] },
+  {
+    name: "form_set_value",
+    description: "Set one field's value. The host's controlled state updates and the human sees the field change.",
+    properties: {
+      field: { type: "string" },
+      value: { description: "Value to set. Type depends on the field's `type`." },
+    },
+    required: ["field", "value"],
+  },
+  {
+    name: "form_set_values",
+    description: "Set multiple fields atomically. Pass a `values` object keyed by field name.",
+    properties: { values: { type: "object" } },
+    required: ["values"],
+  },
+  {
+    name: "form_focus",
+    description: "Move browser focus to a field (host-implemented). Useful before streaming text into it.",
+    properties: { field: { type: "string" } },
+    required: ["field"],
+  },
+  {
+    name: "form_submit",
+    description: "Submit the form. Host returns ok + values (or an error). In pendingMode this is staged for the human to confirm first.",
+    properties: {},
+    required: [],
+  },
+];
+
+type FormHandler = (args: JsonObject) => Promise<CallToolResult>;
+
+/** One mounted form: its adapter plus handlers built with ITS options. */
+type FormInstance = {
+  adapter: FormBridgeAdapter;
+  handlers: Record<string, FormHandler>;
+};
+
+/** Register the shared form tools on `host`, routing each call to one form. */
+function installFormTools(host: ToolHost, router: InstanceRouter<FormInstance>): () => void {
+  const disposers: Array<() => void> = [];
+  try {
+    for (const def of FORM_TOOL_DEFS) {
+      disposers.push(
+        host.registerTool(
+          {
+            name: def.name,
+            description: def.description,
+            inputSchema: {
+              type: "object",
+              properties: { form: FORM_ARG, ...def.properties } as any,
+              required: def.required,
+              additionalProperties: false,
+            },
+          },
+          async (args) => {
+            const target = router.resolve(args?.form);
+            if (!target.ok) return errorResult(target.error);
+            return target.instance.handlers[def.name](args);
+          },
+          { owner: FORM_TOOLS_OWNER },
+        ),
+      );
+    }
+    disposers.push(
+      host.registerTool(
+        {
+          name: "form_list",
+          description:
+            "List the forms mounted on this host — id, title, screen and fields. Pass an id as `form` to the other form tools when more than one is mounted.",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        },
+        () => {
+          try {
+            const forms = router.entries().map(([id, { adapter }]) => ({
+              id,
+              title: adapter.title,
+              screenId: adapter.screenId,
+              fields: adapter.getFields(),
+            }));
+            const text = forms
+              .map((f) => `${f.id}${f.title ? ` — ${f.title}` : ""}: ${f.fields.map((x) => x.name).join(", ") || "(no fields)"}`)
+              .join("\n");
+            return textResult(text || "(no forms)", { forms });
+          } catch (e) {
+            return errorResult(hostErrorMessage(e, "form_list failed."));
+          }
+        },
+        { owner: FORM_TOOLS_OWNER },
+      ),
+    );
+  } catch (e) {
+    // A name was held by an unrelated registrant: withdraw what did register,
+    // so a refused mount leaves nothing half-installed.
+    for (const d of disposers) d();
+    throw e;
+  }
+  return () => {
+    for (const d of disposers) d();
+  };
+}
+
+/**
+ * registerFormBridge — wires schema-driven MCP access to a form.
  *
- * ONE form bridge per host. The tool names (`form_set_value`, …) are not
- * scoped to the form id, so since 0.51.0 a second form bridge with a different
- * adapter id on the same host throws (the duplicate-registrant refusal); a
- * remount of the SAME form re-registers fine. For several forms, give each its
- * own host for now — see `docs/multi-form-hosts.md`.
+ * Several forms may share one host. The first form on a host registers the
+ * form tools; later ones JOIN them (since 0.53.0; before, a second form threw).
+ * Each tool takes an optional `form` argument naming the form by `adapter.id`:
+ * optional while exactly one form is mounted, so a single-form host behaves as
+ * it always did, and required once two or more are. `form_list` lists what is
+ * mounted. The returned `dispose()` removes only this form; the tools are
+ * withdrawn when the last form on the host is disposed. A second registration
+ * with an id that is already mounted replaces it (a remount); the earlier
+ * registration's `dispose()` then leaves the newer one in place.
+ *
+ * `pendingMode`, the confirm gate, the agent identity and the activity target
+ * stay per form. See `docs/multi-form-hosts.md`.
  */
 export function registerFormBridge(
   host: ToolHost,
@@ -155,15 +295,20 @@ export function registerFormBridge(
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const pendingMode = options.pendingMode ?? true;
-  const disposers: Array<() => void> = [];
-  // The bridge id is also its registrant identity on the host: the same bridge
-  // may re-register (a remount), a different one claiming a name is refused.
-  const bridgeId = `form:${adapter.id}`;
+  const formId = adapter?.id == null ? "" : String(adapter.id);
+  if (formId.trim() === "") {
+    throw new Error(
+      "registerFormBridge: adapter.id must be a non-empty string. It is how agents pick this form " +
+        "(the `form` argument) when several forms share a host.",
+    );
+  }
+  // Surfaces in activity logs; per form, as before.
+  const bridgeId = `form:${formId}`;
 
   // agent_undo / agent_redo / agent_history are registered whenever any bridge
   // mounts, so undo availability doesn't hinge on which bridges are co-present.
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
-  const formId = adapter.id;
+  const handlers: Record<string, FormHandler> = {};
 
   // Close handling. A host may dispose the bridge (the form unmounts) while a
   // write or a human confirm is still pending; its promise may then never
@@ -201,11 +346,10 @@ export function registerFormBridge(
       : adapter.title ?? formId,
   });
 
+  // Builds THIS form's handler for a shared tool. The tool definitions live in
+  // FORM_TOOL_DEFS; the router dispatches to these after resolving `form`.
   const reg = (
     name: string,
-    description: string,
-    properties: Record<string, unknown>,
-    required: string[],
     handler: (args: JsonObject) => Promise<any> | any,
     isMutation: boolean,
   ) => {
@@ -225,26 +369,13 @@ export function registerFormBridge(
           resolveTarget: ({ args }) => target(args),
         })
       : wrapped;
-    disposers.push(
-      host.registerTool(
-        {
-          name,
-          description,
-          inputSchema: { type: "object", properties: properties as any, required, additionalProperties: false },
-        },
-        final as any,
-        { owner: bridgeId },
-      ),
-    );
+    handlers[name] = final as FormHandler;
   };
 
   // ───────────── Read tools ─────────────
 
   reg(
     "form_describe",
-    `Describe the form "${formId}" — fields, types, options, required flags. Call this first to know what's fillable.`,
-    {},
-    [],
     () => {
       const fields = adapter.getFields();
       const text = fields
@@ -257,9 +388,6 @@ export function registerFormBridge(
 
   reg(
     "form_get_value",
-    "Read a single field's current value.",
-    { field: { type: "string" } },
-    ["field"],
     (args) => {
       const name = String(args.field ?? "");
       if (!adapter.getFields().find((f) => f.name === name)) {
@@ -273,9 +401,6 @@ export function registerFormBridge(
 
   reg(
     "form_get_values",
-    "Read every field's current value as a JSON object.",
-    {},
-    [],
     () => {
       const values = adapter.getValues();
       return textResult(JSON.stringify(values, null, 2), values);
@@ -287,12 +412,6 @@ export function registerFormBridge(
 
   reg(
     "form_set_value",
-    "Set one field's value. The host's controlled state updates and the human sees the field change.",
-    {
-      field: { type: "string" },
-      value: { description: "Value to set. Type depends on the field's `type`." },
-    },
-    ["field", "value"],
     async (args) => {
       const name = String(args.field ?? "");
       const fieldDef = adapter.getFields().find((f) => f.name === name);
@@ -309,9 +428,6 @@ export function registerFormBridge(
 
   reg(
     "form_set_values",
-    "Set multiple fields atomically. Pass a `values` object keyed by field name.",
-    { values: { type: "object" } },
-    ["values"],
     async (args) => {
       const values = (args.values && typeof args.values === "object") ? args.values as Record<string, unknown> : {};
       const fields = adapter.getFields();
@@ -374,9 +490,6 @@ export function registerFormBridge(
 
   reg(
     "form_focus",
-    "Move browser focus to a field (host-implemented). Useful before streaming text into it.",
-    { field: { type: "string" } },
-    ["field"],
     (args) => {
       const name = String(args.field ?? "");
       if (!adapter.focus) return errorResult("Host did not provide a focus implementation.");
@@ -391,9 +504,6 @@ export function registerFormBridge(
 
   reg(
     "form_submit",
-    "Submit the form. Host returns ok + values (or an error). In pendingMode this is staged for the human to confirm first.",
-    {},
-    [],
     async () => {
       if (!adapter.submit) return errorResult("Host did not provide a submit implementation.");
       // Trust-but-verify: a form submit is a human-visible / often-destructive
@@ -422,12 +532,23 @@ export function registerFormBridge(
     true,
   );
 
+  // Join the host's form router. The first form installs the shared tools; a
+  // refused install (a name held by an unrelated registrant) throws from here.
+  const membership = joinInstanceRouter<FormInstance>(
+    host,
+    { family: "form", argument: "form", listTool: "form_list", install: (router) => installFormTools(host, router) },
+    formId,
+    { adapter, handlers },
+  );
+
   return {
     id: bridgeId,
     title: adapter.title ?? formId,
     dispose: () => {
+      if (disposed) return;
       disposed = true;
-      for (const d of disposers) d();
+      // Only this form leaves; the tools go when the last form does.
+      membership.leave();
       // Settle every call still waiting on the host; see untilClosed.
       for (const close of [...onDispose]) close();
       onDispose.clear();

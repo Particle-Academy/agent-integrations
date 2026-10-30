@@ -193,9 +193,51 @@ argument: your write is the authority, so check your own version or ETag there
 and refuse with `{ ok: false, error: "Draft changed since you read it; re-read
 and retry", code: "stale" }`. The agent gets that sentence as the tool error.
 
-The form bridge pushes **no undo entries**, and **one form bridge per host**:
-since 0.51.0 a second form bridge with a different `id` on the same host throws,
-because the tool names are not scoped to the form. See
+The form bridge pushes **no undo entries**.
+
+### Several forms on one host
+
+Since 0.53.0, call `registerFormBridge` once per form on the **same** host. The
+first form registers the form tools; later forms join them, so the tool list
+stays the same eight tools however many forms are mounted:
+
+```ts
+import { registerFormBridge } from "@particle-academy/agent-integrations/bridges/forms";
+
+const billing = registerFormBridge(host, { adapter: billingAdapter });   // adapter.id === "billing"
+const shipping = registerFormBridge(host, {
+  adapter: shippingAdapter,                                              // adapter.id === "shipping"
+  pendingMode: false,                     // per form: shipping submits without a human confirm
+  agent: { id: "checkout-agent", name: "Checkout" },
+});
+
+// An agent then picks the form with the `form` argument:
+await host.callTool("form_list", {});                     // [{ id: "billing", … }, { id: "shipping", … }]
+await host.callTool("form_set_value", { form: "shipping", field: "street", value: "2 Ship Rd" });
+await host.callTool("form_set_value", { field: "street", value: "?" });
+// → error: 2 forms are mounted, so pass "form" with one of: "billing", "shipping". form_list describes them.
+
+shipping.dispose(); // removes only shipping; billing keeps working, and `form` is optional again
+billing.dispose();  // the last form: every form tool is withdrawn
+```
+
+- **`form`** is accepted by every form tool. With exactly one form mounted it is
+  optional, so a single-form host and its agent prompts work exactly as before.
+  With two or more, a call without it is refused with the mounted ids listed. An
+  id that is not mounted is always refused, never routed to another form.
+- **`form_list`** returns `{ forms: [{ id, title, screenId, fields }] }`.
+- Each form is identified by `adapter.id`, which must be a non-empty string.
+  Registering an id that is already mounted replaces it (a remount); the earlier
+  registration's `dispose()` then leaves the newer one in place.
+- `pendingMode`, `adapter.confirm`, `agent` and the presence target stay **per
+  form**; activity names `<formId>:<field>` on the form's own `screenId`.
+- `dispose()` settles only that form's pending writes, with the "outcome
+  unknown" error described above.
+- The tools are held by one registrant (`"form-bridge"`), so an unrelated
+  registrant claiming a form tool name is still refused.
+
+`<BridgedForm>` needs no change: several of them may now share one `server`.
+Background and the alternatives considered:
 [`docs/multi-form-hosts.md`](./docs/multi-form-hosts.md).
 
 `registerScreenDocBridge` edits the nodes inside one screen and exports its
