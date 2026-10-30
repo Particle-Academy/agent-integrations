@@ -140,6 +140,64 @@ registerScreensBridge(host, {
 The screens bridge pushes **no undo entries**: `agent_undo` cannot revert a
 screens tool. Keep your own history if you need to.
 
+### Form bridge: acknowledge after the host accepts the write
+
+`setValue` and `setValues` on `FormBridgeAdapter` may return `void` **or** a
+Promise (`FormAdapterCommit`). A sync `void` setter behaves exactly as it always
+has. When the host's write is authoritative (a persisted draft, a server that
+can refuse it or report it stale), return a Promise and the bridge waits for it:
+
+- `form_set_value` / `form_set_values` report success, and emit their
+  `AgentActivity` event, only after the promise resolves to `void` or
+  `{ ok: true }`. Your `getValue` / `getValues` should return the new value by
+  then, so a read straight after a success sees it.
+- A rejection, or a resolved `{ ok: false, error }` (`FormAdapterResult`), is
+  **that call's** error result, carrying the host's `error` text (its message
+  only, never a stack), and emits **no** activity. Leave your state unchanged
+  when you refuse.
+- Without `setValues`, `form_set_values` awaits `setValue` once per field, in
+  order, and stops at the first refusal. Earlier fields stay committed (that
+  path is not atomic): the error names them, `structuredContent` carries
+  `{ committed, failed, notAttempted }`, and one activity event is emitted for
+  the committed part. Provide `setValues` if the batch must be all-or-nothing.
+- If you `dispose()` the bridge (the form closes) while a write, a confirm or a
+  submit is pending, the call settles at once as an error saying the outcome is
+  unknown, emits no activity, and a later settle is ignored. A submit whose
+  human confirm was still pending is never sent.
+
+```ts
+import {
+  registerFormBridge,
+  type FormAdapterResult,
+} from "@particle-academy/agent-integrations/bridges/forms";
+
+registerFormBridge(host, {
+  adapter: {
+    id: "invoice-draft",
+    getFields: () => fields,
+    getValue: (name) => draft.values[name],
+    getValues: () => ({ ...draft.values }),
+    // Resolve once the server has accepted it; refuse with a reason the agent can act on.
+    setValue: async (name, value): Promise<FormAdapterResult> => {
+      const res = await api.patch(`/drafts/${draft.id}`, { [name]: value, version: draft.version });
+      if (!res.ok) return { ok: false, error: res.reason, code: res.status === 409 ? "stale" : undefined };
+      draft = res.draft; // update state BEFORE resolving
+      return { ok: true };
+    },
+  },
+});
+```
+
+**Staleness is the host's call.** The bridge has no expected-value / version
+argument: your write is the authority, so check your own version or ETag there
+and refuse with `{ ok: false, error: "Draft changed since you read it; re-read
+and retry", code: "stale" }`. The agent gets that sentence as the tool error.
+
+The form bridge pushes **no undo entries**, and **one form bridge per host**:
+since 0.51.0 a second form bridge with a different `id` on the same host throws,
+because the tool names are not scoped to the form. See
+[`docs/multi-form-hosts.md`](./docs/multi-form-hosts.md).
+
 `registerScreenDocBridge` edits the nodes inside one screen and exports its
 `DocAdapter`, `ScreenDocBridgeOptions`, `ScreenDocNode` and `ScreenDocOp` types
 from `@particle-academy/agent-integrations/bridges/screen-doc`. The existing

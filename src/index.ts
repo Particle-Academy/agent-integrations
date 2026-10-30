@@ -65,6 +65,9 @@ export {
   type FormBridgeAdapter,
   type FormBridgeOptions,
   type FormFieldDescriptor,
+  type FormAdapterResult,
+  type FormAdapterCommit,
+  type FormConfirmRequest,
 } from "./bridges/forms";
 export {
   registerSheetsBridge,

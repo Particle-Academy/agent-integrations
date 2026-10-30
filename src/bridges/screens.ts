@@ -6,6 +6,7 @@ import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 import { emitActivity } from "../presence/registry";
 import type { AgentTarget } from "../presence/types";
+import { commit, hostErrorMessage } from "./host-commit";
 
 /**
  * Loose snapshot of a screen — what's in fancy-screens' ScreenMeta plus
@@ -93,41 +94,6 @@ export type ScreensBridgeOptions = {
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
-
-/**
- * The agent-facing text for a host failure. Only the message is used — never
- * `stack`, which carries file paths — matching the other bridges. A message
- * that itself embeds stack frames is cut at the first frame. A non-Error
- * rejection (a plain object, a response) has no reliable message, so it gets
- * the fallback rather than "[object Object]".
- */
-function hostErrorMessage(e: unknown, fallback: string): string {
-  let msg: string | undefined;
-  if (e instanceof Error) msg = e.message;
-  else if (typeof e === "string") msg = e;
-  else if (e && typeof e === "object" && typeof (e as { message?: unknown }).message === "string") {
-    msg = (e as { message: string }).message;
-  }
-  const firstFrame = msg ? msg.search(/\n\s+at\s/) : -1;
-  if (msg && firstFrame >= 0) msg = msg.slice(0, firstFrame);
-  msg = msg?.trim();
-  return msg ? msg : fallback;
-}
-
-type CommitOutcome = { ok: true } | { ok: false; error: string };
-
-/** Run one adapter commit, await it, and normalise every way it can fail. */
-async function commit(run: () => ScreensAdapterCommit, fallback: string): Promise<CommitOutcome> {
-  try {
-    const r = await run();
-    if (r && typeof r === "object" && r.ok === false) {
-      return { ok: false, error: hostErrorMessage(r.error, fallback) };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: hostErrorMessage(e, fallback) };
-  }
-}
 
 /**
  * registerScreensBridge — top-level navigation bridge so agents can

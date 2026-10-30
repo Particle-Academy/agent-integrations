@@ -11,6 +11,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Form bridge waits for the host to accept a write.** `setValue` and
+  `setValues` on `FormBridgeAdapter` may now return a Promise resolving to
+  `void` or the new exported `FormAdapterResult`
+  (`{ ok: true } | { ok: false; error; code? }`); the return type is the new
+  exported `FormAdapterCommit`. The bridge awaits it: `form_set_value` and
+  `form_set_values` report success, and emit their `AgentActivity` event, only
+  after the host accepts. A rejection or `{ ok: false }` is that call's error
+  result with the host's message (never a stack) and emits no activity. Use
+  `{ ok: false, code: "stale" }` to refuse a stale draft; the bridge adds no
+  expected-value argument because the host's write is the authority.
+  **Nothing to do:** sync `void` setters behave exactly as before.
+- Without `setValues`, `form_set_values` awaits `setValue` once per field and
+  stops at the first refusal. The error names the fields already committed,
+  `structuredContent` carries `{ committed, failed, notAttempted }`, and one
+  activity event is emitted for the committed fields.
+- `FormAdapterResult`, `FormAdapterCommit` and `FormConfirmRequest` are now
+  exported from the package root as well as `…/bridges/forms`.
+- `docs/multi-form-hosts.md`: a design note on supporting several forms on one
+  host. It is a proposal only; today the supported model is one form bridge per
+  host.
+
+### Fixed
+
+- **Form bridge reported success before an async host had accepted the write.**
+  The setter was typed `void` and called without `await`, so a host with a
+  gated or refusable write got "success" and an activity event first, and a
+  later refusal was never the tool call's result.
+- **Disposing a form bridge mid-call no longer leaves the call hanging.** A
+  write, confirm or submit still pending when the bridge is disposed now settles
+  at once as an error saying the outcome is unknown, with no activity. A late
+  settle from the host is ignored, and a late rejection is never unhandled. A
+  submit whose human confirm was pending when the form closed is never sent.
+- The `registerFormBridge` doc comment still said a host could register several
+  form bridges by giving each a distinct id. That has not worked since 0.51.0.
+  It now says one form bridge per host.
+
 ## [0.51.0] - 2026-10-27
 
 ### Changed
