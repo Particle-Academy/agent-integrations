@@ -28,6 +28,16 @@ import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 import type { AgentTarget as FlAgentTarget } from "../presence/types";
+import { commit as runCommit } from "./host-commit";
+import type { CallToolResult } from "../mcp/types";
+
+/**
+ * The live flow bridge per host. A second `registerFlowBridge` on the same host
+ * replaces the first's tools (same owner); this lets it also settle the first
+ * one's pending commits, whose results would otherwise land for a surface that
+ * is no longer the one the agent is talking to.
+ */
+const liveFlowBridge = new WeakMap<ToolHost, () => void>();
 
 /**
  * Adapter the host provides — same shape as the editor's local state plus
@@ -51,7 +61,79 @@ export type FlowBridgeAdapter = {
    * return false to decline. Wire it to a human control.
    */
   confirm?: (request: FlowConfirmRequest) => Promise<boolean> | boolean;
+  /**
+   * Optional (since 0.54.0): commit ONE whole graph operation, authoritatively.
+   * When present, every mutating tool (`flow_add_node`, `flow_update_node`,
+   * `flow_delete_node`, `flow_connect`, `flow_disconnect`, and
+   * `flow_set_node_status` when no `setNodeStatus` is wired) builds a
+   * {@link FlowGraphOp} and hands it here INSTEAD of calling
+   * `setNodes` / `setEdges`. The bridge waits: the tool reports success, and
+   * emits its AgentActivity event, only once this resolves to `void` or
+   * `{ ok: true }`. A rejection, a throw, or `{ ok: false, error, code? }` is
+   * that call's error result, with no activity.
+   *
+   * Atomicity is yours: `remove_node` carries the node AND the ids of the edges
+   * it removes, and must be applied as one. Check `op.revision` against your
+   * current graph and refuse with `{ ok: false, code: "stale" }` if it moved;
+   * the op was computed from the graph at call time and is not recomputed.
+   * Update the state `getNodes` / `getEdges` return BEFORE resolving, so a read
+   * straight after a success sees it.
+   *
+   * When absent, the bridge calls `setNodes` / `setEdges` exactly as before
+   * (fire-and-forget).
+   */
+  commit?: (op: FlowGraphOp) => FlowAdapterCommit;
+  /**
+   * Optional (since 0.54.0): the revision of the graph `getNodes` / `getEdges`
+   * currently return (a counter, an ETag, a version). Read at the moment the
+   * bridge computes an op and carried as `op.revision`, so `commit` can refuse
+   * an op computed against a graph that has since moved.
+   */
+  getRevision?: () => string | number;
 };
+
+/**
+ * What `commit` may return or resolve to, to acknowledge (or refuse) a graph
+ * operation. Same shape as `FormAdapterResult`. `error` is shown to the agent
+ * verbatim (message only; a stack is cut), so keep it a sentence the agent can
+ * act on ("Graph changed since you read it; re-read and retry"). `code` (e.g.
+ * `"stale"`, `"forbidden"`) is returned alongside it in the error result's
+ * `structuredContent` as `{ ok: false, op, error, code }`.
+ */
+export type FlowAdapterResult = { ok: true } | { ok: false; error: string; code?: string };
+
+/**
+ * Return type of `commit`. `void` or `{ ok: true }` (sync or resolved) means
+ * accepted. If the bridge is disposed, or replaced by another flow bridge on
+ * the same host, while a commit is pending, the call settles at once as an
+ * error saying the outcome is unknown, and a later settle is ignored.
+ */
+export type FlowAdapterCommit = void | FlowAdapterResult | Promise<void | FlowAdapterResult>;
+
+/** Who asked for an op, and through which tool. Carried on every {@link FlowGraphOp}. */
+export type FlowGraphOpBase = {
+  /** Revision from `adapter.getRevision()` when the op was computed; undefined without one. */
+  revision?: string | number;
+  /** The acting agent (the bridge's `agent` option). */
+  agent: { id: string; name?: string; color?: string };
+  /** The MCP tool that produced the op. */
+  tool: string;
+};
+
+/**
+ * ONE whole graph operation, as handed to `adapter.commit`. Discriminated on
+ * `op`. Every node / edge is the complete record the bridge would have written.
+ */
+export type FlowGraphOp = FlowGraphOpBase & FlowGraphOpBody;
+
+/** The operation-specific half of a {@link FlowGraphOp}. */
+export type FlowGraphOpBody =
+  | { op: "add_node"; node: FlowNode }
+  | { op: "update_node"; id: string; node: FlowNode; previous: FlowNode }
+  | { op: "remove_node"; id: string; node: FlowNode; edgeIds: string[] }
+  | { op: "connect"; edge: FlowEdge }
+  | { op: "disconnect"; id: string; edge: FlowEdge }
+  | { op: "set_node_status"; id: string; status: NodeRunStatus; text?: string };
 
 /** What a staged (pendingMode) flow action asks a human to approve. */
 export type FlowConfirmRequest =
@@ -141,6 +223,67 @@ export function registerFlowBridge(
   // agent_undo / agent_redo / agent_history are registered whenever any bridge
   // mounts, so undo availability doesn't hinge on which bridges are co-present.
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
+
+  // ── Awaited commits (0.54.0) ──
+  // Close handling, as in the form bridge (0.52.0). The bridge may be disposed,
+  // or replaced by another flow bridge on this host, while a commit or a human
+  // confirm is pending; its promise may then never settle. Every awaited host
+  // call on the commit path is raced against close, so the tool call settles at
+  // once instead of hanging, and a late settle is ignored (no activity).
+  let closed = false;
+  const onClose = new Set<() => void>();
+  const CLOSED: unique symbol = Symbol("flow-closed");
+  const untilClosed = <T>(p: Promise<T>): Promise<T | typeof CLOSED> => {
+    if (closed) {
+      p.catch(() => {}); // a late rejection must never be unhandled
+      return Promise.resolve(CLOSED);
+    }
+    return new Promise<T | typeof CLOSED>((resolve, reject) => {
+      const close = () => {
+        p.catch(() => {});
+        resolve(CLOSED);
+      };
+      onClose.add(close);
+      p.then(
+        (v) => { onClose.delete(close); resolve(v); },
+        (e) => { onClose.delete(close); reject(e); },
+      );
+    });
+  };
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    for (const c of [...onClose]) c();
+    onClose.clear();
+  };
+  const closedUnknown = (tool: string) =>
+    errorResult(
+      `The flow editor was closed or replaced before the host confirmed ${tool}, so whether it was applied is unknown. ` +
+        "Do not assume it was. Read the graph back (flow_get_state) before retrying.",
+    );
+  const revisionNow = () => adapter.getRevision?.();
+
+  /**
+   * Hand ONE whole op to `adapter.commit` and wait. Returns null when the host
+   * accepted it, or the tool's error result. Only called when `commit` exists.
+   */
+  const commitOp = async (
+    tool: string,
+    revision: string | number | undefined,
+    body: FlowGraphOpBody,
+  ): Promise<CallToolResult | null> => {
+    const commitFn = adapter.commit!;
+    const op = { ...body, revision, agent: { id: agent.id, name: agent.name, color: agent.color }, tool } as FlowGraphOp;
+    const done = await untilClosed(runCommit(() => commitFn(op), `Host refused ${tool}.`));
+    if (done === CLOSED) return closedUnknown(tool);
+    if (!done.ok) {
+      return {
+        ...errorResult(done.error),
+        structuredContent: { ok: false, op: op.op, error: done.error, ...(done.code ? { code: done.code } : {}) },
+      };
+    }
+    return null;
+  };
 
   // Activity-target resolver shared by every mutation tool. Pulls element id
   // from the freshly-added node/edge (structuredContent), falling back to args.
@@ -301,6 +444,8 @@ export function registerFlowBridge(
     },
     ["kind", "label", "x", "y"],
     async (args) => {
+      // Add depends on no prior graph state; the revision is read at call time.
+      const revision = revisionNow();
       const kindName = str(args.kind);
       // Resolve the kind dynamically from the registry. Falls back to the
       // legacy 6-pack so old graphs keep working.
@@ -349,7 +494,12 @@ export function registerFlowBridge(
           ...(kindName === "note" && args.body ? { body: str(args.body) } : {}),
         } as any,
       };
-      adapter.setNodes((all) => [...all, node]);
+      if (adapter.commit) {
+        const refused = await commitOp("flow_add_node", revision, { op: "add_node", node });
+        if (refused) return refused;
+      } else {
+        adapter.setNodes((all) => [...all, node]);
+      }
       return textResult(
         `Added ${kindName} ${id} ("${str(args.label)}")${configWarnings.length ? ` — config warnings: ${configWarnings.join("; ")}` : ""}`,
         node,
@@ -374,6 +524,8 @@ export function registerFlowBridge(
       const id = str(args.id);
       // Read first so config validation can veto BEFORE any mutation applies.
       const current = adapter.getNodes().find((n) => n.id === id);
+      // Read with `current`: the op below is computed from this graph.
+      const revision = revisionNow();
       if (!current) return errorResult(`No node with id ${id}`);
 
       const mergedConfig =
@@ -414,7 +566,12 @@ export function registerFlowBridge(
           ...(args.config && typeof args.config === "object" ? { config: mergedConfig } : {}),
         },
       };
-      adapter.setNodes((all) => all.map((n) => (n.id === id ? updated : n)));
+      if (adapter.commit) {
+        const refused = await commitOp("flow_update_node", revision, { op: "update_node", id, node: updated, previous: current });
+        if (refused) return refused;
+      } else {
+        adapter.setNodes((all) => all.map((n) => (n.id === id ? updated : n)));
+      }
       return textResult(
         `Updated node ${id}${configWarnings.length ? ` — config warnings: ${configWarnings.join("; ")}` : ""}`,
         updated,
@@ -436,6 +593,28 @@ export function registerFlowBridge(
       const target = adapter.getNodes().find((n) => n.id === id);
       if (!target) return errorResult(`No node with id ${id}`);
       // Destructive → stage for human confirmation when pendingMode is on.
+      if (adapter.commit) {
+        if (pendingMode && adapter.confirm) {
+          const confirm = adapter.confirm;
+          const ok = await untilClosed(
+            Promise.resolve().then(() => confirm({ action: "delete_node", nodeId: id, label: target.data?.label })),
+          );
+          // Never delete from an editor that is no longer the one on screen.
+          if (ok === CLOSED) {
+            return errorResult(`The flow editor was closed before the delete of node ${id} was confirmed. Nothing was deleted.`);
+          }
+          if (!ok) return textResult(`Delete of node ${id} was declined by the human.`);
+        }
+        // Compute the op AFTER the human decided, from the graph as it is now:
+        // ONE op carrying the node and every edge it takes with it.
+        const node = adapter.getNodes().find((n) => n.id === id);
+        const revision = revisionNow();
+        if (!node) return errorResult(`No node with id ${id}`);
+        const edgeIds = adapter.getEdges().filter((e) => e.source === id || e.target === id).map((e) => e.id);
+        const refused = await commitOp("flow_delete_node", revision, { op: "remove_node", id, node, edgeIds });
+        if (refused) return refused;
+        return textResult(`Deleted node ${id}`);
+      }
       if (pendingMode && adapter.confirm) {
         const ok = await adapter.confirm({ action: "delete_node", nodeId: id, label: target.data?.label });
         if (!ok) return textResult(`Delete of node ${id} was declined by the human.`);
@@ -466,6 +645,7 @@ export function registerFlowBridge(
       const sourceHandle = args.sourceHandle ? str(args.sourceHandle) : undefined;
       const targetHandle = args.targetHandle ? str(args.targetHandle) : undefined;
       const all = adapter.getNodes();
+      const revision = revisionNow();
       if (!all.find((n) => n.id === source)) return errorResult(`No source node ${source}`);
       if (!all.find((n) => n.id === target)) return errorResult(`No target node ${target}`);
 
@@ -487,7 +667,12 @@ export function registerFlowBridge(
         ...(targetHandle ? { targetHandle } : {}),
         ...(args.label ? { label: str(args.label) } : {}),
       };
-      adapter.setEdges((existing) => [...existing, edge]);
+      if (adapter.commit) {
+        const refused = await commitOp("flow_connect", revision, { op: "connect", edge });
+        if (refused) return refused;
+      } else {
+        adapter.setEdges((existing) => [...existing, edge]);
+      }
       return textResult(`Connected ${source}${edge.sourceHandle ? `:${edge.sourceHandle}` : ""} → ${target}${edge.targetHandle ? `:${edge.targetHandle}` : ""}`, edge);
     },
     flTarget,
@@ -498,10 +683,17 @@ export function registerFlowBridge(
     "Remove an edge by id.",
     { id: { type: "string" } },
     ["id"],
-    (args) => {
+    async (args) => {
       const id = str(args.id);
-      if (!adapter.getEdges().some((e) => e.id === id)) {
+      const edge = adapter.getEdges().find((e) => e.id === id);
+      const revision = revisionNow();
+      if (!edge) {
         return errorResult(`No edge ${id}`);
+      }
+      if (adapter.commit) {
+        const refused = await commitOp("flow_disconnect", revision, { op: "disconnect", id, edge });
+        if (refused) return refused;
+        return textResult(`Disconnected ${id}`);
       }
       adapter.setEdges((all) => all.filter((e) => e.id !== id));
       return textResult(`Disconnected ${id}`);
@@ -520,12 +712,25 @@ export function registerFlowBridge(
       text: { type: "string" },
     },
     ["id", "status"],
-    (args) => {
+    async (args) => {
       const id = str(args.id);
       const status = str(args.status) as NodeRunStatus;
       const text = args.text !== undefined ? str(args.text) : undefined;
       if (adapter.setNodeStatus) {
         adapter.setNodeStatus(id, status, text);
+      } else if (adapter.commit) {
+        // No dedicated status channel: the badge lives in node data, so it is
+        // a graph write and goes through commit like any other.
+        const exists = adapter.getNodes().some((n) => n.id === id);
+        const revision = revisionNow();
+        if (!exists) return errorResult(`No node with id ${id}`);
+        const refused = await commitOp("flow_set_node_status", revision, {
+          op: "set_node_status",
+          id,
+          status,
+          ...(text !== undefined ? { text } : {}),
+        });
+        if (refused) return refused;
       } else {
         // Fall back to mutating the node data directly.
         let found = false;
@@ -573,11 +778,19 @@ export function registerFlowBridge(
     flTarget,
   );
 
+  // Every tool registered: this bridge is now the host's live flow bridge. A
+  // predecessor it replaced settles its pending commits as "outcome unknown".
+  liveFlowBridge.get(host)?.();
+  liveFlowBridge.set(host, close);
+
   return {
     id: bridgeId,
     title: "Flow",
     dispose: () => {
       for (const d of disposers) d();
+      if (liveFlowBridge.get(host) === close) liveFlowBridge.delete(host);
+      // Settle every call still waiting on the host; see untilClosed.
+      close();
     },
   };
 }

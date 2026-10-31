@@ -1,6 +1,7 @@
 /**
  * Shared plumbing for bridges whose adapter mutators may commit asynchronously
- * (screens since 0.49.0, forms since 0.52.0). Internal: not an entry point.
+ * (screens since 0.49.0, forms since 0.52.0, flow since 0.54.0). Internal: not
+ * an entry point.
  *
  * The contract: a mutator returns `void` (sync, unchanged behaviour) or a
  * Promise resolving to `void` or `{ ok: true } | { ok: false; error }`. The
@@ -10,7 +11,7 @@
 /** What an async mutator may resolve to, to acknowledge or refuse a commit. */
 export type HostCommitResult = { ok: true } | { ok: false; error: string; code?: string };
 
-export type CommitOutcome = { ok: true } | { ok: false; error: string };
+export type CommitOutcome = { ok: true } | { ok: false; error: string; code?: string };
 
 /**
  * The agent-facing text for a host failure. Only the message is used — never
@@ -34,13 +35,18 @@ export function hostErrorMessage(e: unknown, fallback: string): string {
 
 /** Run one adapter commit, await it, and normalise every way it can fail. Never rejects. */
 export async function commit(
-  run: () => void | Promise<void | HostCommitResult>,
+  run: () => void | HostCommitResult | Promise<void | HostCommitResult>,
   fallback: string,
 ): Promise<CommitOutcome> {
   try {
     const r = await run();
     if (r && typeof r === "object" && r.ok === false) {
-      return { ok: false, error: hostErrorMessage(r.error, fallback) };
+      // `code` is passed through for bridges that surface it (flow, 0.54.0).
+      return {
+        ok: false,
+        error: hostErrorMessage(r.error, fallback),
+        ...(typeof r.code === "string" ? { code: r.code } : {}),
+      };
     }
     return { ok: true };
   } catch (e) {

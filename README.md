@@ -240,6 +240,63 @@ billing.dispose();  // the last form: every form tool is withdrawn
 Background and the alternatives considered:
 [`docs/multi-form-hosts.md`](./docs/multi-form-hosts.md).
 
+### Flow bridge: awaited, atomic graph commits
+
+Since 0.54.0, `FlowBridgeAdapter` takes an optional `commit(op)`. Without it,
+nothing changes: the flow tools call `setNodes` / `setEdges` and report success
+straight away, as before. Wire it when your graph write is authoritative (a
+persisted graph, a server that can refuse a write or report it stale):
+
+- Every mutating tool (`flow_add_node`, `flow_update_node`, `flow_delete_node`,
+  `flow_connect`, `flow_disconnect`, and `flow_set_node_status` when no
+  `setNodeStatus` is wired) builds **one** `FlowGraphOp` and awaits `commit`
+  instead of calling the setters. It reports success, and emits its
+  `AgentActivity` event, only once `commit` returns or resolves to `void` or
+  `{ ok: true }`.
+- A rejection, a throw, or `{ ok: false, error, code? }` (`FlowAdapterResult`)
+  is **that call's** error: the text is your `error` (message only, never a
+  stack), `structuredContent` is `{ ok: false, op, error, code? }`, and no
+  activity is emitted.
+- `remove_node` carries the node **and** the ids of every edge it removes. Apply
+  it as one write; the bridge never splits it.
+- Each op carries `revision` (from your optional `getRevision()`, read when the
+  op was computed), the acting `agent` and the `tool`. The op is not recomputed
+  after the await, so **check `revision` and refuse with `code: "stale"`** if
+  your graph has moved.
+- Validation (`validateConfig`, `validateConnections`, unknown ids) and the
+  `pendingMode` confirm run **before** `commit`. A refused or declined call
+  never reaches it.
+- If the bridge is disposed, or another flow bridge is registered on the same
+  host, while a commit or a delete confirm is pending, the call settles at once
+  as an error saying the outcome is unknown, and a later result is ignored.
+
+```ts
+import {
+  registerFlowBridge,
+  type FlowGraphOp,
+  type FlowAdapterResult,
+} from "@particle-academy/agent-integrations/bridges/flow";
+
+registerFlowBridge(host, {
+  adapter: {
+    getNodes: () => graph.nodes,
+    getEdges: () => graph.edges,
+    setNodes, // still required by the type; unused once commit is wired
+    setEdges,
+    getRevision: () => graph.version,
+    commit: async (op: FlowGraphOp): Promise<FlowAdapterResult> => {
+      const res = await api.post(`/flows/${flowId}/ops`, { op, baseVersion: op.revision });
+      if (!res.ok) return { ok: false, error: res.reason, code: res.status === 409 ? "stale" : undefined };
+      graph = res.graph; // update state BEFORE resolving
+      return { ok: true };
+    },
+  },
+});
+```
+
+The flow bridge pushes **no undo entries**, with or without `commit`. As built:
+[`docs/flow-awaited-commits.md`](./docs/flow-awaited-commits.md).
+
 `registerScreenDocBridge` edits the nodes inside one screen and exports its
 `DocAdapter`, `ScreenDocBridgeOptions`, `ScreenDocNode` and `ScreenDocOp` types
 from `@particle-academy/agent-integrations/bridges/screen-doc`. The existing

@@ -11,6 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-10-31
+
+### Added
+
+- **Flow bridge: awaited, atomic graph commits.** `FlowBridgeAdapter` takes an
+  optional `commit(op: FlowGraphOp)`, returning `void`, `FlowAdapterResult`
+  (`{ ok: true } | { ok: false; error; code? }`, the same shape as
+  `FormAdapterResult`) or a Promise of either. When it is wired, every mutating
+  tool (`flow_add_node`, `flow_update_node`, `flow_delete_node`, `flow_connect`,
+  `flow_disconnect`, and `flow_set_node_status` when no `setNodeStatus` is
+  wired) computes ONE op and awaits `commit` instead of calling
+  `setNodes` / `setEdges`. Success and the `AgentActivity` event come only after
+  the host accepts. A rejection, a throw or `{ ok: false }` is that call's error,
+  with `structuredContent` `{ ok: false, op, error, code? }`, and no activity.
+  `remove_node` carries the node and every edge id it removes, as one op.
+  Validation and the `pendingMode` confirm run before `commit`.
+- Each op carries `revision` (from the new optional `adapter.getRevision()`,
+  read when the op was computed), the acting `agent` and the `tool`. The op is
+  not recomputed after the await, so the adapter should refuse a stale one with
+  `code: "stale"`.
+- A call whose commit (or delete confirm) is pending when the bridge is disposed
+  or replaced by another flow bridge on the same host settles at once as an
+  "outcome unknown" error, and a late result is ignored.
+- New exported types on `…/bridges/flow`: `FlowGraphOp`, `FlowGraphOpBase`,
+  `FlowGraphOpBody`, `FlowAdapterResult`, `FlowAdapterCommit`.
+- `docs/flow-awaited-commits.md` records what was built.
+
+**Additive; nothing to do.** Without `commit`, the flow bridge behaves exactly
+as in 0.53.0. To opt in, add `commit` (and ideally `getRevision`) to your flow
+adapter; see the README section "Flow bridge: awaited, atomic graph commits".
+The flow bridge still records no undo entries.
+
 ## [0.53.0] - 2026-10-30
 
 ### Added
