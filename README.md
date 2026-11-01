@@ -294,6 +294,31 @@ registerFlowBridge(host, {
 });
 ```
 
+**Runs and cancels (since 0.55.0)** follow the same contract. `flow_run` and
+`flow_cancel` await `adapter.run` / `adapter.cancel`:
+
+- `cancel` may return `void`, `FlowAdapterResult` or a Promise of either; `run`
+  may return those or a legacy `RunResult`, which is reported as before ("Run
+  complete" / "Run failed: …"). Only `void` / `{ ok: true }` (or a `RunResult`)
+  counts as success and emits activity. `{ ok: false }`, a rejection or a throw
+  is the call's error, `structuredContent` `{ ok: false, op: "run" | "cancel",
+  error, code? }`, with no activity.
+- Each gets a `FlowRunContext` as its last argument — `{ tool, agent,
+  revision?, runId? }`, captured when the tool was called and not recomputed —
+  so the host can check authority and staleness: `run(executors, context)`,
+  `cancel(context)`. `runId` is `flow_cancel`'s optional argument.
+- A run, cancel or run confirm pending when the bridge is disposed or replaced
+  settles at once as "outcome unknown", and a late result is ignored. **Closing
+  the bridge never calls `cancel`**: UI disposal is not a backend cancellation,
+  so a durable run keeps going until your own code stops it.
+
+```ts
+cancel: async (context) => {
+  const res = await api.post(`/runs/${context?.runId ?? currentRunId}/cancel`, { as: context?.agent.id });
+  return res.ok ? { ok: true } : { ok: false, error: res.reason, code: res.code };
+},
+```
+
 The flow bridge pushes **no undo entries**, with or without `commit`. As built:
 [`docs/flow-awaited-commits.md`](./docs/flow-awaited-commits.md).
 

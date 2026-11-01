@@ -11,6 +11,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-11-01
+
+### Added
+
+- **Flow bridge: `flow_run` and `flow_cancel` are awaited, refusable and
+  fenced**, the run/cancel counterpart of 0.54.0's graph commits.
+  `adapter.cancel` may now return `void`, `FlowAdapterResult`
+  (`{ ok: true } | { ok: false; error; code? }`) or a Promise of either, the
+  same as `commit`. `adapter.run` may return that too, as well as the legacy
+  `RunResult`. Success and the `AgentActivity` event come only after `void` /
+  `{ ok: true }` (or a legacy `RunResult`, reported as before). `{ ok: false }`,
+  a rejection or a throw is the tool's error, with `structuredContent`
+  `{ ok: false, op: "run" | "cancel", error, code? }` and no activity.
+- If the bridge is disposed, or replaced by another flow bridge on the same
+  host, while a run, a cancel or a `pendingMode` run confirm is pending, the
+  call settles at once as an error, with the same "outcome unknown" wording as
+  0.54.0's commit fence. A late result emits nothing, and a late rejection is
+  swallowed. A run whose confirm was pending at close is never started.
+  **Disposing or replacing the bridge never calls `adapter.cancel`:** closing
+  the UI says nothing about whether a backend run should stop.
+- Both calls get a new optional last argument, `FlowRunContext`
+  (`{ tool, agent, revision?, runId? }`), captured when the tool was called and
+  never recomputed after an await: `run(executors, context)`,
+  `cancel(context)`. `revision` comes from `getRevision()`; `runId` from a new
+  optional `runId` argument on `flow_cancel`.
+- New exported types on `…/bridges/flow`: `FlowRunContext`, `FlowAdapterRun`.
+
+### Changed
+
+- **`flow_cancel` now waits for `adapter.cancel` to settle before reporting
+  "Run cancelled".** Up to 0.54.1 it called `cancel()` without waiting and
+  claimed success at once. For a synchronous `void` cancel nothing visible
+  changes. A cancel that returns a Promise now delays the success until it
+  settles, and a rejection is now reported instead of being lost.
+- A `run` that rejects or throws now returns its message cut at the first stack
+  frame, with `structuredContent` `{ ok: false, op: "run", error }`, matching
+  the commit path. Before, the raw message was returned with no structured
+  content.
+
+**Consumer action: none.** A `run` returning `Promise<RunResult>` and a
+`cancel` returning `void` keep working unchanged. To opt in, return
+`FlowAdapterResult` from either and read the `context` argument; see the README
+section "Flow bridge: awaited, atomic graph commits".
+
 ## [0.54.1] - 2026-11-01
 
 ### Fixed

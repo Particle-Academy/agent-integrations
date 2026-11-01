@@ -28,7 +28,7 @@ import type { Bridge } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 import type { AgentTarget as FlAgentTarget } from "../presence/types";
-import { commit as runCommit } from "./host-commit";
+import { commit as runCommit, hostErrorMessage } from "./host-commit";
 import type { CallToolResult } from "../mcp/types";
 
 /**
@@ -48,10 +48,24 @@ export type FlowBridgeAdapter = {
   setNodes: (next: FlowNode[] | ((prev: FlowNode[]) => FlowNode[])) => void;
   getEdges: () => FlowEdge[];
   setEdges: (next: FlowEdge[] | ((prev: FlowEdge[]) => FlowEdge[])) => void;
-  /** Optional: invoke runFlow with the host's executor registry. */
-  run?: (executors?: ExecutorRegistry) => Promise<RunResult>;
-  /** Optional: cancel the in-flight run. */
-  cancel?: () => void;
+  /**
+   * Optional: invoke runFlow with the host's executor registry. `flow_run`
+   * awaits it. A legacy `RunResult` (it has `outputs`) is reported as before:
+   * "Run complete" or "Run failed: …", the result as `structuredContent`.
+   * Since 0.55.0 it may instead return `void` / `{ ok: true }` (accepted) or
+   * `{ ok: false, error, code? }` (refused: the tool's error, no activity), sync
+   * or as a Promise; a rejection or throw is refused the same way. `context`
+   * (since 0.55.0) is captured when the tool was called and never recomputed.
+   */
+  run?: (executors?: ExecutorRegistry, context?: FlowRunContext) => FlowAdapterRun;
+  /**
+   * Optional: cancel the in-flight run. Since 0.55.0 `flow_cancel` awaits it and
+   * reports success, and emits its activity event, only once it returns or
+   * resolves to `void` or `{ ok: true }`. `{ ok: false }`, a rejection or a
+   * throw is the tool's error, with no activity. The bridge calls this only for
+   * an agent's `flow_cancel`: disposing or replacing the bridge never does.
+   */
+  cancel?: (context?: FlowRunContext) => FlowAdapterCommit;
   /** Optional: set per-node status text without going through the runner
    *  (useful for agents narrating). */
   setNodeStatus?: (id: string, status: NodeRunStatus, text?: string) => void;
@@ -109,6 +123,28 @@ export type FlowAdapterResult = { ok: true } | { ok: false; error: string; code?
  * error saying the outcome is unknown, and a later settle is ignored.
  */
 export type FlowAdapterCommit = void | FlowAdapterResult | Promise<void | FlowAdapterResult>;
+
+/** Return type of `run` (since 0.55.0): a legacy `RunResult`, or a commit-style acknowledgement. */
+export type FlowAdapterRun =
+  | void
+  | RunResult
+  | FlowAdapterResult
+  | Promise<void | RunResult | FlowAdapterResult>;
+
+/**
+ * What `flow_run` / `flow_cancel` hand the host (since 0.55.0), captured when
+ * the tool was called and never recomputed after an await: who asked, through
+ * which tool, against which graph revision, and (for cancel) which run.
+ */
+export type FlowRunContext = {
+  tool: "flow_run" | "flow_cancel";
+  /** The acting agent (the bridge's `agent` option). */
+  agent: { id: string; name?: string; color?: string };
+  /** `adapter.getRevision()` at call time; absent without one. */
+  revision?: string | number;
+  /** `flow_cancel`'s optional `runId` argument; absent when the agent gave none. */
+  runId?: string;
+};
 
 /** Who asked for an op, and through which tool. Carried on every {@link FlowGraphOp}. */
 export type FlowGraphOpBase = {
@@ -263,6 +299,37 @@ export function registerFlowBridge(
     );
   const revisionNow = () => adapter.getRevision?.();
 
+  /** A host refusal as the tool's error: `structuredContent = { ok: false, op, error, code? }`. */
+  const refusedResult = (op: string, done: { ok: false; error: string; code?: string }): CallToolResult => ({
+    ...errorResult(done.error),
+    structuredContent: { ok: false, op, error: done.error, ...(done.code ? { code: done.code } : {}) },
+  });
+
+  // ── Awaited run / cancel (0.55.0) ──
+  // Same fence as commits. Closing the editor settles a pending run, cancel or
+  // run confirm as "outcome unknown"; it NEVER calls adapter.cancel, because
+  // a UI going away says nothing about whether the backend run should stop.
+  /** Call a host function now, turning a synchronous throw into a rejection. */
+  const invoke = <T>(fn: () => T | Promise<T>): Promise<T> => {
+    try {
+      return Promise.resolve(fn());
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  };
+  /** Never rejects: a value, or the error it failed with. */
+  const settle = <T>(p: Promise<T>): Promise<{ value: T } | { error: unknown }> =>
+    p.then((value) => ({ value }), (error: unknown) => ({ error }));
+  const runContext = (tool: FlowRunContext["tool"], runId?: string): FlowRunContext => {
+    const revision = revisionNow();
+    return {
+      tool,
+      agent: { id: agent.id, name: agent.name, color: agent.color },
+      ...(revision !== undefined ? { revision } : {}),
+      ...(runId !== undefined ? { runId } : {}),
+    };
+  };
+
   /**
    * Hand ONE whole op to `adapter.commit` and wait. Returns null when the host
    * accepted it, or the tool's error result. Only called when `commit` exists.
@@ -276,12 +343,7 @@ export function registerFlowBridge(
     const op = { ...body, revision, agent: { id: agent.id, name: agent.name, color: agent.color }, tool } as FlowGraphOp;
     const done = await untilClosed(runCommit(() => commitFn(op), `Host refused ${tool}.`));
     if (done === CLOSED) return closedUnknown(tool);
-    if (!done.ok) {
-      return {
-        ...errorResult(done.error),
-        structuredContent: { ok: false, op: op.op, error: done.error, ...(done.code ? { code: done.code } : {}) },
-      };
-    }
+    if (!done.ok) return refusedResult(op.op, done);
     return null;
   };
 
@@ -753,24 +815,50 @@ export function registerFlowBridge(
     [],
     async () => {
       if (!adapter.run) return errorResult("Host did not provide a run handler.");
+      const runFn = adapter.run;
+      // Captured now; never recomputed after the confirm or the run.
+      const context = runContext("flow_run");
       if (pendingMode && adapter.confirm) {
-        const ok = await adapter.confirm({ action: "run" });
+        const confirm = adapter.confirm;
+        const ok = await untilClosed(invoke(() => confirm({ action: "run" })));
+        // Never start a run from an editor that is no longer the one on screen.
+        if (ok === CLOSED) {
+          return errorResult("The flow editor was closed or replaced before the run was confirmed. Nothing was run.");
+        }
         if (!ok) return textResult("Run was declined by the human.");
       }
-      const result = await adapter.run();
-      return textResult(result.ok ? "Run complete" : `Run failed: ${result.error ?? "unknown"}`, result);
+      const done = await untilClosed(settle(invoke(() => runFn(undefined, context))));
+      if (done === CLOSED) return closedUnknown("flow_run");
+      if ("error" in done) return refusedResult("run", { ok: false, error: hostErrorMessage(done.error, "Host refused flow_run.") });
+      const result = done.value;
+      // A legacy RunResult: the run happened; report it exactly as before.
+      if (result && typeof result === "object" && "outputs" in result) {
+        return textResult(result.ok ? "Run complete" : `Run failed: ${result.error ?? "unknown"}`, result);
+      }
+      if (result && typeof result === "object" && result.ok === false) {
+        return refusedResult("run", {
+          ok: false,
+          error: hostErrorMessage(result.error, "Host refused flow_run."),
+          ...(typeof result.code === "string" ? { code: result.code } : {}),
+        });
+      }
+      return textResult("Run accepted by the host.", { ok: true });
     },
     flTarget,
   );
 
   reg(
     "flow_cancel",
-    "Cancel an in-flight run.",
-    {},
+    "Cancel an in-flight run. Succeeds only once the host confirms the cancel; the host may refuse it.",
+    { runId: { type: "string", description: "Optional: the run to cancel, when the host tracks several." } },
     [],
-    () => {
+    async (args) => {
       if (!adapter.cancel) return errorResult("Host did not provide a cancel handler.");
-      adapter.cancel();
+      const cancelFn = adapter.cancel;
+      const context = runContext("flow_cancel", typeof args.runId === "string" ? args.runId : undefined);
+      const done = await untilClosed(runCommit(() => cancelFn(context), "Host refused flow_cancel."));
+      if (done === CLOSED) return closedUnknown("flow_cancel");
+      if (!done.ok) return refusedResult("cancel", done);
       return textResult("Run cancelled");
     },
     flTarget,

@@ -1,7 +1,8 @@
 # Flow bridge: awaited, atomic graph commits
 
-Status: **as built, 0.54.0.** Source: `src/bridges/flow.ts`. Tests:
-`src/bridges/__tests__/flow-awaited-commit.test.ts`.
+Status: **as built, 0.54.0; runs and cancels 0.55.0.** Source:
+`src/bridges/flow.ts`. Tests: `src/bridges/__tests__/flow-awaited-commit.test.ts`
+and `src/bridges/__tests__/flow-awaited-run-cancel.test.ts`.
 
 ## The problem
 
@@ -56,7 +57,8 @@ type FlowGraphOp = {
 | `flow_set_node_status` | `set_node_status` | only when the adapter has no `setNodeStatus`; with one, that is called as before |
 
 `flow_run` and `flow_cancel` are not graph writes and do not go through
-`commit`.
+`commit`; since 0.55.0 they follow the same contract on their own adapter
+methods (see "Runs and cancels" below).
 
 ## The contract
 
@@ -95,6 +97,52 @@ unknown and that the agent should read the graph back. A result that arrives
 later is ignored: no activity. A late rejection is swallowed, never unhandled. A
 delete whose confirm was pending at close is never committed.
 
+## Runs and cancels (0.55.0)
+
+Reported by the same consumer (Maipa) after verifying 0.54.0. In 0.54.1,
+`flow_run` awaited `confirm` and `run` with no close fence, and `flow_cancel`
+called `cancel()` without awaiting it and then claimed "Run cancelled".
+
+```ts
+run?: (executors?: ExecutorRegistry, context?: FlowRunContext) => FlowAdapterRun;
+cancel?: (context?: FlowRunContext) => FlowAdapterCommit;
+
+type FlowAdapterRun = void | RunResult | FlowAdapterResult
+  | Promise<void | RunResult | FlowAdapterResult>;
+
+type FlowRunContext = {
+  tool: "flow_run" | "flow_cancel";
+  agent: { id: string; name?: string; color?: string };
+  revision?: string | number; // getRevision() at call time
+  runId?: string;             // flow_cancel's optional runId argument
+};
+```
+
+- **Awaited.** Success, and the activity event, only once the host returns or
+  resolves to `void` / `{ ok: true }`. A `run` result with `outputs` is a legacy
+  `RunResult`: the run happened, and it is reported exactly as before ("Run
+  complete", or "Run failed: ..." as a non-error result). A `run` returning
+  `void` / `{ ok: true }` reports "Run accepted by the host."
+- **Refusable.** `{ ok: false, error, code? }`, a rejection or a synchronous
+  throw is the tool's error, `structuredContent = { ok: false, op: "run" |
+  "cancel", error, code? }`, message cut at the first stack frame, no activity.
+- **Context.** Captured when the tool is called (for `flow_run`, before the
+  confirm) and passed as the last argument. Never recomputed after an await, so
+  the host can refuse a run against a graph that moved with `code: "stale"`.
+- **Fenced.** A pending `run`, `cancel`, or `pendingMode` run confirm is raced
+  against close (dispose, or replacement by another flow bridge on the host),
+  with the commit fence's "outcome unknown" wording for `run` and `cancel`. A
+  run whose confirm was pending is never started, so that case says "Nothing
+  was run" instead, as a delete confirm does. Late results emit nothing; late
+  rejections are swallowed.
+- **Closing is not cancelling.** Dispose and replacement never call
+  `adapter.cancel`. The bridge is a UI-side surface; whether a backend run
+  should stop when the editor closes is the host's decision (durable runs,
+  other viewers, other agents), and the bridge cannot know it.
+- **Legacy adapters.** `run: () => Promise<RunResult>` and `cancel: () => void`
+  keep working. The one visible change: `flow_cancel` now waits for a
+  Promise-returning `cancel` to settle, and reports its rejection.
+
 ## Undo
 
 The flow bridge records no undo entries, before or after this change, matching
@@ -104,6 +152,6 @@ stale; that is a separate design.
 
 ## Not changed
 
-- Legacy `flow_set_node_status` without `setNodeStatus` or `commit` still sets
-  `found` inside the `setNodes` updater and reports "No node" if the updater has
-  not run synchronously. Left as is because the legacy path is frozen here.
+- Legacy `flow_set_node_status` without `setNodeStatus` or `commit`: 0.54.0
+  decided existence from a flag set inside the `setNodes` updater. Fixed in
+  0.54.1: existence is read from `getNodes()` before the setter is called.
