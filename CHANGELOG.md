@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.1] - 2026-11-01
+
+### Fixed
+
+- **Flow bridge: a declined confirm no longer emits an AgentActivity event.**
+  With `pendingMode`, when the human declined `adapter.confirm`, `flow_run`
+  and `flow_delete_node` (both its `commit` path and its legacy
+  `setNodes`/`setEdges` path) correctly applied nothing but still emitted one
+  activity event, because `wrapToolWithActivity` skips only error results and
+  null targets and a decline is neither. A decline now resolves no activity
+  target. The tool result is unchanged: the same decline text, still a
+  normal, non-error result, so the agent reads it as an outcome. Reported by
+  Maipa against 0.55.0.
+
+  **Consumer action: none.** You receive one fewer, spurious, event per
+  declined confirm. An approved confirm still emits exactly one.
+
+  The other bridges with an awaited confirm (`forms`, `navigation`,
+  `catalog`, `features`, `files`, `passkeys`) already return a decline as an
+  error result, which emits no activity, so they did not have this defect and
+  are unchanged.
+
 ## [0.55.0] - 2026-11-01
 
 ### Added

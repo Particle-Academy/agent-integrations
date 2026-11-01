@@ -347,6 +347,18 @@ export function registerFlowBridge(
     return null;
   };
 
+  // ── Declined confirms (0.55.1) ──
+  // A human declining a pendingMode confirm applied nothing, so it must emit
+  // no AgentActivity. The result stays a normal, non-error text result (the
+  // agent reads the decline as an outcome); `reg` sees it in this set and
+  // resolves no target, the wrapper's existing "no activity" signal.
+  const declinedResults = new WeakSet<CallToolResult>();
+  const declinedResult = (text: string): CallToolResult => {
+    const r = textResult(text);
+    declinedResults.add(r);
+    return r;
+  };
+
   // Activity-target resolver shared by every mutation tool. Pulls element id
   // from the freshly-added node/edge (structuredContent), falling back to args.
   const flTarget = (args: any, result: any): FlAgentTarget => ({
@@ -374,7 +386,8 @@ export function registerFlowBridge(
           toolName: name,
           agent: { id: agent.id, name: agent.name, color: agent.color },
           kind: "flow",
-          resolveTarget: ({ args, result }) => resolveTarget(args, result),
+          // A declined confirm applied nothing, so it is no activity.
+          resolveTarget: ({ args, result }) => (declinedResults.has(result) ? null : resolveTarget(args, result)),
         })
       : wrapped;
     disposers.push(
@@ -665,7 +678,7 @@ export function registerFlowBridge(
           if (ok === CLOSED) {
             return errorResult(`The flow editor was closed before the delete of node ${id} was confirmed. Nothing was deleted.`);
           }
-          if (!ok) return textResult(`Delete of node ${id} was declined by the human.`);
+          if (!ok) return declinedResult(`Delete of node ${id} was declined by the human.`);
         }
         // Compute the op AFTER the human decided, from the graph as it is now:
         // ONE op carrying the node and every edge it takes with it.
@@ -679,7 +692,7 @@ export function registerFlowBridge(
       }
       if (pendingMode && adapter.confirm) {
         const ok = await adapter.confirm({ action: "delete_node", nodeId: id, label: target.data?.label });
-        if (!ok) return textResult(`Delete of node ${id} was declined by the human.`);
+        if (!ok) return declinedResult(`Delete of node ${id} was declined by the human.`);
       }
       adapter.setNodes((all) => all.filter((n) => n.id !== id));
       adapter.setEdges((all) => all.filter((e) => e.source !== id && e.target !== id));
@@ -825,7 +838,7 @@ export function registerFlowBridge(
         if (ok === CLOSED) {
           return errorResult("The flow editor was closed or replaced before the run was confirmed. Nothing was run.");
         }
-        if (!ok) return textResult("Run was declined by the human.");
+        if (!ok) return declinedResult("Run was declined by the human.");
       }
       const done = await untilClosed(settle(invoke(() => runFn(undefined, context))));
       if (done === CLOSED) return closedUnknown("flow_run");
