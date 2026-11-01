@@ -50,8 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the commit path. Before, the raw message was returned with no structured
   content.
 
-**Consumer action: none.** A `run` returning `Promise<RunResult>` and a
-`cancel` returning `void` keep working unchanged. To opt in, return
+**Consumer action: none for adapter implementers.** A `run` returning
+`Promise<RunResult>` and a `cancel` returning `void` keep working unchanged.
+**One TypeScript-only edge:** `FlowAdapter["run"]`'s return type is now the
+wider `FlowAdapterRun` union. Code that calls `adapter.run()` ITSELF (outside
+the bridge) and reads `.outputs` without narrowing will stop type-checking;
+narrow with `"outputs" in result` first. Nothing changes at runtime. To opt in, return
 `FlowAdapterResult` from either and read the `context` argument; see the README
 section "Flow bridge: awaited, atomic graph commits".
 
