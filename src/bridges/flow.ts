@@ -732,16 +732,14 @@ export function registerFlowBridge(
         });
         if (refused) return refused;
       } else {
-        // Fall back to mutating the node data directly.
-        let found = false;
+        // Fall back to mutating the node data directly. Existence is decided
+        // from the current graph, never from inside the updater: a host whose
+        // setNodes defers or batches the updater (as React's setters can)
+        // would not have run it yet.
+        if (!adapter.getNodes().some((n) => n.id === id)) return errorResult(`No node with id ${id}`);
         adapter.setNodes((all) =>
-          all.map((n) => {
-            if (n.id !== id) return n;
-            found = true;
-            return { ...n, data: { ...n.data, status, statusText: text } };
-          }),
+          all.map((n) => (n.id !== id ? n : { ...n, data: { ...n.data, status, statusText: text } })),
         );
-        if (!found) return errorResult(`No node with id ${id}`);
       }
       return textResult(`${id} → ${status}${text ? ` (${text})` : ""}`);
     },

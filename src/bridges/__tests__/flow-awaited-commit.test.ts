@@ -493,3 +493,42 @@ describe("flow bridge — without commit, behaviour is exactly as before", () =>
     expect(ctx.activity).toHaveLength(4);
   });
 });
+
+describe("flow bridge — legacy flow_set_node_status decides existence from the graph, not the updater", () => {
+  it("a setNodes that defers the updater still gets a success for an existing node", async () => {
+    // React's state setters may run the updater later (batched); 0.54.0 read a
+    // flag set inside it and returned a false "No node" error.
+    const queued: Array<(prev: Node[]) => Node[]> = [];
+    const ctx = setup({
+      commit: false,
+      adapter: {
+        setNodes: ((next: any) => {
+          if (typeof next === "function") queued.push(next);
+        }) as any,
+      },
+    });
+    const r = await ctx.call("flow_set_node_status", { id: "a", status: "running", text: "go" });
+    expect(r.isError).toBe(false);
+    expect(r.text).toBe("a → running (go)");
+    expect(queued).toHaveLength(1);
+    // The host flushes after the tool returned; the write is still the updater.
+    for (const fn of queued) ctx.g.nodes = fn(ctx.g.nodes);
+    expect(ctx.g.nodes.find((n) => n.id === "a")!.data).toMatchObject({ status: "running", statusText: "go" });
+  });
+
+  it("an unknown id is refused up front and setNodes is never called", async () => {
+    const ctx = setup({ commit: false });
+    const r = await ctx.call("flow_set_node_status", { id: "zz", status: "done" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toBe("No node with id zz");
+    expect(ctx.setNodes).not.toHaveBeenCalled();
+  });
+
+  it("a synchronous updater still applies the status", async () => {
+    const ctx = setup({ commit: false });
+    const r = await ctx.call("flow_set_node_status", { id: "b", status: "error", text: "boom" });
+    expect(r.isError).toBe(false);
+    expect(ctx.setNodes).toHaveBeenCalledTimes(1);
+    expect(ctx.g.nodes.find((n) => n.id === "b")!.data).toMatchObject({ status: "error", statusText: "boom" });
+  });
+});

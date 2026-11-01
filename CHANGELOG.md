@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.54.1] - 2026-11-01
+
+### Fixed
+
+- **Flow bridge: `flow_set_node_status` no longer reports a false "No node"
+  error on a host whose `setNodes` defers or batches its updater.** On the
+  legacy path (no `setNodeStatus`, no `commit`), 0.54.0 and earlier decided
+  whether the node existed from a flag set INSIDE the `setNodes` updater, so a
+  host that ran the updater later (as React's state setters can) got an error
+  even though the status was applied. Existence is now read from `getNodes()`
+  before the setter is called; an unknown id is refused without calling
+  `setNodes`. The write itself is unchanged, and the `commit` path is untouched.
+  **Consumer action: none.**
+
 ## [0.54.0] - 2026-10-31
 
 ### Added
