@@ -21,6 +21,18 @@ import type { AgentTarget } from "../presence/types";
 export type GridSort = { id: string; desc: boolean };
 export type GridFilter = { id: string; value: string };
 export type GridPagination = { pageIndex: number; pageSize: number };
+export type GridColumnPinning = { left?: string[]; right?: string[] };
+/** One leaf column as the grid reports it. */
+export type GridColumnInfo = {
+  id: string;
+  header: string;
+  /** Ids of the groups it sits in, outermost first. */
+  group: string[];
+  visible: boolean;
+  pinned: "left" | "right" | null;
+  sortable: boolean;
+  filterable: boolean;
+};
 
 export type GridState = {
   sorting?: GridSort[];
@@ -28,6 +40,9 @@ export type GridState = {
   /** Keyed by row id — see the grid's `getRowId`. */
   rowSelection?: Record<string, boolean>;
   pagination?: GridPagination;
+  /** Keyed by leaf column id. `false` hides; no entry means visible. */
+  columnVisibility?: Record<string, boolean>;
+  columnPinning?: GridColumnPinning;
 };
 
 export type GridBridgeAdapter = {
@@ -51,6 +66,14 @@ export type GridBridgeAdapter = {
    * — an agent should discover the capability from the tool list.
    */
   editCell?: (rowId: string, columnId: string, value: unknown) => void | Promise<void>;
+  /**
+   * The grid's leaf columns. Supplying it is how an adapter says its grid
+   * understands column visibility and pinning: without it those tools are not
+   * registered, because an older grid ignores the slices and a pin nothing applied
+   * looks exactly like a grid with nothing pinned. `createGridBridgeAdapter` from
+   * `@particle-academy/fancy-grid` supplies it.
+   */
+  getColumnInfo?: () => GridColumnInfo[];
 };
 
 export type GridBridgeOptions = {
@@ -175,6 +198,15 @@ export function registerGridBridge(host: ToolHost, options: GridBridgeOptions): 
             columnIds: adapter.getColumnIds?.() ?? null,
             rowIds: adapter.getRowIds?.() ?? null,
             editable: Boolean(adapter.editCell),
+            // Only for an adapter that opted in, so every other caller gets the
+            // payload it has always had.
+            ...(adapter.getColumnInfo
+              ? {
+                  columns: adapter.getColumnInfo(),
+                  columnVisibility: state.columnVisibility ?? {},
+                  columnPinning: state.columnPinning ?? {},
+                }
+              : {}),
           },
           null,
           2,
@@ -274,6 +306,64 @@ export function registerGridBridge(host: ToolHost, options: GridBridgeOptions): 
     },
     true,
   );
+
+  // ───────────── Columns ─────────────
+
+  if (adapter.getColumnInfo) {
+    reg(
+      "grid_set_column_visibility",
+      "Choose which columns show. Replaces the whole map: false hides a column, and a column left out shows. Leaf column ids only; a group shows while any of its columns do.",
+      {
+        columnVisibility: {
+          type: "object",
+          description: 'e.g. { "internalNotes": false }',
+          additionalProperties: { type: "boolean" },
+        },
+      },
+      ["columnVisibility"],
+      (args) => {
+        const raw = (args.columnVisibility ?? {}) as Record<string, unknown>;
+        const columnVisibility: Record<string, boolean> = {};
+        for (const [id, shown] of Object.entries(raw)) {
+          assertColumn(id);
+          columnVisibility[id] = Boolean(shown);
+        }
+
+        const previous = adapter.getState();
+        const hidden = Object.keys(columnVisibility).filter((id) => !columnVisibility[id]);
+        const label = hidden.length ? `Hid ${hidden.join(", ")}` : "Showed every column";
+        commit({ ...previous, columnVisibility }, "grid_set_column_visibility", label, previous);
+        return textResult(`${label}.`);
+      },
+      true,
+    );
+
+    reg(
+      "grid_pin_columns",
+      "Stick columns to the left and right edges so they stay in view while the rest scrolls. Replaces all pinning: call with neither list to unpin everything. Leaf column ids only, in display order.",
+      {
+        left: { type: "array", items: { type: "string" } },
+        right: { type: "array", items: { type: "string" } },
+      },
+      [],
+      (args) => {
+        const left = Array.isArray(args.left) ? args.left.map(String) : [];
+        const right = Array.isArray(args.right) ? args.right.map(String) : [];
+        for (const id of [...left, ...right]) assertColumn(id);
+
+        // The grid would quietly keep the left one. An agent asking for both has
+        // made a mistake it should hear about.
+        const both = left.filter((id) => right.includes(id));
+        if (both.length) throw new Error(`Column(s) pinned to both sides: ${both.join(", ")}`);
+
+        const previous = adapter.getState();
+        const label = left.length + right.length ? `Pinned ${[...left, ...right].join(", ")}` : "Unpinned every column";
+        commit({ ...previous, columnPinning: { left, right } }, "grid_pin_columns", label, previous);
+        return textResult(`${label}.`);
+      },
+      true,
+    );
+  }
 
   // ───────────── Data ─────────────
 

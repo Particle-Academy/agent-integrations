@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ToolRegistry } from "../../mcp/tool-host";
-import { registerGridBridge, type GridState } from "../grid";
+import { registerGridBridge, type GridColumnInfo, type GridState } from "../grid";
 import { resetAllUndoStacks } from "../../undo/undo-stack";
 import type { JsonObject } from "../../mcp/types";
 
@@ -167,5 +167,164 @@ describe("registerGridBridge", () => {
     expect(host.listTools().map((t) => t.name)).toContain("grid_sort");
     bridge.dispose();
     expect(host.listTools().map((t) => t.name)).not.toContain("grid_sort");
+  });
+});
+
+/**
+ * What an agent already written against this bridge sees, byte for byte.
+ *
+ * An adapter with none of the newer methods is a grid that may predate those
+ * features, so it must get exactly the tools and payloads it always got. New
+ * fields appear only when the adapter opts in by supplying what they read.
+ */
+describe("existing tool payloads stay compatible", () => {
+  beforeEach(() => resetAllUndoStacks());
+
+  it("lists exactly the original tools for an adapter with no new methods", () => {
+    const { host } = setup();
+    const names = host.listTools().map((t) => t.name).filter((n) => n.startsWith("grid_"));
+
+    expect(names.sort()).toEqual(["grid_edit_cell", "grid_filter", "grid_get", "grid_select_rows", "grid_sort"]);
+  });
+
+  it("returns exactly the original grid_get payload", async () => {
+    const { call } = setup();
+    await call("grid_sort", { sorting: [{ id: "total", desc: true }] });
+    await call("grid_select_rows", { rowIds: ["r1"] });
+
+    const r = await call("grid_get");
+
+    expect(JSON.parse(r.text)).toStrictEqual({
+      id: "orders",
+      title: "Orders",
+      sorting: [{ id: "total", desc: true }],
+      filters: [],
+      selectedRowIds: ["r1"],
+      columnIds: ["id", "customer", "total", "status"],
+      rowIds: ["r1", "r2", "r3"],
+      editable: true,
+    });
+  });
+
+  it("keeps the original result text and argument shape for every write", async () => {
+    const { call, edits } = setup();
+
+    expect((await call("grid_sort", { sorting: [{ id: "total", desc: true }] })).text).toBe("Sorted by total desc.");
+    expect((await call("grid_filter", { filters: [{ id: "status", value: "open" }] })).text).toBe("Filtering on status=open.");
+    expect((await call("grid_select_rows", { rowIds: ["r1", "r2"] })).text).toBe("Selected 2 rows.");
+    expect((await call("grid_edit_cell", { rowId: "r1", columnId: "total", value: 7 })).text).toBe("Set total on row r1.");
+    expect(edits).toEqual([["r1", "total", 7]]);
+  });
+
+  it("keeps the original staged text under pendingMode", async () => {
+    const { call } = setup({ pendingMode: true });
+    const r = await call("grid_edit_cell", { rowId: "r1", columnId: "total", value: 7 });
+    expect(r.text).toBe("Staged: set total on row r1. Awaiting confirmation.");
+  });
+});
+
+describe("column visibility and pinning", () => {
+  beforeEach(() => resetAllUndoStacks());
+
+  const INFO: GridColumnInfo[] = [
+    { id: "sku", header: "SKU", group: [], visible: true, pinned: null, sortable: true, filterable: false },
+    { id: "q1", header: "Q1", group: ["sales"], visible: true, pinned: "left", sortable: false, filterable: false },
+    { id: "q2", header: "Q2", group: ["sales"], visible: false, pinned: null, sortable: false, filterable: false },
+  ];
+
+  function columnSetup(initial: GridState = {}) {
+    let state: GridState = initial;
+    const host = new ToolRegistry();
+    registerGridBridge(host, {
+      adapter: {
+        id: "g",
+        getState: () => state,
+        setState: (next) => {
+          state = next;
+        },
+        getColumnIds: () => INFO.map((c) => c.id),
+        getRowIds: () => [],
+        getColumnInfo: () => INFO,
+      },
+    });
+    const call = async (name: string, args: JsonObject = {}) => {
+      const r = await host.callTool(name, args);
+      return { isError: r.isError, text: r.content?.map((c) => ("text" in c ? c.text : "")).join("") ?? "" };
+    };
+    return { host, call, state: () => state };
+  }
+
+  it("offers the tools only to an adapter that reports columns", () => {
+    // Discoverable from the tool list: an older grid ignores these slices, and a
+    // pin nothing applied looks exactly like a grid with nothing pinned.
+    expect(setup().host.listTools().map((t) => t.name)).not.toContain("grid_pin_columns");
+    expect(setup().host.listTools().map((t) => t.name)).not.toContain("grid_set_column_visibility");
+
+    const names = columnSetup().host.listTools().map((t) => t.name);
+    expect(names).toContain("grid_pin_columns");
+    expect(names).toContain("grid_set_column_visibility");
+  });
+
+  it("reports columns and their view state from grid_get", async () => {
+    const { call } = columnSetup({ columnVisibility: { q2: false }, columnPinning: { left: ["q1"] } });
+    const payload = JSON.parse((await call("grid_get")).text) as Record<string, unknown>;
+
+    expect(payload.columns).toEqual(INFO);
+    expect(payload.columnVisibility).toEqual({ q2: false });
+    expect(payload.columnPinning).toEqual({ left: ["q1"] });
+  });
+
+  it("hides and shows columns through the one state channel, leaving other slices alone", async () => {
+    const { call, state } = columnSetup({ sorting: [{ id: "sku", desc: false }] });
+    const r = await call("grid_set_column_visibility", { columnVisibility: { q1: false } });
+
+    expect(r.isError).toBeFalsy();
+    expect(state().columnVisibility).toEqual({ q1: false });
+    expect(state().sorting).toEqual([{ id: "sku", desc: false }]);
+  });
+
+  it("pins through the one state channel, and an empty call clears", async () => {
+    const { call, state } = columnSetup();
+
+    await call("grid_pin_columns", { left: ["sku"], right: ["q2"] });
+    expect(state().columnPinning).toEqual({ left: ["sku"], right: ["q2"] });
+
+    await call("grid_pin_columns", {});
+    expect(state().columnPinning).toEqual({ left: [], right: [] });
+  });
+
+  it("refuses an unknown column, which includes a group's id", async () => {
+    const { call, state } = columnSetup();
+
+    for (const bad of ["nope", "sales"]) {
+      const pin = await call("grid_pin_columns", { left: [bad] });
+      expect(pin.isError).toBe(true);
+      expect(pin.text).toContain("Unknown column");
+
+      const hide = await call("grid_set_column_visibility", { columnVisibility: { [bad]: false } });
+      expect(hide.isError).toBe(true);
+    }
+    expect(state()).toEqual({});
+  });
+
+  it("refuses a column pinned to both sides rather than picking one silently", async () => {
+    const { call, state } = columnSetup();
+    const r = await call("grid_pin_columns", { left: ["sku"], right: ["sku"] });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("sku");
+    expect(state().columnPinning).toBeUndefined();
+  });
+
+  it("undoes both back to the previous state", async () => {
+    const { call, state } = columnSetup();
+
+    await call("grid_pin_columns", { left: ["sku"] });
+    await call("agent_undo", {});
+    expect(state().columnPinning).toBeUndefined();
+
+    await call("grid_set_column_visibility", { columnVisibility: { sku: false } });
+    await call("agent_undo", {});
+    expect(state().columnVisibility).toBeUndefined();
   });
 });
