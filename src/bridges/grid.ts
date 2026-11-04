@@ -22,6 +22,19 @@ export type GridSort = { id: string; desc: boolean };
 export type GridFilter = { id: string; value: string };
 export type GridPagination = { pageIndex: number; pageSize: number };
 export type GridColumnPinning = { left?: string[]; right?: string[] };
+/** How a column is edited, which is what an agent has to know to write it. */
+export type GridEditor =
+  | { type: "text"; required?: boolean; maxLength?: number; placeholder?: string }
+  | { type: "number"; required?: boolean; min?: number; max?: number; step?: number; placeholder?: string }
+  | {
+      type: "select";
+      required?: boolean;
+      options: Array<string | { value: string; label: string }>;
+      placeholder?: string;
+    };
+export type GridCellRef = { rowId: string; columnId: string };
+/** The editor open in the grid, and what has been typed in it so far. */
+export type GridEditing = GridCellRef & { draft: unknown; error?: string | null; pending?: boolean };
 /** One leaf column as the grid reports it. */
 export type GridColumnInfo = {
   id: string;
@@ -32,6 +45,8 @@ export type GridColumnInfo = {
   pinned: "left" | "right" | null;
   sortable: boolean;
   filterable: boolean;
+  /** What the column accepts, or `null` if it is read-only. */
+  editor?: GridEditor | null;
 };
 
 export type GridState = {
@@ -43,6 +58,8 @@ export type GridState = {
   /** Keyed by leaf column id. `false` hides; no entry means visible. */
   columnVisibility?: Record<string, boolean>;
   columnPinning?: GridColumnPinning;
+  activeCell?: GridCellRef | null;
+  editing?: GridEditing | null;
 };
 
 export type GridBridgeAdapter = {
@@ -66,6 +83,12 @@ export type GridBridgeAdapter = {
    * — an agent should discover the capability from the tool list.
    */
   editCell?: (rowId: string, columnId: string, value: unknown) => void | Promise<void>;
+  /**
+   * The refusal `editCell` would give, or `null`, writing nothing. With it,
+   * `grid_edit_cell` under `pendingMode` refuses a bad value straight away instead
+   * of asking a human to confirm a write that was always going to fail.
+   */
+  validateCell?: (rowId: string, columnId: string, value: unknown) => string | null;
   /**
    * The grid's leaf columns. Supplying it is how an adapter says its grid
    * understands column visibility and pinning: without it those tools are not
@@ -205,6 +228,10 @@ export function registerGridBridge(host: ToolHost, options: GridBridgeOptions): 
                   columns: adapter.getColumnInfo(),
                   columnVisibility: state.columnVisibility ?? {},
                   columnPinning: state.columnPinning ?? {},
+                  activeCell: state.activeCell ?? null,
+                  // What a person is typing right now, so an agent does not write
+                  // over a cell mid-edit without knowing it.
+                  editing: state.editing ?? null,
                 }
               : {}),
           },
@@ -381,6 +408,9 @@ export function registerGridBridge(host: ToolHost, options: GridBridgeOptions): 
         const rowId = String(args.rowId);
         const columnId = String(args.columnId);
         assertColumn(columnId);
+
+        const refusal = adapter.validateCell?.(rowId, columnId, args.value);
+        if (refusal) throw new Error(refusal);
 
         const apply = async () => {
           await adapter.editCell?.(rowId, columnId, args.value);

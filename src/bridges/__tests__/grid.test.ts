@@ -223,6 +223,91 @@ describe("existing tool payloads stay compatible", () => {
   });
 });
 
+describe("grid_edit_cell through the grid's one path", () => {
+  beforeEach(() => resetAllUndoStacks());
+
+  function editSetup(opts: { pendingMode?: boolean; state?: GridState } = {}) {
+    const host = new ToolRegistry();
+    const writes: Array<[string, string, unknown]> = [];
+    const staged: Array<{ label: string; apply: () => void | Promise<void> }> = [];
+    registerGridBridge(host, {
+      adapter: {
+        id: "g",
+        getState: () => opts.state ?? {},
+        setState: () => {},
+        getColumnIds: () => ["qty", "note"],
+        getRowIds: () => ["r1"],
+        getColumnInfo: () => [
+          { id: "qty", header: "Qty", group: [], visible: true, pinned: null, sortable: false, filterable: false, editor: { type: "number", min: 0 } },
+          { id: "note", header: "Note", group: [], visible: true, pinned: null, sortable: false, filterable: false, editor: null },
+        ],
+        // Stands in for the grid: it throws what it refuses, and validateCell says so first.
+        editCell: async (rowId, columnId, value) => {
+          if (columnId === "note") throw new Error('Column "note" is not editable.');
+          writes.push([rowId, columnId, value]);
+        },
+        validateCell: (_rowId, columnId, value) =>
+          columnId === "note" ? 'Column "note" is not editable.' : value === "abc" ? "Enter a number." : null,
+      },
+      pendingMode: opts.pendingMode,
+      onPending: (s) => staged.push(s),
+    });
+    const call = async (name: string, args: JsonObject = {}) => {
+      const r = await host.callTool(name, args);
+      return { isError: r.isError, text: r.content?.map((c) => ("text" in c ? c.text : "")).join("") ?? "" };
+    };
+    return { call, writes, staged };
+  }
+
+  it("returns the grid's refusal as a tool error, naming what was wrong", async () => {
+    const { call, writes } = editSetup();
+
+    const bad = await call("grid_edit_cell", { rowId: "r1", columnId: "qty", value: "abc" });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toBe("Enter a number.");
+
+    const readOnly = await call("grid_edit_cell", { rowId: "r1", columnId: "note", value: "x" });
+    expect(readOnly.isError).toBe(true);
+    expect(readOnly.text).toContain("not editable");
+    expect(writes).toEqual([]);
+  });
+
+  it("refuses a bad value under pendingMode instead of staging it for a human", async () => {
+    // Asking a person to confirm a write that was always going to fail wastes the
+    // one thing pendingMode is there to protect.
+    const { call, staged } = editSetup({ pendingMode: true });
+    const r = await call("grid_edit_cell", { rowId: "r1", columnId: "qty", value: "abc" });
+
+    expect(r.isError).toBe(true);
+    expect(staged).toEqual([]);
+  });
+
+  it("still stages a good value under pendingMode, writing nothing until applied", async () => {
+    const { call, staged, writes } = editSetup({ pendingMode: true });
+    await call("grid_edit_cell", { rowId: "r1", columnId: "qty", value: 4 });
+
+    expect(writes).toEqual([]);
+    await staged[0]!.apply();
+    expect(writes).toEqual([["r1", "qty", 4]]);
+  });
+
+  it("reports each column's editor, the open editor and the active cell from grid_get", async () => {
+    const { call } = editSetup({
+      state: { activeCell: { rowId: "r1", columnId: "qty" }, editing: { rowId: "r1", columnId: "qty", draft: "half", error: null } },
+    });
+    const payload = JSON.parse((await call("grid_get")).text) as {
+      columns: Array<{ id: string; editor: unknown }>;
+      editing: unknown;
+      activeCell: unknown;
+    };
+
+    expect(payload.columns[0].editor).toEqual({ type: "number", min: 0 });
+    expect(payload.columns[1].editor).toBeNull();
+    expect(payload.editing).toEqual({ rowId: "r1", columnId: "qty", draft: "half", error: null });
+    expect(payload.activeCell).toEqual({ rowId: "r1", columnId: "qty" });
+  });
+});
+
 describe("column visibility and pinning", () => {
   beforeEach(() => resetAllUndoStacks());
 
