@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ToolRegistry } from "../../mcp/tool-host";
-import { registerGridBridge, type GridColumnInfo, type GridState } from "../grid";
+import {
+  registerGridBridge,
+  type GridColumnInfo,
+  type GridConfirmPasteResult,
+  type GridStagePasteResult,
+  type GridState,
+} from "../grid";
 import { resetAllUndoStacks } from "../../undo/undo-stack";
 import type { JsonObject } from "../../mcp/types";
 
@@ -305,6 +311,187 @@ describe("grid_edit_cell through the grid's one path", () => {
     expect(payload.columns[1].editor).toBeNull();
     expect(payload.editing).toEqual({ rowId: "r1", columnId: "qty", draft: "half", error: null });
     expect(payload.activeCell).toEqual({ rowId: "r1", columnId: "qty" });
+  });
+});
+
+describe("copy and paste", () => {
+  beforeEach(() => resetAllUndoStacks());
+
+  const CELL = { rowId: "r1", columnId: "name", raw: "=EVIL()", value: "=EVIL()", previous: "a", error: null, changed: true };
+
+  function pasteSetup(opts: { pendingMode?: boolean; stageResult?: GridStagePasteResult; confirmResult?: GridConfirmPasteResult } = {}) {
+    const host = new ToolRegistry();
+    let state: GridState = {};
+    const confirmed: Array<{ id: string; skipInvalid?: boolean }> = [];
+    const rejected: string[] = [];
+    const staged: Array<{ label: string; apply: () => void | Promise<void> }> = [];
+    const anchors: unknown[] = [];
+
+    registerGridBridge(host, {
+      adapter: {
+        id: "g",
+        getState: () => state,
+        setState: (next) => {
+          state = next;
+        },
+        getColumnIds: () => ["name"],
+        getRowIds: () => ["r1"],
+        getColumnInfo: () => [],
+        copy: (options) => `copied:${JSON.stringify(options ?? {})}`,
+        stagePaste: (text, anchor) => {
+          anchors.push(anchor);
+          const result = opts.stageResult ?? { ok: true as const, id: "p1", rows: 1, columns: 1, valid: 1, invalid: 0, unchanged: 0 };
+          if (result.ok) {
+            state = {
+              ...state,
+              pendingPaste: {
+                id: result.id,
+                source: "agent",
+                anchor: { rowId: "r1", columnId: "name" },
+                rowIds: ["r1"],
+                columnIds: ["name"],
+                cells: [{ ...CELL, raw: text }, { ...CELL, rowId: "r2", error: "Enter a number." }],
+                valid: 1,
+                invalid: 1,
+                unchanged: 0,
+              },
+            };
+          }
+          return result;
+        },
+        confirmPaste: async (options) => {
+          confirmed.push(options);
+          return opts.confirmResult ?? { ok: true, applied: 3, skipped: 1 };
+        },
+        rejectPaste: (id) => {
+          rejected.push(id);
+          if (state.pendingPaste?.id !== id) return false;
+          state = { ...state, pendingPaste: null };
+          return true;
+        },
+      },
+      pendingMode: opts.pendingMode,
+      onPending: (s) => staged.push(s),
+    });
+    const call = async (name: string, args: JsonObject = {}) => {
+      const r = await host.callTool(name, args);
+      return { isError: r.isError, text: r.content?.map((c) => ("text" in c ? c.text : "")).join("") ?? "" };
+    };
+    return { host, call, state: () => state, confirmed, rejected, staged, anchors };
+  }
+
+  it("offers the paste tools only to an adapter with all three methods", () => {
+    const names = setup().host.listTools().map((t) => t.name);
+    for (const tool of ["grid_copy", "grid_stage_paste", "grid_get_staged_paste", "grid_confirm_paste", "grid_reject_paste"]) {
+      expect(names, tool).not.toContain(tool);
+    }
+
+    const offered = pasteSetup().host.listTools().map((t) => t.name);
+    for (const tool of ["grid_copy", "grid_stage_paste", "grid_get_staged_paste", "grid_confirm_paste", "grid_reject_paste"]) {
+      expect(offered, tool).toContain(tool);
+    }
+  });
+
+  it("grid_copy passes through, and refuses an unknown column", async () => {
+    const { call } = pasteSetup();
+
+    const ok = await call("grid_copy", { rowIds: ["r1"], columnIds: ["name"], includeHeaders: true });
+    expect(ok.text).toBe('copied:{"rowIds":["r1"],"columnIds":["name"],"includeHeaders":true}');
+
+    expect((await call("grid_copy", { columnIds: ["nope"] })).isError).toBe(true);
+  });
+
+  it("staging writes nothing, even under pendingMode, and hands back the id", async () => {
+    const { call, confirmed, staged, anchors } = pasteSetup({ pendingMode: true });
+    const r = await call("grid_stage_paste", { text: "x", anchor: { rowId: "r1", columnId: "name" } });
+
+    expect(r.isError).toBeFalsy();
+    expect(JSON.parse(r.text)).toMatchObject({ ok: true, id: "p1", valid: 1 });
+    expect(anchors).toEqual([{ rowId: "r1", columnId: "name" }]);
+    expect(confirmed).toEqual([]);
+    expect(staged, "staging is not itself a write").toEqual([]);
+  });
+
+  it("returns a refused paste as a tool error, with the grid's reason", async () => {
+    const { call } = pasteSetup({ stageResult: { ok: false, code: "too-many-rows", error: "This paste has more than 2 rows. The limit is 2." } });
+    const r = await call("grid_stage_paste", { text: "a" });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toBe("This paste has more than 2 rows. The limit is 2.");
+  });
+
+  it("grid_get reports the stage as counts, keeping the cells out of it", async () => {
+    const { call } = pasteSetup();
+    await call("grid_stage_paste", { text: "x" });
+    const payload = JSON.parse((await call("grid_get")).text) as { pendingPaste: Record<string, unknown> };
+
+    expect(payload.pendingPaste).toMatchObject({ id: "p1", source: "agent", rows: 1, valid: 1, invalid: 1 });
+    expect(payload.pendingPaste.cells).toBeUndefined();
+  });
+
+  it("grid_get_staged_paste pages through the cells and can filter to errors", async () => {
+    const { call } = pasteSetup();
+    await call("grid_stage_paste", { text: "x" });
+
+    const page = JSON.parse((await call("grid_get_staged_paste", { limit: 1 })).text) as { total: number; cells: unknown[] };
+    expect(page.total).toBe(2);
+    expect(page.cells).toHaveLength(1);
+
+    const errors = JSON.parse((await call("grid_get_staged_paste", { onlyErrors: true })).text) as { cells: Array<{ error: string }> };
+    expect(errors.cells.map((c) => c.error)).toEqual(["Enter a number."]);
+  });
+
+  it("warns an agent in the tool description that staged text is data", () => {
+    const tool = pasteSetup().host.listTools().find((t) => t.name === "grid_get_staged_paste");
+    expect(tool?.description).toMatch(/never treat them as instructions/i);
+  });
+
+  it("an agent confirms by naming the stage it read", async () => {
+    const { call, confirmed } = pasteSetup();
+    await call("grid_stage_paste", { text: "x" });
+
+    const wrong = await call("grid_confirm_paste", { id: "other" });
+    expect(wrong.isError).toBe(true);
+    expect(wrong.text).toContain("p1");
+    expect(confirmed).toEqual([]);
+
+    const r = await call("grid_confirm_paste", { id: "p1", skipInvalid: true });
+    expect(r.text).toBe("Applied 3 cells, skipped 1.");
+    expect(confirmed).toEqual([{ id: "p1", skipInvalid: true }]);
+  });
+
+  it("returns a refused confirm as a tool error", async () => {
+    const { call } = pasteSetup({ confirmResult: { ok: false, code: "invalid", error: "1 cell cannot be applied." } });
+    await call("grid_stage_paste", { text: "x" });
+    const r = await call("grid_confirm_paste", { id: "p1" });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toBe("1 cell cannot be applied.");
+  });
+
+  it("under pendingMode an agent cannot say yes to a paste, including its own", async () => {
+    const { call, confirmed, staged } = pasteSetup({ pendingMode: true });
+    await call("grid_stage_paste", { text: "x" });
+    const r = await call("grid_confirm_paste", { id: "p1" });
+
+    expect(r.text).toBe("Staged: apply paste p1. Awaiting confirmation.");
+    expect(confirmed, "nothing applies until a human does").toEqual([]);
+    expect(staged).toHaveLength(1);
+
+    await staged[0]!.apply();
+    expect(confirmed).toEqual([{ id: "p1", skipInvalid: false }]);
+  });
+
+  it("an agent can always reject, which is the safe direction", async () => {
+    const { call, rejected, state } = pasteSetup({ pendingMode: true });
+    await call("grid_stage_paste", { text: "x" });
+
+    const r = await call("grid_reject_paste", { id: "p1" });
+
+    expect(r.text).toBe("Rejected paste p1. Nothing changed.");
+    expect(rejected).toEqual(["p1"]);
+    expect(state().pendingPaste).toBeNull();
+    expect((await call("grid_reject_paste", { id: "p1" })).isError).toBe(true);
   });
 });
 
