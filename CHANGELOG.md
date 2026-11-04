@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Charts bridge: `readOnly: true` registers no tool that can change what a chart draws.** For a chart whose numbers must be the ones an engine produced. `chart_set_option`, `chart_update_option` and `chart_update_data` are not listed, so none can be called, and `chart_describe` reports `readOnly: true`. It is all or nothing because any of the three can carry `series`, including `chart_update_option` through its `setOption` fallback. A read-only adapter needs only `id` and `getOption`. New types: `ChartsBridgeReadOnlyAdapter`, `ChartsBridgeReadOnlyOptions`. **Consumer action:** none. Without it the bridge lists the same tools and `chart_describe` returns the same fields.
+
 ### Changed
 
 - Test environment: jsdom moved to 30 (devDependency only), dropping the deprecated `whatwg-encoding`. Consumer action: none.

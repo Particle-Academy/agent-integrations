@@ -96,6 +96,10 @@ Every bridge has a matching subpath if you'd rather import surgically:
 
 `registerScreensBridge` handles navigation between screens.
 
+### Charts bridge: read-only
+
+`registerChartsBridge(host, { readOnly: true, adapter: { id, getOption } })` lets an agent read a chart and gives it no way to change what the chart draws: the three writing tools are not listed, and `chart_describe` reports `readOnly: true`. Use it when the numbers on screen must be the ones an engine produced.
+
 ### Screens bridge: acknowledge after the host commits
 
 Every mutating screens adapter method (`setActive`, `createScreen`,

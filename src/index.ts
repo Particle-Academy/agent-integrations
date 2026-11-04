@@ -93,6 +93,8 @@ export {
   registerChartsBridge,
   type ChartsBridgeAdapter,
   type ChartsBridgeOptions,
+  type ChartsBridgeReadOnlyAdapter,
+  type ChartsBridgeReadOnlyOptions,
 } from "./bridges/charts";
 export {
   registerGridBridge,

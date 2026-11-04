@@ -28,9 +28,25 @@ export type ChartsBridgeAdapter = {
   updateData?: (data: unknown) => void;
 };
 
+/** All a read-only bridge needs: a read-only host has no writer to supply. */
+export type ChartsBridgeReadOnlyAdapter = Omit<ChartsBridgeAdapter, "setOption"> &
+  Partial<Pick<ChartsBridgeAdapter, "setOption">>;
+
 export type ChartsBridgeOptions = {
   adapter: ChartsBridgeAdapter;
   agent?: { id: string; name?: string; color?: string };
+  /**
+   * Register no tool that can change what the chart draws, for a chart whose
+   * numbers must be the ones an engine produced. An agent can still read it.
+   * All or nothing, because any of the three writers can carry `series`.
+   */
+  readOnly?: boolean;
+};
+
+/** `readOnly: true`, where the adapter need not supply a writer. */
+export type ChartsBridgeReadOnlyOptions = Omit<ChartsBridgeOptions, "adapter" | "readOnly"> & {
+  adapter: ChartsBridgeReadOnlyAdapter;
+  readOnly: true;
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
@@ -40,7 +56,7 @@ const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
  */
 export function registerChartsBridge(
   host: ToolHost,
-  options: ChartsBridgeOptions,
+  options: ChartsBridgeOptions | ChartsBridgeReadOnlyOptions,
 ): Bridge {
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
@@ -102,6 +118,7 @@ export function registerChartsBridge(
         seriesTypes: series.map((s: any) => s?.type ?? "unknown"),
         hasXAxis: !!opt.xAxis,
         hasYAxis: !!opt.yAxis,
+        ...(options.readOnly ? { readOnly: true } : null),
       };
       return textResult(JSON.stringify(summary), summary);
     },
@@ -120,48 +137,55 @@ export function registerChartsBridge(
     false,
   );
 
-  reg(
-    "chart_set_option",
-    "Replace the entire ECharts option. Use chart_update_option for partial updates.",
-    { option: { type: "object" } },
-    ["option"],
-    (args) => {
-      const opt = (args.option && typeof args.option === "object") ? args.option as Record<string, unknown> : {};
-      adapter.setOption(opt);
-      return textResult("Replaced chart option", { });
-    },
-    true,
-  );
+  // Not listed at all when read-only, as `grid_edit_cell` is absent from a grid with
+  // no `editCell`: an agent should not plan around a tool that will only refuse.
+  if (!options.readOnly) {
+    // The parameter's types leave a writer optional only when `readOnly` is true.
+    const writable = options.adapter as ChartsBridgeAdapter;
 
-  reg(
-    "chart_update_option",
-    "Shallow-merge a partial option update — only the keys you provide change.",
-    { partial: { type: "object" } },
-    ["partial"],
-    (args) => {
-      const partial = (args.partial && typeof args.partial === "object") ? args.partial as Record<string, unknown> : {};
-      if (adapter.updateOption) {
-        adapter.updateOption(partial);
-      } else {
-        adapter.setOption({ ...adapter.getOption(), ...partial });
-      }
-      return textResult("Merged chart option", { keys: Object.keys(partial) });
-    },
-    true,
-  );
+    reg(
+      "chart_set_option",
+      "Replace the entire ECharts option. Use chart_update_option for partial updates.",
+      { option: { type: "object" } },
+      ["option"],
+      (args) => {
+        const opt = (args.option && typeof args.option === "object") ? args.option as Record<string, unknown> : {};
+        writable.setOption(opt);
+        return textResult("Replaced chart option", { });
+      },
+      true,
+    );
 
-  reg(
-    "chart_update_data",
-    "Update only the data (typically the `series` field). Leaves layout / axes / colors alone.",
-    { data: { description: "New series array (or whatever shape the host's adapter expects)." } },
-    ["data"],
-    (args) => {
-      if (!adapter.updateData) return errorResult("Host did not provide updateData.");
-      adapter.updateData(args.data);
-      return textResult("Updated chart data", { });
-    },
-    true,
-  );
+    reg(
+      "chart_update_option",
+      "Shallow-merge a partial option update — only the keys you provide change.",
+      { partial: { type: "object" } },
+      ["partial"],
+      (args) => {
+        const partial = (args.partial && typeof args.partial === "object") ? args.partial as Record<string, unknown> : {};
+        if (writable.updateOption) {
+          writable.updateOption(partial);
+        } else {
+          writable.setOption({ ...writable.getOption(), ...partial });
+        }
+        return textResult("Merged chart option", { keys: Object.keys(partial) });
+      },
+      true,
+    );
+
+    reg(
+      "chart_update_data",
+      "Update only the data (typically the `series` field). Leaves layout / axes / colors alone.",
+      { data: { description: "New series array (or whatever shape the host's adapter expects)." } },
+      ["data"],
+      (args) => {
+        if (!writable.updateData) return errorResult("Host did not provide updateData.");
+        writable.updateData(args.data);
+        return textResult("Updated chart data", { });
+      },
+      true,
+    );
+  }
 
   return {
     id: bridgeId,
