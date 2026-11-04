@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-11-04
+
 ### Added
 
 - **Grid bridge: `grid_set_column_visibility` and `grid_pin_columns`**, for `@particle-academy/fancy-grid`'s new column slices. Both write through the one state channel, go on the undo stack, and refuse an unknown column (a group's id counts as unknown, since a group has no cells to hide or pin). `grid_pin_columns` also refuses a column named on both sides. They are registered only when the adapter supplies the new optional `getColumnInfo`, which also adds `columns`, `columnVisibility` and `columnPinning` to `grid_get`; `createGridBridgeAdapter` from fancy-grid supplies it. New types: `GridColumnInfo`, `GridColumnPinning`. **Consumer action:** none. An adapter without `getColumnInfo` gets exactly the tools and payloads it had, and a test pins that.
