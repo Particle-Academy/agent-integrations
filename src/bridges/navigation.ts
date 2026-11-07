@@ -26,14 +26,31 @@ export type PageAction = {
   destructive?: boolean;
 };
 
+/**
+ * An area of the page marked off-limits to agents (`data-agent-off-limits`, or a
+ * host `exclude` selector). Reported so the agent knows it is there, and
+ * deliberately nothing else: no labels, no values, no handles inside it.
+ */
+export type OffLimitsArea = {
+  /** The area's ARIA role (explicit or implicit), e.g. "dialog", "region". */
+  role: string;
+  /** The marker's value, when it names one, e.g. "consent". */
+  purpose?: string;
+};
+
 /** The page as the agent sees it: where it is + what it can do. */
 export type PageSnapshot = {
   url: string;
   title: string;
   actions: PageAction[];
+  /** Areas the agent may not read into or act on. Omitted when there are none. */
+  offLimits?: OffLimitsArea[];
   /** Monotonic host revision. Human input advances it and invalidates stale agent intent. */
   revision?: number;
 };
+
+/** Every bridge action that names a handle, as the adapter's `guard` is asked about it. */
+export type NavigationGuardAction = "setField" | "click" | "submit" | "focus" | "scrollTo";
 
 /**
  * Structured page text. Preferred over a plain string from `read()`: the bridge
@@ -95,6 +112,15 @@ export type NavigationBridgeAdapter = {
    */
   rectFor?: (handle: string) => MaybePromise<{ x: number; y: number; width: number; height: number } | null>;
   /**
+   * The off-limits fence, asked BEFORE anything else happens to a handle —
+   * before `confirm`, so `pendingMode` never stages an action the page has
+   * fenced off. `{ ok: false, error }` refuses. Any other answer, a malformed
+   * one, or a throw also refuses: a fence that cannot answer is closed.
+   * `createDomNavigationAgent().guard` and `createRemoteNavigationAdapter`
+   * supply it; a host adapter over the in-page agent should pass it through.
+   */
+  guard?: (action: NavigationGuardAction, handle: string) => MaybePromise<{ ok: boolean; error?: string }>;
+  /**
    * Trust-but-verify hook. When `pendingMode` is on, `page_submit` and
    * destructive `page_click` route through this; the host shows a prompt and
    * resolves true (proceed) / false (declined).
@@ -144,7 +170,10 @@ function oneLine(value: unknown, max: number): string {
  */
 const SAFE_HANDLE = /^[A-Za-z0-9_.:#@/-]{1,80}$/;
 
-const CAP = { url: 500, title: 200, role: 40, label: 200, heading: 200, text: 4000, error: 300, headings: 50 };
+const CAP = { url: 500, title: 200, role: 40, label: 200, heading: 200, text: 4000, error: 300, headings: 50, areas: 20 };
+
+/** Shown when a guard refuses without saying why. Same sentence as the in-page agent's. */
+const OFF_LIMITS_FALLBACK = "That part of the page is off-limits to agents, so only the person can use it.";
 
 function formatReadout(r: string | PageReadout): string {
   if (typeof r === "string") return oneLine(r, CAP.text);
@@ -190,6 +219,22 @@ export function registerNavigationBridge(
   const pageHandle = (handle: string) => aliases.get(handle) ?? handle;
   /** A failure message that may carry page-supplied text. */
   const failure = (message: unknown, fallback: string) => errorResult(oneLine(message ?? fallback, CAP.error) || fallback);
+
+  /**
+   * The fence, at the bridge. Runs before describe lookups, rects and confirm,
+   * so an off-limits action is refused before it can be staged. Fails closed.
+   */
+  const fenced = async (action: NavigationGuardAction, handle: string) => {
+    if (!adapter.guard) return null;
+    let res: { ok?: unknown; error?: unknown } | undefined;
+    try {
+      res = (await adapter.guard(action, handle)) as typeof res;
+    } catch (e) {
+      return failure(e instanceof Error ? e.message : String(e), OFF_LIMITS_FALLBACK);
+    }
+    if (res && res.ok === true) return null;
+    return failure(res && typeof res.error === "string" ? res.error : undefined, OFF_LIMITS_FALLBACK);
+  };
 
   ensureUndoToolsRegistered(host, { defaultAgentId: agent.id });
 
@@ -256,7 +301,16 @@ export function registerNavigationBridge(
         return { ...a, handle: alias };
       });
       aliases = next;
+      // Areas: role + purpose only, each one line and capped, whatever the adapter sent.
+      const offLimits = (Array.isArray(raw.offLimits) ? raw.offLimits : []).slice(0, CAP.areas).map((a) => {
+        const area: { role: string; purpose?: string } = { role: oneLine(a?.role, CAP.role) || "area" };
+        const purpose = oneLine(a?.purpose, CAP.role);
+        if (purpose) area.purpose = purpose;
+        return area;
+      });
       const snap: PageSnapshot = { ...raw, actions };
+      if (offLimits.length > 0) snap.offLimits = offLimits;
+      else delete snap.offLimits;
       const revision = await adapter.getRevision?.();
       if (revision !== undefined) {
         snap.revision = revision;
@@ -270,6 +324,7 @@ export function registerNavigationBridge(
           (a) =>
             `[${a.handle}] ${oneLine(a.role, CAP.role)}: ${oneLine(a.label, CAP.label)}${a.destructive ? " (destructive)" : ""}`,
         ),
+        ...offLimits.map((a) => `Off limits to agents: ${a.purpose ? `${a.purpose} ` : ""}${a.role}`),
       ].join("\n");
       return textResult(text, snap);
     },
@@ -298,6 +353,8 @@ export function registerNavigationBridge(
       if (stale) return stale;
       const shown = String(args.handle ?? "");
       const handle = pageHandle(shown);
+      const refused = await fenced("focus", handle);
+      if (refused) return refused;
       const action = (await adapter.describe()).actions.find((candidate) => candidate.handle === handle);
       if (!action) return failure(`No element for handle "${shown}"`, "No element for that handle");
       return textResult(`Focused ${oneLine(shown, CAP.label)}`, {
@@ -394,6 +451,10 @@ export function registerNavigationBridge(
       if (stale) return stale;
       const shown = typeof args.handle === "string" ? args.handle : undefined;
       const handle = shown === undefined ? undefined : pageHandle(shown);
+      if (handle !== undefined) {
+        const refused = await fenced("scrollTo", handle);
+        if (refused) return refused;
+      }
       await adapter.scrollTo({
         handle,
         x: typeof args.x === "number" ? args.x : undefined,
@@ -436,6 +497,8 @@ export function registerNavigationBridge(
       if (stale) return stale;
       const shown = String(args.handle ?? "");
       const handle = pageHandle(shown);
+      const refused = await fenced("setField", handle);
+      if (refused) return refused;
       const res = await adapter.setField(handle, args.value);
       if (!res.ok) return failure(res.error, `Could not set ${oneLine(shown, CAP.label)}`);
       return textResult(`${oneLine(shown, CAP.label)} ← ${JSON.stringify(args.value)}`, {
@@ -457,6 +520,9 @@ export function registerNavigationBridge(
       if (stale) return stale;
       const shown = String(args.handle ?? "");
       const handle = pageHandle(shown);
+      // Before the describe, the rect and above all the confirm: nothing fenced is ever staged.
+      const refused = await fenced("click", handle);
+      if (refused) return refused;
       const action = (await adapter.describe()).actions.find((a) => a.handle === handle);
       const rect = (await adapter.rectFor?.(handle)) ?? undefined; // capture before the click may navigate away
       if (pendingMode && action?.destructive && adapter.confirm) {
@@ -480,6 +546,8 @@ export function registerNavigationBridge(
       if (stale) return stale;
       const shown = String(args.handle ?? "");
       const handle = pageHandle(shown);
+      const refused = await fenced("submit", handle);
+      if (refused) return refused;
       const rect = (await adapter.rectFor?.(handle)) ?? undefined; // capture before the submit navigates
       if (pendingMode && adapter.confirm) {
         const ok = await adapter.confirm({ action: "submit", handle, label: handle });

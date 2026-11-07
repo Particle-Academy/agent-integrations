@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-11-07
+
+### Security
+
+- **Off-limits areas: an agent can no longer use a page's consent controls.** Co-browsing (`createDomNavigationAgent` + `registerNavigationBridge`) let an agent click a consent banner's "Accept all", flip a category switch or save a preferences dialog. `pendingMode` did not help: a person approving an agent's click is still the agent's act, not consent. An element inside an area marked `data-agent-off-limits` (or matched by the new `exclude` option) is now refused on every path: `click`, `setField`, `submit`, `scrollTo({ handle })`, `rectFor` and the bridge's `page_click`, `page_submit`, `page_set_field`, `page_focus` and `nav_scroll_to`. The refusal is `{ ok: false, error }` with a plain sentence (`OFF_LIMITS_ERROR`). It is checked at action time against the live element, so a handle captured before the marker appeared, or one the agent guessed, is refused too. Activations that land inside an area from outside it are refused as well: a `<label for>`, an ancestor label, `aria-controls` / `popovertarget` / `commandfor`, a submit, reset or image button whose form owns a fenced field (`form=` included), and a radio whose group has a fenced member. The marker reaches through open shadow roots and same-origin frames. A frame whose cross-origin embedder cannot be read is off-limits as a whole unless the host passes `opaqueEmbedder: "allow"`. The README's "Off-limits areas" section is the spec. Found by PS Mapper; reviewed with Prism. **Consumer action:** update. Hosts that wrote their own guard for `@particle-academy/fancy-compliance-ui` (0.2.1 marks its controls) can drop it. An adapter you built over `createDomNavigationAgent()` should add `guard: agent.guard` so the bridge refuses before staging; `createRemoteNavigationAdapter` already does.
+- **No leakage through `describe()` or `read()`.** `describe()` reports an area only as `snapshot.offLimits: [{ role, purpose? }]` (for example `consent dialog`). No control inside it, and no outside control whose activation reaches inside, is listed, and no text from inside it reaches any accessible name. `read()` leaves out the area's text and headings. So an agent cannot learn which option is preselected.
+
+### Added
+
+- `OFF_LIMITS_ATTRIBUTE`, `OFF_LIMITS_ERROR`, `isOffLimits(el, options?)`, and the types `OffLimitsOptions`, `GuardedAction`, `OffLimitsArea`, `NavigationGuardAction` from `./dom-navigation` (the two bridge types also from the root and `./bridges/navigation`).
+- `DomNavigationAgent.guard(action, handle)`, and the wire method `guard`. Adding a method does not change `DOM_NAVIGATION_PROTOCOL`.
+- `NavigationBridgeAdapter.guard`, optional. A guard that throws or answers anything but `{ ok: true }` refuses.
+- `walk`, `readPage` and `accessibleName` take an optional `OffLimitsOptions` second argument. They honour the marker without it.
+
+### Changed
+
+- `submit(handle)` on a field joined to a form by `form="…"` now submits that form; before, it looked only for an ancestor `<form>` and reported none. **Consumer action:** none.
+- An element's accessible name taken from its own text now leaves out text inside an off-limits area. Pages with no marker get the same names as before.
+
 ## [0.57.0] - 2026-11-04
 
 ### Added

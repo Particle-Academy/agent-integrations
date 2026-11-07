@@ -160,6 +160,8 @@ export {
   type PageReadout,
   type PageSnapshot,
   type NavigationConfirmRequest,
+  type NavigationGuardAction,
+  type OffLimitsArea,
 } from "./bridges/navigation";
 export {
   registerCatalogBridge,

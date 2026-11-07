@@ -13,6 +13,7 @@
 import type {
   NavigationBridgeAdapter,
   NavigationConfirmRequest,
+  OffLimitsArea,
   PageAction,
   PageReadout,
   PageSnapshot,
@@ -87,12 +88,25 @@ function coerceAction(v: unknown): PageAction | null {
   return action;
 }
 
+/** Role + purpose only; anything else an (in-page, possibly replaced) walker sends is dropped. */
+function coerceArea(v: unknown): OffLimitsArea | null {
+  if (!isObj(v) || typeof v.role !== "string") return null;
+  const area: OffLimitsArea = { role: v.role };
+  if (typeof v.purpose === "string" && v.purpose !== "") area.purpose = v.purpose;
+  return area;
+}
+
 function coerceSnapshot(v: unknown): PageSnapshot {
   const o = isObj(v) ? v : {};
   const actions = Array.isArray(o.actions)
     ? o.actions.map(coerceAction).filter((a): a is PageAction => a !== null)
     : [];
-  return { url: str(o.url), title: str(o.title), actions };
+  const snap: PageSnapshot = { url: str(o.url), title: str(o.title), actions };
+  const offLimits = Array.isArray(o.offLimits)
+    ? o.offLimits.map(coerceArea).filter((a): a is OffLimitsArea => a !== null)
+    : [];
+  if (offLimits.length > 0) snap.offLimits = offLimits;
+  return snap;
 }
 
 /** A plain string stays a string (the bridge renders it as one line). */
@@ -155,5 +169,8 @@ export function createRemoteNavigationAdapter(options: RemoteNavigationAdapterOp
     click: async (handle) => coerceResult(await call("click", handle).catch(fail)),
     submit: async (handle) => coerceResult(await call("submit", handle).catch(fail)),
     rectFor: async (handle) => coerceRect(await call("rectFor", handle).catch(() => null)),
+    // The off-limits fence, asked in the page. A failed call or a malformed
+    // answer coerces to `ok: false`, so a fence that cannot answer is closed.
+    guard: async (action, handle) => coerceResult(await call("guard", action, handle).catch(fail)),
   };
 }

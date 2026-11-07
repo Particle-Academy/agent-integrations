@@ -575,6 +575,96 @@ alias, and every handle-taking tool maps it back. For `read()`, return a
 can then keep the outline one heading per line, while a plain string is
 rendered as one line.
 
+### Off-limits areas — the marker spec
+
+Some controls must only ever be used by the person: consent ("Accept all", a
+category switch, a preferences dialog), and anything else a host decides an
+agent may not do on someone's behalf. A person approving an agent's click is
+still the agent's act, so `pendingMode` is not a substitute. Mark the area and
+every host's agent is fenced out of it, with no per-host guard.
+
+**This section is normative.** Other implementations (prism-browser, in PHP, TS
+and Python) mirror it, so each rule is stated exactly.
+
+1. **Marker.** The attribute `data-agent-off-limits` on any element. **Presence
+   is the test.** Every value, including `""`, `"false"` and `"0"`, fences. The
+   value may name the area's purpose (`data-agent-off-limits="consent"`); it is
+   reported, capped at 40 characters, and never parsed as a flag. (Values
+   `"true"` and `"false"` are not reported as a purpose.)
+2. **Host selectors.** `createDomNavigationAgent({ exclude })` takes one CSS
+   selector or an array. An element matching any of them is fenced exactly as
+   if it carried the marker. An invalid selector **fails closed**: `describe()`
+   throws and every action is refused. It is never ignored.
+3. **Coverage.** An element is *off-limits* when it, or any element containing
+   it in the **composed** tree, carries the marker or matches an `exclude`
+   selector. The composed ancestor of a node is its parent element; at the top
+   of an open shadow root, the shadow host; at the top of a document, the
+   `frameElement` embedding it (same-origin frames). Matching is re-run on every
+   level, so the marker and the selectors reach through shadow roots and frames.
+4. **Unreadable embedder.** When the document is embedded (`window.parent !==
+   window`) but its `frameElement` cannot be read (a cross-origin parent), the
+   agent cannot tell whether its frame is fenced, so the **whole document is
+   off-limits**. `opaqueEmbedder: "allow"` opts out. A cross-origin iframe
+   inside an area is opaque from the outside: the walker never descends into
+   frames, and the `<iframe>` element itself is fenced like anything else.
+5. **What an action reaches.** An action is refused when **any** element it
+   would activate is off-limits:
+   - the element the handle resolves to;
+   - for a click: a `<label>`'s `control`, and the `control` of the nearest
+     ancestor `<label>`; every id in `aria-controls`, `popovertarget` and
+     `commandfor`; and for a submit, reset or image button, its form (below);
+   - for a submit: the element's form (its `form` owner, which honours the
+     `form=` attribute, else its ancestor `<form>`);
+   - for a click or set on a radio: every radio in its group (same `name`, same
+     form owner), because checking one unchecks the others.
+
+   A **form** is off-limits to submit or reset when the form is off-limits, any
+   element in `form.elements` is (fields joined by `form=` included), or any
+   element inside it carries the marker or matches a selector.
+6. **When it is checked.** At action time, against the **live** element:
+   resolved from the handle, then tested as above. Never a verdict cached from
+   `describe()`. A handle captured before the marker was added, a nested child,
+   and a handle the agent was never shown (an `id` it guessed) are all refused.
+7. **What is refused, and how.** `click`, `setField` (text, select, checkbox,
+   radio), `submit` → `{ ok: false, error }`, where `error` is the sentence
+   `That part of the page is off-limits to agents, so only the person can use
+   it.` (`OFF_LIMITS_ERROR`). `scrollTo({ handle })` throws that sentence;
+   `rectFor` returns `null`, so the agent's cursor never points inside.
+   `guard(action, handle)` answers the same question without acting.
+8. **What `describe()` says.** `snapshot.offLimits` lists each **outermost**,
+   visible area as `{ role, purpose? }`: the explicit `role`, else the implicit
+   one (`dialog`, `form`, `region` for `<section>`, `complementary`,
+   `navigation`, `banner`, `contentinfo`, `main`, `button`, `link`, `frame`),
+   else `area`. A wholly fenced document reports `{ role: "document" }`.
+   **Nothing else.** No element inside an area, and no element outside one
+   whose activation reaches inside (rule 5), appears in `actions`. No text from
+   inside an area reaches an accessible name (`aria-labelledby`, `<label for>`,
+   own text), and `read()` leaves out the area's text and headings. The agent
+   learns the area exists and what it is, never which option is preselected.
+9. **The bridge.** `registerNavigationBridge` asks `adapter.guard` before
+   anything else in `page_click`, `page_submit`, `page_set_field`,
+   `page_focus` and `nav_scroll_to` — before the describe lookup, the rect and
+   `confirm`. So **`pendingMode` never stages an off-limits action**: no person
+   is shown an approval card for it. A guard that throws or answers anything
+   but `{ ok: true }` refuses. `page_describe` prints each area as
+   `Off limits to agents: consent dialog`.
+   `createRemoteNavigationAdapter` supplies `guard`; an adapter you build over
+   `createDomNavigationAgent()` should pass `guard: agent.guard`. Without it the
+   in-page refusal still holds, but a staged action could reach `confirm` first.
+
+```html
+<section data-agent-off-limits="consent" aria-label="Cookie consent">…</section>
+```
+
+```ts
+const agent = createDomNavigationAgent({ exclude: [".cmp-banner", "#onetrust-consent-sdk"] });
+```
+
+There is no keyboard, typing, drag-and-drop, script-evaluation, event-dispatch
+or DOM-mutation tool in this bridge, so none can reach an area or strip the
+marker. `page_focus` only reports a rect. A tool added later must go through
+`guard` the same way.
+
 ## Tools shipped (whiteboard bridge)
 
 | Tool | Purpose |
