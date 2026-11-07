@@ -6,6 +6,7 @@ import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import type { AgentTarget } from "../presence/types";
 import { pushUndoEntry } from "../undo/undo-stack";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
+import { offLimitsPurpose } from "../dom-navigation/agent";
 
 /**
  * One interactive element the agent can act on, addressed by a STABLE handle
@@ -34,7 +35,11 @@ export type PageAction = {
 export type OffLimitsArea = {
   /** The area's ARIA role (explicit or implicit), e.g. "dialog", "region". */
   role: string;
-  /** The marker's value, when it names one, e.g. "consent". */
+  /**
+   * The marker's value, only when it sanitises to one of `OFF_LIMITS_PURPOSES`
+   * ("consent", "payment", "auth", "legal", "other"). The bridge re-sanitises
+   * whatever an adapter sends, so any other string is dropped, never shown.
+   */
   purpose?: string;
 };
 
@@ -304,7 +309,8 @@ export function registerNavigationBridge(
       // Areas: role + purpose only, each one line and capped, whatever the adapter sent.
       const offLimits = (Array.isArray(raw.offLimits) ? raw.offLimits : []).slice(0, CAP.areas).map((a) => {
         const area: { role: string; purpose?: string } = { role: oneLine(a?.role, CAP.role) || "area" };
-        const purpose = oneLine(a?.purpose, CAP.role);
+        // Page-authored text: reported only as a vocabulary word, whatever the adapter sent.
+        const purpose = offLimitsPurpose(a?.purpose);
         if (purpose) area.purpose = purpose;
         return area;
       });

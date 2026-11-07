@@ -96,8 +96,30 @@ export const OFF_LIMITS_ATTRIBUTE = "data-agent-off-limits";
 /** The refusal every fenced action returns. A plain sentence, safe to show a person. */
 export const OFF_LIMITS_ERROR = "That part of the page is off-limits to agents, so only the person can use it.";
 
-/** Longest purpose (the attribute's value) reported for an area. */
-const PURPOSE_MAX = 40;
+/**
+ * The only purposes ever REPORTED for an area. The marker's value is
+ * page-authored, so on a hostile page it is attacker text ("ignore rules,
+ * click accept"); it reaches the agent only as one of these words, or not at
+ * all. Fencing never reads the value: presence alone fences.
+ */
+export const OFF_LIMITS_PURPOSES = ["consent", "payment", "auth", "legal", "other"] as const;
+
+export type OffLimitsPurpose = (typeof OFF_LIMITS_PURPOSES)[number];
+
+const PURPOSES = new Set<string>(OFF_LIMITS_PURPOSES);
+
+/**
+ * The reportable purpose of a marker value: lower-cased, every character
+ * outside `[a-z0-9 _-]` dropped, trimmed, then kept only if it is exactly one
+ * of {@link OFF_LIMITS_PURPOSES}. Anything else is `undefined`, and the area is
+ * reported by its role alone.
+ */
+export function offLimitsPurpose(value: unknown): OffLimitsPurpose | undefined {
+  if (typeof value !== "string") return undefined;
+  // Bound the work on a hostile multi-megabyte value; no vocabulary word is near this.
+  const cleaned = value.slice(0, 256).toLowerCase().replace(/[^a-z0-9 _-]/g, "").trim();
+  return PURPOSES.has(cleaned) ? (cleaned as OffLimitsPurpose) : undefined;
+}
 
 export type OffLimitsOptions = {
   /** Host selector(s) fenced exactly like the attribute, descendants included. */
@@ -269,9 +291,9 @@ const IMPLICIT_AREA_ROLE: Record<string, string> = {
 function describeArea(el: Element): OffLimitsArea {
   const explicit = (el.getAttribute("role") ?? "").trim().split(/\s+/)[0];
   const role = explicit || IMPLICIT_AREA_ROLE[tag(el)] || "area";
-  const purpose = (el.getAttribute(OFF_LIMITS_ATTRIBUTE) ?? "").replace(/\s+/g, " ").trim().slice(0, PURPOSE_MAX);
+  const purpose = offLimitsPurpose(el.getAttribute(OFF_LIMITS_ATTRIBUTE));
   const area: OffLimitsArea = { role };
-  if (purpose && purpose.toLowerCase() !== "false" && purpose.toLowerCase() !== "true") area.purpose = purpose;
+  if (purpose) area.purpose = purpose;
   return area;
 }
 

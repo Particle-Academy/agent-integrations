@@ -18,7 +18,7 @@ import type {
   PageReadout,
   PageSnapshot,
 } from "../bridges/navigation";
-import { DOM_NAVIGATION_METHODS, type ActionResult, type DomNavigationMethod, type HandleRect } from "./agent";
+import { DOM_NAVIGATION_METHODS, offLimitsPurpose, type ActionResult, type DomNavigationMethod, type HandleRect } from "./agent";
 
 /** The global the injected script installs in the world it runs in. */
 export const DOM_NAVIGATION_GLOBAL = "__fancyDomNavigation";
@@ -92,7 +92,8 @@ function coerceAction(v: unknown): PageAction | null {
 function coerceArea(v: unknown): OffLimitsArea | null {
   if (!isObj(v) || typeof v.role !== "string") return null;
   const area: OffLimitsArea = { role: v.role };
-  if (typeof v.purpose === "string" && v.purpose !== "") area.purpose = v.purpose;
+  const purpose = offLimitsPurpose(v.purpose);
+  if (purpose) area.purpose = purpose;
   return area;
 }
 
