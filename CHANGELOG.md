@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING, narrowly: an in-page agent inside a frame whose cross-origin embedder it cannot read now treats the whole document as off-limits.** It cannot tell whether its frame sits inside a fenced area, so it lists no actions and refuses every one. **Consumer action:** none if the agent runs in a top-level document, which covers `DOM_NAVIGATION_SCRIPT` injected through Electron's `executeJavaScriptInIsolatedWorld` into a view's main frame. If you deliberately run the agent inside a cross-origin iframe, pass `createDomNavigationAgent({ opaqueEmbedder: "allow" })`.
 - `submit(handle)` on a field joined to a form by `form="…"` now submits that form; before, it looked only for an ancestor `<form>` and reported none. **Consumer action:** none.
 - An element's accessible name taken from its own text now leaves out text inside an off-limits area. Pages with no marker get the same names as before.
 
