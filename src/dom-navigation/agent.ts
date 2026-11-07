@@ -273,6 +273,57 @@ function reachesFence(action: GuardedAction, el: Element, fence: Fence): boolean
   return targets.some((t) => fence.within(t));
 }
 
+/**
+ * The only roles ever REPORTED for an area. An explicit `role` is page-authored
+ * text, so it reaches the agent only as one of these. `presentation` and `none`
+ * are deliberately absent: they cannot hide an area.
+ */
+export const OFF_LIMITS_ROLES = [
+  "dialog",
+  "form",
+  "region",
+  "complementary",
+  "navigation",
+  "banner",
+  "contentinfo",
+  "main",
+  "button",
+  "link",
+  "frame",
+  "document",
+  "alertdialog",
+  "group",
+  "search",
+  "menu",
+  "menubar",
+  "toolbar",
+  "tabpanel",
+  "list",
+  "listbox",
+  "radiogroup",
+  "tablist",
+  "status",
+] as const;
+
+export type OffLimitsRole = (typeof OFF_LIMITS_ROLES)[number];
+
+const ROLES = new Set<string>(OFF_LIMITS_ROLES);
+
+/**
+ * The reportable role, read the way ARIA reads `role`: the first 256
+ * characters, split on whitespace, each token lower-cased, and the FIRST token
+ * on {@link OFF_LIMITS_ROLES} wins. No match falls back to `implicit` (when it
+ * is on the list), then to `"area"`.
+ */
+export function offLimitsRole(explicit: unknown, implicit?: string): OffLimitsRole | "area" {
+  if (typeof explicit === "string") {
+    for (const token of explicit.slice(0, 256).toLowerCase().split(/\s+/)) {
+      if (ROLES.has(token)) return token as OffLimitsRole;
+    }
+  }
+  return implicit !== undefined && ROLES.has(implicit) ? (implicit as OffLimitsRole) : "area";
+}
+
 const IMPLICIT_AREA_ROLE: Record<string, string> = {
   DIALOG: "dialog",
   FORM: "form",
@@ -289,8 +340,7 @@ const IMPLICIT_AREA_ROLE: Record<string, string> = {
 
 /** What `describe()` says about an area: its role and its purpose. Never its content. */
 function describeArea(el: Element): OffLimitsArea {
-  const explicit = (el.getAttribute("role") ?? "").trim().split(/\s+/)[0];
-  const role = explicit || IMPLICIT_AREA_ROLE[tag(el)] || "area";
+  const role = offLimitsRole(el.getAttribute("role"), IMPLICIT_AREA_ROLE[tag(el)]);
   const purpose = offLimitsPurpose(el.getAttribute(OFF_LIMITS_ATTRIBUTE));
   const area: OffLimitsArea = { role };
   if (purpose) area.purpose = purpose;

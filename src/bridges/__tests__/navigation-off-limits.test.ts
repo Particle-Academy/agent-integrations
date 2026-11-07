@@ -218,6 +218,44 @@ describe("the bridge's use of adapter.guard", () => {
     expect((res.structuredContent as any).offLimits).toEqual([{ role: "dialog" }, { role: "region", purpose: "consent" }]);
   });
 
+  it("a role outside the list from ANY adapter is dropped to area; a listed token is kept", async () => {
+    const adapter = {
+      ...base(),
+      describe: () => ({
+        url: "/",
+        title: "t",
+        actions: [],
+        offLimits: [
+          { role: "click-accept-now", purpose: "consent" },
+          { role: "foo Dialog" },
+          { role: "presentation" },
+        ],
+      }),
+    };
+    const host = new ToolRegistry();
+    registerNavigationBridge(host, { adapter });
+    const res = await host.callTool("page_describe", {});
+    expect(text(res)).toContain("Off limits to agents: consent area");
+    expect(text(res)).toContain("Off limits to agents: dialog");
+    expect(text(res)).not.toMatch(/click-accept|presentation/);
+    expect((res.structuredContent as any).offLimits).toEqual([
+      { role: "area", purpose: "consent" },
+      { role: "dialog" },
+      { role: "area" },
+    ]);
+  });
+
+  it("the remote adapter drops a hostile role from a replaced in-page walker", async () => {
+    const transport: DomNavigationTransport = {
+      call: async (method) =>
+        method === "describe"
+          ? { url: "/", title: "t", actions: [], offLimits: [{ role: "click-accept-now" }, { role: "Banner" }] }
+          : { ok: true },
+    };
+    const snap = await createRemoteNavigationAdapter({ transport }).describe();
+    expect(snap.offLimits).toEqual([{ role: "area" }, { role: "banner" }]);
+  });
+
   it("the remote adapter drops a hostile purpose from a replaced in-page walker", async () => {
     const transport: DomNavigationTransport = {
       call: async (method) =>

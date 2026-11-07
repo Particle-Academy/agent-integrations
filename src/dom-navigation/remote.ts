@@ -18,7 +18,7 @@ import type {
   PageReadout,
   PageSnapshot,
 } from "../bridges/navigation";
-import { DOM_NAVIGATION_METHODS, offLimitsPurpose, type ActionResult, type DomNavigationMethod, type HandleRect } from "./agent";
+import { DOM_NAVIGATION_METHODS, offLimitsPurpose, offLimitsRole, type ActionResult, type DomNavigationMethod, type HandleRect } from "./agent";
 
 /** The global the injected script installs in the world it runs in. */
 export const DOM_NAVIGATION_GLOBAL = "__fancyDomNavigation";
@@ -91,7 +91,7 @@ function coerceAction(v: unknown): PageAction | null {
 /** Role + purpose only; anything else an (in-page, possibly replaced) walker sends is dropped. */
 function coerceArea(v: unknown): OffLimitsArea | null {
   if (!isObj(v) || typeof v.role !== "string") return null;
-  const area: OffLimitsArea = { role: v.role };
+  const area: OffLimitsArea = { role: offLimitsRole(v.role) };
   const purpose = offLimitsPurpose(v.purpose);
   if (purpose) area.purpose = purpose;
   return area;

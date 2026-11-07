@@ -188,6 +188,52 @@ describe("describe(): the reported purpose is sanitised to a fixed vocabulary", 
   });
 });
 
+describe("describe(): the reported role comes from a fixed list, read the way ARIA reads it", () => {
+  const roleOf = (html: string) => {
+    document.body.innerHTML = html;
+    const agent = createDomNavigationAgent();
+    const snap = agent.describe();
+    expect(agent.click("b").error).toMatch(REFUSAL); // the role never affects fencing
+    expect(snap.offLimits).toHaveLength(1);
+    return snap.offLimits![0]!.role;
+  };
+
+  it("an unknown explicit role falls back to the implicit role, then to area", () => {
+    expect(roleOf(`<div data-agent-off-limits role="click-accept-now"><button id="b">B</button></div>`)).toBe("area");
+    expect(roleOf(`<section data-agent-off-limits role="click-accept-now"><button id="b">B</button></section>`)).toBe("region");
+  });
+
+  it("is lower-cased", () => {
+    expect(roleOf(`<div data-agent-off-limits role="Dialog"><button id="b">B</button></div>`)).toBe("dialog");
+  });
+
+  it("the first recognised token wins", () => {
+    expect(roleOf(`<div data-agent-off-limits role="foo dialog"><button id="b">B</button></div>`)).toBe("dialog");
+    expect(roleOf(`<div data-agent-off-limits role="alertdialog dialog"><button id="b">B</button></div>`)).toBe("alertdialog");
+  });
+
+  it("presentation and none cannot hide the area: they fall back", () => {
+    expect(roleOf(`<section data-agent-off-limits role="presentation"><button id="b">B</button></section>`)).toBe("region");
+    expect(roleOf(`<div data-agent-off-limits role="none"><button id="b">B</button></div>`)).toBe("area");
+  });
+
+  it("only the first 256 characters of the attribute are read", () => {
+    expect(roleOf(`<div data-agent-off-limits role="${"x".repeat(256)} dialog"><button id="b">B</button></div>`)).toBe("area");
+  });
+
+  it("the list is exported, and every entry round-trips", () => {
+    const roles = (agentModule as Record<string, unknown>).OFF_LIMITS_ROLES as readonly string[] | undefined;
+    expect(roles).toEqual([
+      "dialog", "form", "region", "complementary", "navigation", "banner", "contentinfo", "main", "button", "link",
+      "frame", "document", "alertdialog", "group", "search", "menu", "menubar", "toolbar", "tabpanel", "list",
+      "listbox", "radiogroup", "tablist", "status",
+    ]);
+    for (const role of roles ?? []) {
+      expect(roleOf(`<div data-agent-off-limits role="${role}"><button id="b">B</button></div>`)).toBe(role);
+    }
+  });
+});
+
 describe("every action on a handle inside the area is refused", () => {
   it("click, by data-co-handle, id and name, with a plain sentence", () => {
     page(CONSENT_PAGE);

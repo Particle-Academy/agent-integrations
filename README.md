@@ -646,10 +646,27 @@ and Python) mirror it, so each rule is stated exactly.
    `guard(action, handle)` answers the same question without acting.
 8. **What `describe()` says.** `snapshot.offLimits` lists each **outermost**,
    visible area as `{ role, purpose? }`, `purpose` sanitised as in rule 1.
-   The role is the explicit `role`, else the implicit
-   one (`dialog`, `form`, `region` for `<section>`, `complementary`,
-   `navigation`, `banner`, `contentinfo`, `main`, `button`, `link`, `frame`),
-   else `area`. A wholly fenced document reports `{ role: "document" }`.
+   The explicit `role` attribute is page-authored text too, so it is read the
+   way ARIA reads it and **reported only from a fixed list**
+   (`OFF_LIMITS_ROLES`): `dialog`, `form`, `region`, `complementary`,
+   `navigation`, `banner`, `contentinfo`, `main`, `button`, `link`, `frame`,
+   `document`, `alertdialog`, `group`, `search`, `menu`, `menubar`, `toolbar`,
+   `tabpanel`, `list`, `listbox`, `radiogroup`, `tablist`, `status`.
+   Take the attribute's first 256 characters; split them on whitespace into
+   tokens; lower-case each token; the **first** token on the list wins. If no
+   token is on the list, use the implicit role: `<dialog>` `dialog`, `<form>`
+   `form`, `<section>` `region`, `<aside>` `complementary`, `<nav>`
+   `navigation`, `<header>` `banner`, `<footer>` `contentinfo`, `<main>`
+   `main`, `<button>` `button`, `<a>` `link`, `<iframe>` `frame`. Any other
+   element is `area`. So `"Dialog"` and `"foo dialog"` report `dialog`, and
+   `"click-accept-now"` reports the implicit role or `area`. `presentation`
+   and `none` are not on the list, so they fall back and cannot hide an area:
+   `role="presentation"` on a `<section>` reports `region`, and `role="none"`
+   on a `<div>` reports `area`. A wholly fenced document reports
+   `{ role: "document" }`. `offLimitsRole(value, implicit?)` is the rule; the
+   in-page walker, `createRemoteNavigationAdapter` and the bridge each apply
+   it, so a replaced walker or a host adapter can report only a listed role or
+   `area`. The role never affects fencing.
    **Nothing else.** No element inside an area, and no element outside one
    whose activation reaches inside (rule 5), appears in `actions`. No text from
    inside an area reaches an accessible name (`aria-labelledby`, `<label for>`,
