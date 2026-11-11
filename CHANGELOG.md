@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Releases need a lab-run certificate.** `publish.yml` gains a read-only
+  `lab-certificate` job that every publishing job needs: a tag is published only
+  when the fancy-labs lab has certified that exact version and commit. Consumers
+  do nothing; this changes how releases are cut, not what the package does.
+
 ## [0.58.0] - 2026-11-07
 
 ### Security
@@ -805,7 +812,6 @@ Implements the decided co-browse design — **site tools always; page tools whil
   filesystem is the authority, and reporting its refusal as success would tell
   the agent a folder exists that does not.
 
-
 ## [0.40.0] - 2026-08-11
 
 ### Fixed
@@ -844,7 +850,6 @@ Implements the decided co-browse design — **site tools always; page tools whil
   contributes its bridges permanently or only while mounted, and that does not
   belong inside a bug fix. The leak is the part that is visibly wrong today, and
   it is fixed independently of how that question is answered.
-
 
 ## [0.39.1] — 2026-08-10
 
@@ -942,7 +947,6 @@ Implements the decided co-browse design — **site tools always; page tools whil
   the grid is controlled — a bridge mutating pieces separately would drift from
   what the component accepts. Every view change is undoable via `agent_undo`.
 
-
 ## [0.38.0] — 2026-08-09
 
 ### Added
@@ -972,7 +976,6 @@ Implements the decided co-browse design — **site tools always; page tools whil
   **What you must do:** nothing. Every field is optional, and a row without them
   renders exactly as before — pinned by a test.
 
-
 ### Added
 
 - **A shared-substrate parity suite** (`src/bridges/__tests__/substrate-parity.test.ts`)
@@ -990,7 +993,6 @@ Implements the decided co-browse design — **site tools always; page tools whil
   itself created, with `registerCmsBridge` adding two domain ops and nothing
   else — the generic bridge doing the work, which is what "no CMS-specific
   bridge" was supposed to mean.
-
 
 ## [0.37.0] — 2026-08-07
 
@@ -1011,7 +1013,6 @@ Implements the decided co-browse design — **site tools always; page tools whil
 ### Why
 
 These are the kit 0.5 platform floors, applied across every package at once so a consumer never has to resolve a mix. **No API changed, nothing was removed, nothing was renamed** — only what the package requires.
-
 
 ## [0.36.0] — 2026-08-03
 
@@ -1116,7 +1117,6 @@ These are the kit 0.5 platform floors, applied across every package at once so a
   `idleAfterMs={0}` for the old always-on behaviour. Connect / disconnect frames
   still update the caption of a cursor that is already on screen; they just
   never conjure one, and never extend its life.
-
 
 ## [0.34.0] — 2026-07-31
 
