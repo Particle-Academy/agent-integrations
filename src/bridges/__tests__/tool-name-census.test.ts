@@ -10,6 +10,7 @@ import { registerCatalogBridge } from "../catalog";
 import { registerChartsBridge } from "../charts";
 import { registerCmsBridge } from "../cms";
 import { registerCodeBridge } from "../code";
+import { registerContentReactionBridge } from "../content-reaction";
 import { registerFeaturesBridge } from "../features";
 import { registerFilesBridge } from "../files";
 import { registerFlowBridge } from "../flow";
@@ -65,6 +66,7 @@ const BRIDGES: Record<string, (host: ToolHost) => unknown> = {
   registerChartsBridge: (h) => registerChartsBridge(h, { adapter: anything() } as never),
   registerCmsBridge: (h) => registerCmsBridge(h, { adapter: anything() } as never),
   registerCodeBridge: (h) => registerCodeBridge(h, { adapter: anything() } as never),
+  registerContentReactionBridge: (h) => registerContentReactionBridge(h, { adapter: anything() } as never),
   registerFeaturesBridge: (h) => registerFeaturesBridge(h, { adapter: anything() } as never),
   registerFilesBridge: (h) => registerFilesBridge(h, { adapter: anything() } as never),
   registerFlowBridge: (h) => registerFlowBridge(h, { adapter: anything() } as never),

@@ -89,6 +89,7 @@ Every bridge has a matching subpath if you'd rather import surgically:
 | screens             | `…/bridges/screens`                                    |
 | screen contents     | `…/bridges/screen-doc`                                 |
 | passkeys            | `…/bridges/passkeys`                                   |
+| content reactions   | `…/bridges/content-reaction`                           |
 | sheets adapter hook | `…/sheets-adapter`                                     |
 | presence            | `…/presence`                                           |
 | undo                | `…/undo`                                               |
@@ -99,6 +100,30 @@ Every bridge has a matching subpath if you'd rather import surgically:
 ### Charts bridge: read-only
 
 `registerChartsBridge(host, { readOnly: true, adapter: { id, getOption } })` lets an agent read a chart and gives it no way to change what the chart draws: the three writing tools are not listed, and `chart_describe` reports `readOnly: true`. Use it when the numbers on screen must be the ones an engine produced.
+
+### Content reaction bridge
+
+`registerContentReactionBridge` drives the reactions on a comment, post or message (react-fancy's `ContentReaction`) through the same state the component reads. The adapter is structural, so it works with any react-fancy version, or with no react-fancy at all:
+
+```ts
+import { registerContentReactionBridge } from "@particle-academy/agent-integrations/bridges/content-reaction";
+
+const bridge = registerContentReactionBridge(host, {
+  adapter: {
+    id: comment.id,                       // agents select the content by this
+    title: `Comment by ${comment.author}`,
+    getValue: () => mine,                 // the component's `value`
+    setValue: (next) => setMine(next),    // the component's `onChange`; may return a Promise
+    getReactions: () => DEFAULT_CONTENT_REACTIONS,
+    getCounts: () => counts,              // optional
+    getMode: () => "multi",               // optional
+  },
+});
+```
+
+Tools: `reaction_list`, `reaction_read` (value, counts, available reactions, mode), `reaction_toggle` (one key, by the component's rule: in single mode choosing a key replaces the active one) and `reaction_set` (the whole value). Writes broadcast an `AgentActivity` event (kind `"reaction"`, element = the content id) and push an undo entry. A refused, declined or no-op write does neither.
+
+Every comment on a page can register on the **same** host: the tools are registered once and take a `content` argument, optional while exactly one content is mounted (the form bridge's model). `dispose()` removes only that content. A reaction is posted as the human, so `pendingMode: true` stages writes behind a host `confirm` hook, or `confirm: true` on the call. It is off by default.
 
 ### Screens bridge: acknowledge after the host commits
 

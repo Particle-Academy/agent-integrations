@@ -277,6 +277,16 @@
         "default": "./dist/bridges-navigation.cjs"
       }
     },
+    "./bridges/content-reaction": {
+      "import": {
+        "types": "./dist/bridges/content-reaction.d.ts",
+        "default": "./dist/bridges-content-reaction.js"
+      },
+      "require": {
+        "types": "./dist/bridges/content-reaction.d.cts",
+        "default": "./dist/bridges-content-reaction.cjs"
+      }
+    },
     "./dom-navigation": {
       "import": {
         "types": "./dist/dom-navigation/index.d.ts",

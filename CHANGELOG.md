@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`registerContentReactionBridge(host, { adapter })`**, for react-fancy's new `ContentReaction` (emoji reactions on a comment, post or message). Tools: `reaction_list`, `reaction_read` (active keys, aggregate counts, available reactions, mode), `reaction_toggle` (one key, by the component's rule: single mode replaces the active reaction, and toggling the active one clears it) and `reaction_set` (the whole value; unknown keys, and more than one key in single mode, are refused). Writes broadcast an `AgentActivity` event (kind `"reaction"`, element = the content id) and push an undo entry; a refused, declined or no-op write does neither. `setValue` may return a Promise and refuse with `{ ok: false, error }`. Several contents share one host: the tools are registered once and select a content with `content`, as the form bridge does. Optional `pendingMode` with a `confirm` hook (off by default). The adapter is structural, so the bridge needs no react-fancy version and adds no dependency. From the root barrel and `@particle-academy/agent-integrations/bridges/content-reaction`.
+
 ### Changed
 
 - **Releases need a lab-run certificate.** `publish.yml` gains a read-only

@@ -191,6 +191,16 @@ export {
   type PasskeySurfaceState,
   type PasskeyProposal,
 } from "./bridges/passkeys";
+// Reactions on a comment, post or message (react-fancy ContentReaction). The
+// adapter is structural, so this needs no particular react-fancy version.
+export {
+  registerContentReactionBridge,
+  type ContentReactionBridgeAdapter,
+  type ContentReactionBridgeOptions,
+  type ContentReactionConfirmRequest,
+  type ContentReactionDescriptor,
+  type ContentReactionMode,
+} from "./bridges/content-reaction";
 export {
   registerDocBridge,
   type DocAdapter,
