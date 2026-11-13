@@ -7,6 +7,7 @@ import type { AgentTarget } from "../presence/types";
 import { pushUndoEntry } from "../undo/undo-stack";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 import { offLimitsPurpose, offLimitsRole } from "../dom-navigation/agent";
+import { oneLine } from "./text-safety";
 
 /**
  * One interactive element the agent can act on, addressed by a STABLE handle
@@ -150,26 +151,8 @@ const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
 // ───────────── Text safety ─────────────
 //
 // Every string below the adapter is page-supplied, and the page may be hostile.
-// The tool TEXT is what lands in the agent's context, so a line break inside a
-// label would let the page write its own lines there: a forged action, a forged
-// heading, forged tool framing. Each page string is therefore rendered on ONE
-// line, with C0/C1 controls and the Unicode line/paragraph separators replaced,
-// and capped. (Control characters are tested by code point, so no escape
-// sequence is involved.)
-
-const isControl = (code: number) =>
-  code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
-
-/** One line, controls replaced by spaces, whitespace collapsed, capped at `max`. */
-function oneLine(value: unknown, max: number): string {
-  const raw = typeof value === "string" ? value : value == null ? "" : String(value);
-  // Bound the work on a hostile multi-megabyte string before scanning it.
-  const bounded = raw.length > max * 4 ? raw.slice(0, max * 4) : raw;
-  let out = "";
-  for (const c of bounded) out += isControl(c.charCodeAt(0)) ? " " : c;
-  out = out.replace(/\s+/g, " ").trim();
-  return out.length > max ? out.slice(0, max - 3) + "..." : out;
-}
+// Each is rendered on ONE line through `oneLine` (./text-safety, shared with
+// the sign bridge); see that file for why.
 
 /**
  * A handle shown verbatim must not be able to imitate the `[handle] role:`

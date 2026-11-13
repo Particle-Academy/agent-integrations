@@ -191,6 +191,34 @@ export {
   type PasskeySurfaceState,
   type PasskeyProposal,
 } from "./bridges/passkeys";
+// E-signature, the SENDER's half only: read envelopes, author a draft, propose
+// send / void / reminder. Nothing here verifies a code, consents, adopts a mark,
+// signs or declines, and nothing ever should; see the header of ./bridges/sign.
+export {
+  registerSignBridge,
+  SIGN_BRIDGE_TOOLS,
+  SIGN_FORBIDDEN_TOOL_NAME,
+  SIGNER_TEXT_NOTICE,
+  type SignBridgeAdapter,
+  type SignBridgeOptions,
+  type SignEnvelopeLike,
+  type SignEnvelopeStatus,
+  type SignSignerLike,
+  type SignSignerStatus,
+  type SignSignerInput,
+  type SignFieldLike,
+  type SignFieldKind,
+  type SignAnchor,
+  type SignSettingsLike,
+  type SignSettingsPatch,
+  type SignPerPage,
+  type SignStepUp,
+  type SignCompletionLike,
+  type SignEventLike,
+  type SignVerifyResultLike,
+  type SignProposal,
+  type SignerText,
+} from "./bridges/sign";
 // Reactions on a comment, post or message (react-fancy ContentReaction). The
 // adapter is structural, so this needs no particular react-fancy version.
 export {

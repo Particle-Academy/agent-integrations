@@ -237,6 +237,16 @@
         "default": "./dist/bridges-passkeys.cjs"
       }
     },
+    "./bridges/sign": {
+      "import": {
+        "types": "./dist/bridges/sign.d.ts",
+        "default": "./dist/bridges-sign.js"
+      },
+      "require": {
+        "types": "./dist/bridges/sign.d.cts",
+        "default": "./dist/bridges-sign.cjs"
+      }
+    },
     "./bridges/doc": {
       "import": {
         "types": "./dist/bridges/doc.d.ts",

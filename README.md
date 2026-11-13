@@ -89,6 +89,7 @@ Every bridge has a matching subpath if you'd rather import surgically:
 | screens             | `…/bridges/screens`                                    |
 | screen contents     | `…/bridges/screen-doc`                                 |
 | passkeys            | `…/bridges/passkeys`                                   |
+| sign (e-signature)  | `…/bridges/sign`                                       |
 | content reactions   | `…/bridges/content-reaction`                           |
 | sheets adapter hook | `…/sheets-adapter`                                     |
 | presence            | `…/presence`                                           |
@@ -770,6 +771,24 @@ to you:
   `confirm` argument that would apply it (revoking the last passkey is a lockout).
   `passkey_list` re-projects onto the public summary fields, so handing it your
   ORM model cannot leak a public key, a user handle, or a signature counter.
+- **E-signature is the sender's half only, and that is not a gap.**
+  `registerSignBridge` (fancy-sign) reads envelopes (`sign_list_envelopes`,
+  `sign_get_envelope`, `sign_timeline`, `sign_verify`), authors a **draft**
+  (`sign_place_field`, `sign_move_field`, `sign_remove_field`,
+  `sign_set_signers`, `sign_set_settings`, all undoable) and **stages**
+  `sign_propose_send`, `sign_propose_void` and `sign_propose_reminder` for the
+  human to confirm, with no `confirm` argument that would act. It has no tool
+  that verifies a one-time code, accepts consent, adopts a mark, signs or
+  declines: those are the signer's acts, and the audit trail means something
+  only because a person did them. `SIGN_FORBIDDEN_TOOL_NAME` is the pattern a
+  test holds every tool name against. Signer-written text (decline reasons,
+  signer names, user agents, every string in an event's `data`) reaches the
+  agent as `{ "untrusted": "signer-written", "text": "..." }` on one line, after
+  `SIGNER_TEXT_NOTICE`. `sign_timeline` labels `page.viewed` "reported by the
+  signer's browser", because it is a claim, not an observation.
+  `sign_set_settings` refuses `level: "ades"` and any PAdES `seal`: those
+  phases are not built. The adapter is structural (the phase-1 wire contract),
+  so the bridge needs no fancy-sign package installed.
 - **Activity reaches every peer; tool results reach the caller only if clients
   label themselves.** Since 0.44.0 a reply goes only to the client that asked
   when clients send a `client` query parameter; unlabelled clients still get
