@@ -132,6 +132,15 @@ export type CoworkSessionOptions = {
    * `data-cowork-blocked="ranked|baton"` while it holds.
    */
   blockInput?: boolean | { target?: EventTarget; isUserEvent?: (event: Event) => boolean; onBlocked?: (event: Event) => void };
+  /**
+   * Shared document fields (handle globs, `*` any run): a peer's edit to one of
+   * these, made on the SAME route as this browser, is applied here too, last
+   * writer wins (the multi-page document editor). It goes through the same DOM
+   * masking and `guard` as a drive, a masked value is never sent in the first
+   * place, a field the person is typing in waits for their blur (and is dropped if
+   * they edit it first), and an applied value is not echoed back. Default none.
+   */
+  sharedFields?: string[];
 };
 
 export type SendOptions = { view?: Ref; to?: Ref[] };
@@ -160,6 +169,15 @@ export interface CoworkSession {
 }
 
 const VIEW_KINDS = new Set(["visit", "scroll", "field", "focus", "click", "submit"]);
+const ALLOW_DECISION: Decision = { allow: true };
+/** Comparable form of a field value; a value that cannot be encoded never matches. */
+const stableJson = (value: unknown): string => {
+  try {
+    return JSON.stringify(value) ?? "undefined";
+  } catch {
+    return " unencodable";
+  }
+};
 const GUARD_ACTION: Partial<Record<Intent["kind"], NavigationGuardAction>> = {
   field: "setField",
   focus: "focus",
@@ -191,6 +209,10 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   let snapshot: CoworkSnapshot | null = null;
   let snapshotKey = "";
   let destroyed = false;
+  /** Shared fields: the value last applied from a peer, per handle (its echo is not re-sent). */
+  const appliedShared = new Map<string, string>();
+  /** Shared fields: a peer's value waiting for the person to leave the field. */
+  const waitingShared = new Map<string, { from: Ref; intent: Extract<Intent, { kind: "field" }> }>();
 
   // One queue for every state change, local or remote. The engine is async
   // (host callbacks may be), so without it two frames could each be judged
@@ -429,6 +451,17 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         return decision;
       };
 
+      // Shared fields: the person's own edit is the newest, so a value waiting for
+      // blur is dropped; and the echo of a value this browser just APPLIED from a
+      // peer (the host reports every input event, including that one) is not sent
+      // back, or two editors would ping-pong it forever.
+      if (intent.kind === "field" && view === self) {
+        waitingShared.delete(intent.handle);
+        const applied = appliedShared.get(intent.handle);
+        appliedShared.delete(intent.handle);
+        if (applied !== undefined && applied === stableJson(intent.value)) return ALLOW_DECISION;
+      }
+
       // Masking happens HERE, before the pipeline and before the wire: a masked
       // value must never be in a frame, refused or not.
       if (intent.kind === "field" || intent.kind === "click" || intent.kind === "submit") {
@@ -489,7 +522,10 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     return null;
   };
 
-  /** Perform an intent on THIS browser's page. Only ever called for the owner's own view. */
+  /**
+   * Perform an intent on THIS browser's page: a drive into the owner's own view, a
+   * followed leader's navigation, or a shared field from a peer on the same route.
+   */
   const applyToPage = async (from: Ref, intent: Intent): Promise<void> => {
     const adapter = options.adapter;
     if (!adapter) return;
@@ -553,6 +589,16 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       await applyToPage(from, intent);
       return;
     }
+    if (view === from && from !== self && intent.kind === "field" && sharesField(intent.handle) && onSameRoute(from)) {
+      // A peer on this same page edited a shared document field: last writer wins,
+      // except over a field the person is typing in, which waits for their blur.
+      if (isFocused(intent.handle)) {
+        waitingShared.set(intent.handle, { from, intent });
+        return;
+      }
+      await applyShared(from, intent);
+      return;
+    }
     if (view === from && followed && (intent.kind === "visit" || intent.kind === "scroll")) {
       // Following: mirror the leader's navigation onto this page, then say where we are now.
       if (intent.kind === "visit") {
@@ -564,6 +610,39 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       }
     }
   };
+
+  // -------------------------------------------------------------------------
+  // Shared document fields (opt-in per page)
+  // -------------------------------------------------------------------------
+
+  const sharesField = (handle: string): boolean => (options.sharedFields ?? []).some((glob) => globMatch(glob, handle));
+  const onSameRoute = (ref: Ref): boolean => {
+    const them = state.participants[ref];
+    const me = state.participants[self];
+    return !!them && !!me && them.route === me.route;
+  };
+  const isFocused = (handle: string): boolean => {
+    const el = elementFor(handle);
+    return !!el && el.ownerDocument?.activeElement === el;
+  };
+  /** Apply through the same DOM masking and guard as a drive; remember it so its echo is not re-sent. */
+  async function applyShared(from: Ref, intent: Extract<Intent, { kind: "field" }>): Promise<void> {
+    appliedShared.set(intent.handle, stableJson(intent.value));
+    await applyToPage(from, intent);
+  }
+  const onFocusOut = (event: Event) => {
+    const target = event.target as Element | null;
+    for (const [handle, waiting] of [...waitingShared]) {
+      if (elementFor(handle) !== target) continue;
+      waitingShared.delete(handle);
+      void serial(async () => {
+        if (destroyed || !onSameRoute(waiting.from)) return;
+        await applyShared(waiting.from, waiting.intent);
+      });
+    }
+  };
+  const focusScope = root() as unknown as EventTarget | null;
+  focusScope?.addEventListener("focusout", onFocusOut);
 
   /** Queue a report behind the current work rather than inside it. */
   const sendIntentLater = (intent: Intent) => Promise.resolve().then(() => sendIntent(intent));
@@ -737,6 +816,9 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       clearTimeout(cursorTimer);
       blocker?.destroy();
       syncBlock();
+      focusScope?.removeEventListener("focusout", onFocusOut);
+      waitingShared.clear();
+      appliedShared.clear();
       offFrame();
       offPresence();
       transport.close();

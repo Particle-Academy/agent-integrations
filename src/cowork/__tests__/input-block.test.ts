@@ -235,7 +235,8 @@ describe("a cowork session blocks the lower-ranked person for real", () => {
     const removed = vi.spyOn(user.root, "removeEventListener");
     user.session.destroy();
     // A leftover listener would be inert, but it is still a leak on every session: remove each one.
-    expect(new Set(removed.mock.calls.map(([type]) => type))).toEqual(new Set(BLOCKED_EVENTS));
+    const removedTypes = new Set(removed.mock.calls.map(([type]) => type));
+    for (const type of BLOCKED_EVENTS) expect(removedTypes.has(type)).toBe(true);
     expect(user.root.hasAttribute("data-cowork-blocked")).toBe(false);
     expect(fire(user.input, keydown()).reached).toBe(true);
   });

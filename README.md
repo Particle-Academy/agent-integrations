@@ -776,6 +776,12 @@ const session = useCoworkSession({
   pipeline). `direct` needs client events enabled on your socket server and a channel
   that passes the server-stamped `userId` to whisper listeners. `createMemoryTransport`
   is for tests and demos.
+- **Shared document fields** (the multi-page document editor): pass
+  `sharedFields: ["doc.*"]` and a peer's edit to a matching field, made on the same
+  route as you, is applied on your page too, last writer wins. Peers on other pages
+  see only presence. It goes through the same masking and `guard` as a drive, a field
+  you are typing in waits for your blur (and is dropped if you edit it first), and a
+  value applied from a peer is not echoed back. Off unless you list handles.
 - **An agent joins as an ordinary participant** with `registerCoworkBridge(server, {
   session })`, where `session` is the agent's own `createCoworkSession` (its own ref,
   the host's same `config` and `authorize`). Four tools, a closed list

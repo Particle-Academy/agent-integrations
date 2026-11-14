@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   **Signer-written text is fenced as data.** A decline reason, a signer's name, a user agent and every string in an event's `data` reach the agent as `{ "untrusted": "signer-written", "text": "..." }`, on one line (controls and line breaks collapsed, capped), and every tool that can return one leads its text with `SIGNER_TEXT_NOTICE`. Records are re-projected onto the wire contract's fields, so a host handing over its ORM model cannot leak a signer's link-token hash or OTP state. `sign_timeline` labels `page.viewed` (`source: "client"`) "reported by the signer's browser" and every other event "observed by the server". `sign_set_settings` refuses `level: "ades"` and any `seal` other than `"none"`: advanced signatures and PAdES seals are later phases. The adapter type is local and structural, so the bridge adds no dependency and needs no fancy-sign package installed.
 
+- **Shared document fields for peers on the same page** (`sharedFields`, handle globs):
+  a peer's edit to a shared field, made on the same route, is applied here too, last
+  writer wins; other pages see only presence. The same DOM masking and `guard` as a
+  drive apply, a focused field waits for blur and is dropped if the person edits it
+  first, and an applied value is not echoed back, so two editors cannot ping-pong
+  it. **Off by default**; nothing changes unless a page lists handles.
 - **`registerCoworkBridge(server, { session })`**: an agent joins a co-work session as
   an ordinary participant, through its own `CoworkSession`, under the same policy,
   middleware and control mode as a person. A closed list of four tools,
