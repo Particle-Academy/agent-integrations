@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   **Signer-written text is fenced as data.** A decline reason, a signer's name, a user agent and every string in an event's `data` reach the agent as `{ "untrusted": "signer-written", "text": "..." }`, on one line (controls and line breaks collapsed, capped), and every tool that can return one leads its text with `SIGNER_TEXT_NOTICE`. Records are re-projected onto the wire contract's fields, so a host handing over its ORM model cannot leak a signer's link-token hash or OTP state. `sign_timeline` labels `page.viewed` (`source: "client"`) "reported by the signer's browser" and every other event "observed by the server". `sign_set_settings` refuses `level: "ades"` and any `seal` other than `"none"`: advanced signatures and PAdES seals are later phases. The adapter type is local and structural, so the bridge adds no dependency and needs no fancy-sign package installed.
 
+- **`registerCoworkBridge(server, { session })`**: an agent joins a co-work session as
+  an ordinary participant, through its own `CoworkSession`, under the same policy,
+  middleware and control mode as a person. A closed list of four tools,
+  `COWORK_BRIDGE_TOOLS`: `cowork_peers` (refs, labels, routes, follows, control; never
+  cursors or field names), `cowork_follow`, `cowork_request_control` (queues; the
+  holder decides) and `cowork_release_control`. Refusals return their named reason.
+  From the root barrel and `@particle-academy/agent-integrations/bridges/cowork`.
+
 ### Changed
 
 - The one-line text sanitiser the navigation bridge applies to page-supplied strings moved to an internal module (`src/bridges/text-safety.ts`) so the sign bridge uses the same one. No behaviour change; it is not exported.

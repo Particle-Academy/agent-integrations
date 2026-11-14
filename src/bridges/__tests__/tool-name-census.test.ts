@@ -11,6 +11,7 @@ import { registerChartsBridge } from "../charts";
 import { registerCmsBridge } from "../cms";
 import { registerCodeBridge } from "../code";
 import { registerContentReactionBridge } from "../content-reaction";
+import { registerCoworkBridge } from "../cowork";
 import { registerFeaturesBridge } from "../features";
 import { registerFilesBridge } from "../files";
 import { registerFlowBridge } from "../flow";
@@ -68,6 +69,7 @@ const BRIDGES: Record<string, (host: ToolHost) => unknown> = {
   registerCmsBridge: (h) => registerCmsBridge(h, { adapter: anything() } as never),
   registerCodeBridge: (h) => registerCodeBridge(h, { adapter: anything() } as never),
   registerContentReactionBridge: (h) => registerContentReactionBridge(h, { adapter: anything() } as never),
+  registerCoworkBridge: (h) => registerCoworkBridge(h, { session: anything(), id: "census" } as never),
   registerFeaturesBridge: (h) => registerFeaturesBridge(h, { adapter: anything() } as never),
   registerFilesBridge: (h) => registerFilesBridge(h, { adapter: anything() } as never),
   registerFlowBridge: (h) => registerFlowBridge(h, { adapter: anything() } as never),

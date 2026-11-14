@@ -191,6 +191,9 @@ export {
   type PasskeySurfaceState,
   type PasskeyProposal,
 } from "./bridges/passkeys";
+// An agent joins a co-work session as an ordinary participant, under the same
+// policy and control mode as a person. Closed tool list; see ./bridges/cowork.
+export { registerCoworkBridge, COWORK_BRIDGE_TOOLS, type CoworkBridgeOptions } from "./bridges/cowork";
 // E-signature, the SENDER's half only: read envelopes, author a draft, propose
 // send / void / reminder. Nothing here verifies a code, consents, adopts a mark,
 // signs or declines, and nothing ever should; see the header of ./bridges/sign.

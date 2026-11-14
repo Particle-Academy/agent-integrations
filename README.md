@@ -776,6 +776,14 @@ const session = useCoworkSession({
   pipeline). `direct` needs client events enabled on your socket server and a channel
   that passes the server-stamped `userId` to whisper listeners. `createMemoryTransport`
   is for tests and demos.
+- **An agent joins as an ordinary participant** with `registerCoworkBridge(server, {
+  session })`, where `session` is the agent's own `createCoworkSession` (its own ref,
+  the host's same `config` and `authorize`). Four tools, a closed list
+  (`COWORK_BRIDGE_TOOLS`): `cowork_peers`, `cowork_follow`, `cowork_request_control`,
+  `cowork_release_control`. Same policy, middleware and control mode as a person; a
+  refusal comes back with its named reason. Nothing grants control, writes into a
+  page, or reports cursors or field names. Also at
+  `@particle-academy/agent-integrations/bridges/cowork`.
 - `@particle-academy/agent-integrations/cowork` is the headless entry (engine,
   transports, `createCoworkSession`), with no React.
 
