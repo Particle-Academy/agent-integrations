@@ -790,6 +790,16 @@ const session = useCoworkSession({
   refusal comes back with its named reason. Nothing grants control, writes into a
   page, or reports cursors or field names. Also at
   `@particle-academy/agent-integrations/bridges/cowork`.
+- **Presence routing** (`presenceRouting: "server" | "direct" | "auto"`). Cursors and
+  the masked-field "activity" indicator are lossy presence. `direct` whispers them, and a
+  receiver attributes a whisper only by the sender the socket server stamps on it
+  (Reverb and Pusher do); an unstamped whisper is dropped, so no peer can forge another's
+  cursor. `server` posts them as `cursor` / `activity` intents to the intent endpoint,
+  where the server stamps the authenticated sender and relays them; cursors then default
+  to 10 per second (`cursorIntervalMs: 100`, the server's `rate.cursorsPerSecond`), and a
+  refused one is dropped and reported once, never retried. `auto` (the default) is
+  `server` on `createServerTransport` and `direct` otherwise. **Sockudo (Genie's
+  WebSockets service) does not stamp senders on client events: use `server`.**
 - `@particle-academy/agent-integrations/cowork` is the headless entry (engine,
   transports, `createCoworkSession`), with no React.
 

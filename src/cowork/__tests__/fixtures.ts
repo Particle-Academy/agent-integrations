@@ -12,7 +12,7 @@ export const FIXTURES_PATH = join(dirname(fileURLToPath(import.meta.url)), "cowo
 // Pinned in EVERY leg: particle-academy/fancy-cowork (PHP), @particle-academy/fancy-cowork
 // (Node) and this client engine. A copy that drifts in one repository fails that
 // repository's suite, so "byte-identical" is a test result rather than a promise.
-export const FIXTURES_SHA256 = "67dbcbd8a3b56e488b040447c51335d20048a876f499c37d0c727714128f9a45";
+export const FIXTURES_SHA256 = "e2bcca743f147be1d8b2cdd7267fad2ea7eab4f3b0b3a113501a7ce6b98ed6b5";
 
 export const RAW = readFileSync(FIXTURES_PATH);
 export const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");

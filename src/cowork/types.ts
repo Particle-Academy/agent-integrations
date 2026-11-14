@@ -8,8 +8,16 @@
 export type Ref = string;
 export type MaybePromise<T> = T | Promise<T>;
 
-export const INTENT_KINDS = ["visit", "scroll", "field", "focus", "click", "submit", "control", "app"] as const;
+export const INTENT_KINDS = ["visit", "scroll", "field", "focus", "click", "submit", "control", "app", "cursor", "activity"] as const;
 export type IntentKind = (typeof INTENT_KINDS)[number];
+
+/**
+ * Presence kinds: lossy, view-less, never subject to limits, masking, revision or
+ * control, and changing no state but their rate counters. They exist so a socket
+ * server that does not stamp a client event's sender (Sockudo) can still carry
+ * cursors and field activity: the client posts them, the server stamps the sender.
+ */
+export const PRESENCE_KINDS = ["cursor", "activity"] as const;
 
 /** Kinds that act on a view: they need an envelope `view` and `revision`. */
 export const VIEW_KINDS = ["visit", "scroll", "field", "focus", "click", "submit"] as const;
@@ -25,7 +33,9 @@ export type Intent =
   | { kind: "click"; handle: string }
   | { kind: "submit"; handle: string }
   | { kind: "control"; op: ControlOp; target?: Ref }
-  | { kind: "app"; topic: string; payload: unknown };
+  | { kind: "app"; topic: string; payload: unknown }
+  | { kind: "cursor"; route: string; anchor?: string; fx?: number; fy?: number; x?: number; y?: number }
+  | { kind: "activity"; handle: string; active: boolean };
 
 /** What travels with an intent. `from`, `session` and `at` are stamped by whoever runs the pipeline. */
 export type Envelope = {
@@ -61,7 +71,7 @@ export type SessionConfig = {
   control: ControlConfig;
   routing: Routing;
   limits: { allow: LimitRule[]; deny: LimitRule[]; mask: string[]; viewOnly: string[] };
-  rate: { intentsPerSecond: number; visitsPerSecond: number; appPerMinute: number; startsPerMinute: number };
+  rate: { intentsPerSecond: number; visitsPerSecond: number; appPerMinute: number; startsPerMinute: number; cursorsPerSecond: number };
   size: { intentBytes: number; appBytes: number };
   maxParticipants: number;
 };
@@ -105,8 +115,11 @@ export type SessionState = {
   /** Ranked control: last committed intent time per view, per sender. */
   last: Record<Ref, Record<Ref, number>>;
   /** Committed intent times per sender, for the rate windows. */
-  rate: Record<Ref, { all: number[]; visit: number[]; app: number[] }>;
+  rate: Record<Ref, RateTimes>;
 };
+
+/** Committed intent times for one sender. `cursor` is absent on state written before it existed. */
+export type RateTimes = { all: number[]; visit: number[]; app: number[]; cursor?: number[] };
 
 export type Participant = { ref: Ref; label?: string; attributes?: Record<string, unknown>; actingFor?: Ref };
 

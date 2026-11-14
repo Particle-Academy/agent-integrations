@@ -8,7 +8,7 @@
       "control": { "mode": "baton" },
       "routing": "server",
       "limits": { "allow": [], "deny": [], "mask": [], "viewOnly": [] },
-      "rate": { "intentsPerSecond": 10, "visitsPerSecond": 1, "appPerMinute": 30, "startsPerMinute": 5 },
+      "rate": { "intentsPerSecond": 10, "visitsPerSecond": 1, "appPerMinute": 30, "startsPerMinute": 5, "cursorsPerSecond": 10 },
       "size": { "intentBytes": 8192, "appBytes": 16384 },
       "maxParticipants": 16
     }
@@ -89,6 +89,52 @@
         { "op": "intent", "at": 90, "from": "a", "envelope": { "to": ["b"] }, "intent": { "kind": "app", "topic": "note", "payload": { "__proto__": { "polluted": true } } }, "expect": { "allow": true } },
         { "op": "intent", "at": 100, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "/next" }, "expect": { "allow": true } },
         { "op": "expectView", "view": "a", "route": "/next", "revision": 1 }
+      ]
+    },
+    {
+      "name": "presence over the server: cursor and activity are intents, validated and authorised like any other",
+      "host": { "identify": true, "config": true, "members": ["a", "b"], "authorize": { "a": ["*"], "b": ["intent:scroll", "view:b"] } },
+      "config": { "limits": { "mask": ["card.*"], "viewOnly": ["terms.*"] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/doc" }, { "ref": "b", "route": "/doc" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "intent": { "kind": "cursor", "route": "/doc", "anchor": "title", "fx": 0.5, "fy": 0.25 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 10, "from": "a", "intent": { "kind": "cursor", "route": "/doc", "x": 10, "y": 20 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 20, "from": "a", "intent": { "kind": "cursor", "anchor": "title", "fx": 0.5, "fy": 0.5 }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 30, "from": "a", "intent": { "kind": "cursor", "route": "/doc", "anchor": "title", "fx": 1.5, "fy": 0.5 }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 40, "from": "a", "intent": { "kind": "cursor", "route": "/doc" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 50, "from": "a", "intent": { "kind": "cursor", "route": "/doc", "x": -1, "y": 0 }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 60, "from": "a", "intent": { "kind": "cursor", "route": "doc", "x": 1, "y": 1 }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 70, "from": "a", "intent": { "kind": "activity", "handle": "card.number", "active": true }, "expect": { "allow": true } },
+        { "op": "intent", "at": 80, "from": "a", "intent": { "kind": "activity", "handle": "terms.accept", "active": false }, "expect": { "allow": true } },
+        { "op": "intent", "at": 90, "from": "a", "intent": { "kind": "activity", "handle": "name", "active": "yes" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 100, "from": "a", "intent": { "kind": "activity", "active": true }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 110, "from": "b", "intent": { "kind": "cursor", "route": "/doc", "x": 1, "y": 1 }, "expect": { "allow": false, "reason": "cowork.denied.authorize", "status": 403 } },
+        { "op": "intent", "at": 120, "from": "z", "intent": { "kind": "activity", "handle": "name", "active": true }, "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } },
+        { "op": "expectView", "view": "a", "route": "/doc", "revision": 0 }
+      ]
+    },
+    {
+      "name": "presence rate: cursors have their own per-second bucket and never spend the intent budget; activity does",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "repeat": 10, "every": 1, "from": "a", "intent": { "kind": "cursor", "route": "/", "x": 1, "y": 1 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 500, "from": "a", "intent": { "kind": "cursor", "route": "/", "x": 2, "y": 2 }, "expect": { "allow": false, "reason": "cowork.denied.rate", "status": 429 } },
+        { "op": "intent", "at": 500, "repeat": 10, "every": 1, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1000, "from": "a", "intent": { "kind": "cursor", "route": "/", "x": 3, "y": 3 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1100, "from": "a", "intent": { "kind": "activity", "handle": "name", "active": true }, "expect": { "allow": false, "reason": "cowork.denied.rate", "status": 429 } },
+        { "op": "intent", "at": 1510, "from": "a", "intent": { "kind": "activity", "handle": "name", "active": true }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "presence rate: the host sets the cursor rate",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "config": { "rate": { "cursorsPerSecond": 2 } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "repeat": 2, "every": 100, "from": "a", "intent": { "kind": "cursor", "route": "/", "x": 1, "y": 1 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 300, "from": "a", "intent": { "kind": "cursor", "route": "/", "x": 1, "y": 1 }, "expect": { "allow": false, "reason": "cowork.denied.rate", "status": 429 } },
+        { "op": "intent", "at": 1001, "from": "a", "intent": { "kind": "cursor", "route": "/", "x": 1, "y": 1 }, "expect": { "allow": true } }
       ]
     },
     {

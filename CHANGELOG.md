@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Server-routed presence: `presenceRouting: "server" | "direct" | "auto"`** on
+  `createCoworkSession` / `useCoworkSession`. With `server`, cursors and the masked-field
+  "activity" indicator travel as the new `cursor` / `activity` intents through the intent
+  endpoint, so the SERVER stamps the sender, for socket servers that do not stamp client
+  events (Sockudo, including Genie's WebSockets service, sets no `user_id`). Cursors then
+  default to 10 per second, have their own rate bucket (`rate.cursorsPerSecond`, so they
+  never spend the intent budget), and a refused one is dropped and reported once. `auto`,
+  the default, is `server` on `createServerTransport` and `direct` (today's whispers)
+  otherwise. An unstamped whisper is still dropped. The client engine accepts the two new
+  kinds (`PRESENCE_KINDS`), with the shared fixtures re-pinned at `e2bcca74...d6b5`.
+  **Nothing to do unless your socket server does not stamp senders**; a server-transport
+  host on Reverb or Pusher can pass `presenceRouting: "direct"` to keep whispering. Your
+  server needs the `cursor` / `activity` intents (fancy-cowork 0.2.0) and to authorise
+  `intent:cursor` / `intent:activity`.
+
 ## [0.60.0] - 2026-11-14
 
 ### Added

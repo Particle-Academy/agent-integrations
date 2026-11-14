@@ -27,6 +27,7 @@ import {
   type IntentKind,
   type LimitRule,
   type MaybePromise,
+  type RateTimes,
   type ParticipantState,
   type Ref,
   type Refusal,
@@ -91,7 +92,7 @@ export const DEFAULT_CONFIG: SessionConfig = {
   control: { mode: "baton" },
   routing: "server",
   limits: { allow: [], deny: [], mask: [], viewOnly: [] },
-  rate: { intentsPerSecond: 10, visitsPerSecond: 1, appPerMinute: 30, startsPerMinute: 5 },
+  rate: { intentsPerSecond: 10, visitsPerSecond: 1, appPerMinute: 30, startsPerMinute: 5, cursorsPerSecond: 10 },
   size: { intentBytes: 8192, appBytes: 16384 },
   maxParticipants: 16,
 };
@@ -163,6 +164,10 @@ const isRef = (v: unknown): v is string =>
 export const isValidRef = (v: unknown): v is string => isRef(v);
 const TOPIC = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
 const isViewKind = (kind: string): boolean => (VIEW_KINDS as readonly string[]).includes(kind);
+/** A cursor's route: a path (`/...`), 1..2048, no control character. */
+const isPresenceRoute = (v: unknown): v is string => typeof v === "string" && v.startsWith("/") && v.length <= 2048 && !CONTROL_CHARS.test(v);
+const isFraction = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
+const isCoordinate = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
 const has = (o: object, key: string) => Object.prototype.hasOwnProperty.call(o, key);
 
 /** `*` is any run of characters; everything else is literal. Anchored. */
@@ -265,6 +270,13 @@ export function validIntent(intent: unknown, envelope: Envelope): intent is Inte
       return intent.op !== "grant" || isRef(intent.target);
     case "app":
       return typeof intent.topic === "string" && TOPIC.test(intent.topic) && has(intent, "payload");
+    case "cursor": {
+      if (!isPresenceRoute(intent.route)) return false;
+      if (intent.anchor !== undefined) return isHandle(intent.anchor) && isFraction(intent.fx) && isFraction(intent.fy);
+      return isCoordinate(intent.x) && isCoordinate(intent.y);
+    }
+    case "activity":
+      return isHandle(intent.handle) && typeof intent.active === "boolean";
   }
 }
 
@@ -424,6 +436,10 @@ const within = (times: number[], now: number, windowMs: number) => times.filter(
 const rateLimit: Middleware = (ctx, intent, next) => {
   const { rate } = ctx.config;
   const mine = ctx.session.rate[ctx.from] ?? { all: [], visit: [], app: [] };
+  // A cursor spends only its own bucket, so 10 Hz of pointer never starves real intents.
+  if (intent.kind === "cursor") {
+    return within(mine.cursor ?? [], ctx.now, 1000) >= rate.cursorsPerSecond ? refuse(REASONS.rate, 429) : next();
+  }
   if (within(mine.all, ctx.now, 1000) >= rate.intentsPerSecond) return refuse(REASONS.rate, 429);
   if (intent.kind === "visit" && within(mine.visit, ctx.now, 1000) >= rate.visitsPerSecond) return refuse(REASONS.rate, 429);
   if (intent.kind === "app" && within(mine.app, ctx.now, 60000) >= rate.appPerMinute) return refuse(REASONS.rate, 429);
@@ -557,7 +573,13 @@ export async function evaluateIntent(host: EngineHost, state: SessionState, inpu
   const now = input.now;
   if (isReserved(input.from)) return refused(state, refuse(REASONS.unidentified, 401));
   const rate = (next.rate[input.from] ??= { all: [], visit: [], app: [] });
+  if (intent.kind === "cursor") {
+    // Presence: the cursor bucket, and nothing else changes.
+    rate.cursor = [...(rate.cursor ?? []).filter((t) => t > now - 1000), now];
+    return { decision: ALLOW, state: next, events };
+  }
   rate.all = [...rate.all.filter((t) => t > now - 1000), now];
+  if (intent.kind === "activity") return { decision: ALLOW, state: next, events };
   if (intent.kind === "visit") rate.visit = [...rate.visit.filter((t) => t > now - 1000), now];
   if (intent.kind === "app") rate.app = [...rate.app.filter((t) => t > now - 60000), now];
   const view = envelope.view;
@@ -769,6 +791,6 @@ export function createSessionState(input: NewSessionInput): SessionState {
     participants,
     control: dict<ViewControl>(),
     last: dict<Record<Ref, number>>(),
-    rate: dict<{ all: number[]; visit: number[]; app: number[] }>(),
+    rate: dict<RateTimes>(),
   };
 }

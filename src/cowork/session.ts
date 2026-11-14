@@ -121,8 +121,23 @@ export type CoworkSessionOptions = {
   onRefused?: (refusal: CoworkRefusal) => void;
   now?: () => number;
   idleAfterMs?: number;
-  /** Minimum gap between cursor frames. Default 50 ms (20 Hz). */
+  /**
+   * Minimum gap between cursor frames. Default 50 ms (20 Hz) when presence is
+   * whispered, 100 ms (10 Hz, the server's default `cursorsPerSecond`) when it goes
+   * through the server.
+   */
   cursorIntervalMs?: number;
+  /**
+   * How cursors and the masked-field "activity" indicator travel. `direct`
+   * whispers them on the presence channel; the receiver attributes a whisper only
+   * by the sender the socket SERVER stamps on it (Reverb and Pusher do), and drops
+   * one it cannot attribute. `server` posts them as `cursor` / `activity` intents to
+   * the intent endpoint, where the server stamps the authenticated sender and relays
+   * them. **Sockudo (Genie's WebSockets service) does not stamp senders on client
+   * events: use `server`.** `auto` (default): `server` on a server transport,
+   * `direct` otherwise.
+   */
+  presenceRouting?: "server" | "direct" | "auto";
   /**
    * Block this person's own keyboard and pointer presses while someone else has
    * control of their view (ranked: a higher rank acted within `idleMs`; baton: the
@@ -190,8 +205,14 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const self = options.self.ref;
   const now = options.now ?? (() => Date.now());
   const idleAfterMs = options.idleAfterMs ?? 30_000;
-  const cursorIntervalMs = options.cursorIntervalMs ?? 50;
   const transport = options.transport;
+  const presenceRouting: "server" | "direct" =
+    options.presenceRouting === "server" || options.presenceRouting === "direct"
+      ? options.presenceRouting
+      : transport.routing === "server"
+        ? "server"
+        : "direct";
+  const cursorIntervalMs = options.cursorIntervalMs ?? (presenceRouting === "server" ? 100 : 50);
 
   let state: SessionState = createSessionState({
     id: options.sessionId,
@@ -441,6 +462,30 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     changed();
   };
 
+  /** The last presence refusal reported, per kind: a lossy frame is never retried, and a
+   *  run of identical refusals (10 Hz of 429s) is reported once, until one gets through. */
+  const presenceRefused = new Map<string, string>();
+  const refusePresence = (kind: string, decision: Decision): void => {
+    if (decision.allow || presenceRefused.get(kind) === decision.reason) return;
+    presenceRefused.set(kind, decision.reason);
+    report({ reason: decision.reason, status: decision.status, from: self, kind, stage: "sender" });
+  };
+  /**
+   * A presence intent through the server (`presenceRouting: "server"`): the same
+   * pipeline at the sender, then the intent endpoint, which stamps the sender. Not
+   * serialised itself; callers are already inside `serial`.
+   */
+  const sendPresence = async (intent: Extract<Intent, { kind: "cursor" | "activity" }>): Promise<void> => {
+    if (destroyed) return;
+    const envelope: Envelope = { id: newId() };
+    const result = await evaluateIntent(host(), state, { from: self, envelope, intent, now: now() });
+    if (!result.decision.allow) return refusePresence(intent.kind, result.decision);
+    const sent = await send({ t: "intent", envelope, intent });
+    if (!sent.allow) return refusePresence(intent.kind, sent);
+    presenceRefused.delete(intent.kind);
+    commit(result);
+  };
+
   const sendIntent = (intent: Intent, sendOptions: SendOptions = {}): Promise<Decision> =>
     serial(async () => {
       const isView = VIEW_KINDS.has(intent.kind);
@@ -470,7 +515,8 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         if (reason) {
           if (intent.kind === "field" && view === self) {
             activeFields.set(self, intent.handle);
-            await send({ t: "activity", view: self, handle: intent.handle, active: true });
+            if (presenceRouting === "server") await sendPresence({ kind: "activity", handle: intent.handle, active: true });
+            else await send({ t: "activity", view: self, handle: intent.handle, active: true });
             changed();
           }
           return local(reason);
@@ -577,6 +623,22 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     const followed = me?.follows === from;
     commit(result);
     const view = envelope.view;
+
+    // Server-routed presence: the same effect as the whispered frame, but the
+    // sender is the one the SERVER stamped, so no socket stamp is needed.
+    if (intent.kind === "cursor") {
+      cursors.set(from, {
+        route: intent.route,
+        cursor: intent.anchor !== undefined ? { anchor: intent.anchor, fx: intent.fx!, fy: intent.fy! } : { x: intent.x!, y: intent.y! },
+      });
+      changed();
+      return;
+    }
+    if (intent.kind === "activity") {
+      activeFields.set(from, intent.active ? intent.handle : null);
+      changed();
+      return;
+    }
 
     if (intent.kind === "app") {
       if (!envelope.to || envelope.to.includes(self)) {
@@ -756,7 +818,9 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     const cursor = pendingCursor;
     pendingCursor = null;
     lastCursorAt = Date.now();
-    void send({ t: "cursor", route: state.participants[self]?.route ?? "/", ...cursor });
+    const route = state.participants[self]?.route ?? "/";
+    if (presenceRouting === "server") void serial(() => sendPresence({ kind: "cursor", route, ...cursor }));
+    else void send({ t: "cursor", route, ...cursor });
   };
 
   // -------------------------------------------------------------------------
