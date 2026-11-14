@@ -72,6 +72,26 @@
       ]
     },
     {
+      "name": "reserved names are never a ref: __proto__, constructor and prototype refuse wherever a ref goes",
+      "host": { "identify": true, "config": true, "members": ["a", "b", "__proto__", "constructor", "prototype"], "authorize": { "a": ["*"], "b": ["*"], "__proto__": ["*"], "constructor": ["*"], "prototype": ["*"] } },
+      "config": { "control": { "mode": "free" } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "__proto__", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 10, "from": "a", "envelope": { "view": "constructor", "revision": 0 }, "intent": { "kind": "field", "handle": "h", "value": 1 }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 20, "from": "a", "envelope": { "view": "prototype", "revision": 0 }, "intent": { "kind": "visit", "url": "/x" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 30, "from": "a", "envelope": { "to": ["b", "prototype"] }, "intent": { "kind": "app", "topic": "note", "payload": { "__proto__": { "polluted": true } } }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 40, "from": "a", "envelope": { "view": "a" }, "intent": { "kind": "control", "op": "grant", "target": "__proto__" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 50, "from": "__proto__", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": false, "reason": "cowork.unidentified", "status": 401 } },
+        { "op": "join", "at": 60, "from": "constructor", "expect": { "allow": false, "reason": "cowork.unidentified", "status": 401 } },
+        { "op": "join", "at": 70, "from": "__proto__", "expect": { "allow": false, "reason": "cowork.unidentified", "status": 401 } },
+        { "op": "leave", "at": 80, "from": "prototype", "expect": { "allow": false, "reason": "cowork.unidentified", "status": 401 } },
+        { "op": "intent", "at": 90, "from": "a", "envelope": { "to": ["b"] }, "intent": { "kind": "app", "topic": "note", "payload": { "__proto__": { "polluted": true } } }, "expect": { "allow": true } },
+        { "op": "intent", "at": 100, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "/next" }, "expect": { "allow": true } },
+        { "op": "expectView", "view": "a", "route": "/next", "revision": 1 }
+      ]
+    },
+    {
       "name": "a requested session refuses intents until it is live",
       "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
       "session": { "state": "requested", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },

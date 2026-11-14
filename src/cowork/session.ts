@@ -34,6 +34,7 @@ import {
   evaluateLeave,
   globMatch,
   holderOf,
+  isValidRef,
   refuse,
   resolveConfig,
   routeOf,
@@ -580,7 +581,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       if (destroyed) return;
       const add = (peer: PeerInfo) => {
         if (peer.label !== undefined) labels.set(peer.ref, peer.label);
-        if (state.participants[peer.ref]) return;
+        if (!isValidRef(peer.ref) || Object.prototype.hasOwnProperty.call(state.participants, peer.ref)) return;
         const next = structuredClone(state);
         next.participants[peer.ref] = {
           ref: peer.ref,

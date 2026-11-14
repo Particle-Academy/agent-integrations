@@ -40,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The one-line text sanitiser the navigation bridge applies to page-supplied strings moved to an internal module (`src/bridges/text-safety.ts`) so the sign bridge uses the same one. No behaviour change; it is not exported.
 
+
+### Security
+
+- **Co-work client: a peer-supplied ref can no longer reach `Object.prototype`** (code
+  scanning alert 4). The client engine is a port of fancy-cowork-js's and had the same
+  hole: an envelope `view` of `__proto__` wrote onto `Object.prototype`. `__proto__`,
+  `constructor` and `prototype` are now never a ref, in the engine, in a presence member
+  and in a frame's `view` / `follows` / `target`; the state maps are null-prototype.
+  Handles keep their own rule. Unreleased.
+
 ## [0.59.0] - 2026-11-12
 
 ### Added

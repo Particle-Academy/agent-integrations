@@ -17,6 +17,7 @@
  * wrote after identifying the request.
  */
 import type { Decision, Envelope, Intent, Ref, Routing } from "./types";
+import { isValidRef } from "./engine";
 
 /** Everything that crosses the wire. Intents are the only frames that change session state. */
 export type CoworkFrame =
@@ -72,7 +73,10 @@ const FAILED: Decision = { allow: false, reason: "cowork.transport.failed", stat
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
-const isRef = (v: unknown): v is string => typeof v === "string" && v.length >= 1 && v.length <= 256 && !CONTROL_CHARS.test(v);
+// The engine's ref rule, so a reserved name (__proto__, constructor, prototype) never
+// reaches the session's state maps from a frame or a presence member.
+const isRef = isValidRef;
+const isHandle = (v: unknown): v is string => typeof v === "string" && v.length >= 1 && v.length <= 256 && !CONTROL_CHARS.test(v);
 const isFraction = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
 const isCoord = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e7;
 const isRoute = (v: unknown): v is string => typeof v === "string" && v.length >= 1 && v.length <= 2048 && !CONTROL_CHARS.test(v);
@@ -91,14 +95,14 @@ export function readFrame(value: unknown): CoworkFrame | null {
     case "cursor": {
       if (!isRoute(value.route)) return null;
       const anchored = value.anchor !== undefined;
-      if (anchored && !(isRef(value.anchor) && isFraction(value.fx) && isFraction(value.fy))) return null;
+      if (anchored && !(isHandle(value.anchor) && isFraction(value.fx) && isFraction(value.fy))) return null;
       if (!anchored && !(isCoord(value.x) && isCoord(value.y))) return null;
       return anchored
         ? { t: "cursor", route: value.route, anchor: value.anchor as string, fx: value.fx as number, fy: value.fy as number }
         : { t: "cursor", route: value.route, x: value.x as number, y: value.y as number };
     }
     case "activity":
-      if (!isRef(value.view) || !isRef(value.handle) || typeof value.active !== "boolean") return null;
+      if (!isRef(value.view) || !isHandle(value.handle) || typeof value.active !== "boolean") return null;
       return { t: "activity", view: value.view, handle: value.handle, active: value.active };
     case "hello":
       if (!isRoute(value.route) || typeof value.revision !== "number" || !Number.isInteger(value.revision) || value.revision < 0) return null;

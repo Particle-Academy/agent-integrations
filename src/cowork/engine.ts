@@ -45,6 +45,7 @@ export const REASONS = {
   unconfiguredMembers: "cowork.unconfigured.members",
   unconfiguredAuthorize: "cowork.unconfigured.authorize",
   invalid: "cowork.invalid.intent",
+  unidentified: "cowork.unidentified",
   ended: "cowork.session.ended",
   notLive: "cowork.session.not-live",
   notRequested: "cowork.session.not-requested",
@@ -149,7 +150,17 @@ export type EngineHost = {
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 const isHandle = (v: unknown): v is string => typeof v === "string" && v.length >= 1 && v.length <= 256 && !CONTROL_CHARS.test(v);
-const isRef = (v: unknown): v is string => typeof v === "string" && v.length >= 1 && v.length <= 256 && !CONTROL_CHARS.test(v);
+/**
+ * Names that are never a ref. Refs key the session's state maps, and on an ordinary
+ * object these three reach Object.prototype (code scanning: prototype-polluting
+ * assignment). Refused at the boundary AND the maps are null-prototype.
+ */
+export const RESERVED_REFS: readonly string[] = Object.freeze(["__proto__", "constructor", "prototype"]);
+const isReserved = (v: string): boolean => v === "__proto__" || v === "constructor" || v === "prototype";
+const isRef = (v: unknown): v is string =>
+  typeof v === "string" && v.length >= 1 && v.length <= 256 && !CONTROL_CHARS.test(v) && !isReserved(v);
+/** True when `v` may be used as a ref: 1..256 chars, no control character, not a reserved name. */
+export const isValidRef = (v: unknown): v is string => isRef(v);
 const TOPIC = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
 const isViewKind = (kind: string): boolean => (VIEW_KINDS as readonly string[]).includes(kind);
 const has = (o: object, key: string) => Object.prototype.hasOwnProperty.call(o, key);
@@ -181,7 +192,32 @@ const handleOf = (intent: Intent): string | undefined =>
       ? intent.anchor
       : undefined;
 
-const clone = <T>(value: T): T => structuredClone(value);
+/** A map with no prototype: a key can only ever be an own property. */
+const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+function nullProto<T>(source: Record<string, T> | undefined): Record<string, T> {
+  const out = dict<T>();
+  for (const key of Object.keys(source ?? {})) {
+    if (isReserved(key)) continue;
+    out[key] = (source as Record<string, T>)[key] as T;
+  }
+  return out;
+}
+/**
+ * structuredClone (and any store's JSON) returns ordinary objects, so every copy of a
+ * session state gets its ref-keyed maps rebuilt null-prototype here.
+ */
+function harden(state: SessionState): SessionState {
+  state.participants = nullProto(state.participants);
+  state.control = nullProto(state.control);
+  const last = dict<Record<Ref, number>>();
+  for (const [view, times] of Object.entries(state.last ?? {})) {
+    if (!isReserved(view)) last[view] = nullProto(times);
+  }
+  state.last = last;
+  state.rate = nullProto(state.rate);
+  return state;
+}
+const clone = (value: SessionState): SessionState => harden(structuredClone(value));
 
 /** The baton state of a view: its owner holds it until something says otherwise. */
 export function holderOf(session: SessionState, view: Ref): ViewControl {
@@ -461,9 +497,10 @@ export type Result = { decision: Decision; state: SessionState; events: CoworkEv
 
 const refused = (state: SessionState, decision: Decision): Result => ({ decision, state, events: [] });
 
-function prelude(host: EngineHost): Decision | null {
+function prelude(host: EngineHost, from: unknown): Decision | null {
   if (!host.identity) return refuse(REASONS.unconfiguredIdentity, 403);
   if (!host.config) return refuse(REASONS.unconfiguredConfig, 403);
+  if (!isRef(from)) return refuse(REASONS.unidentified, 401);
   return null;
 }
 
@@ -493,7 +530,7 @@ export type IntentInput = { from: Ref; actingFor?: Ref; envelope: Envelope; inte
 
 /** Run one intent through validation, the session gate and the middleware stack. */
 export async function evaluateIntent(host: EngineHost, state: SessionState, input: IntentInput): Promise<Result> {
-  const early = prelude(host);
+  const early = prelude(host, input.from);
   if (early) return refused(state, early);
   const envelope = isRecord(input.envelope) ? input.envelope : {};
   if (!validIntent(input.intent, envelope)) return refused(state, refuse(REASONS.invalid, 422));
@@ -518,13 +555,15 @@ export async function evaluateIntent(host: EngineHost, state: SessionState, inpu
 
   const next = clone(state);
   const now = input.now;
+  if (isReserved(input.from)) return refused(state, refuse(REASONS.unidentified, 401));
   const rate = (next.rate[input.from] ??= { all: [], visit: [], app: [] });
   rate.all = [...rate.all.filter((t) => t > now - 1000), now];
   if (intent.kind === "visit") rate.visit = [...rate.visit.filter((t) => t > now - 1000), now];
   if (intent.kind === "app") rate.app = [...rate.app.filter((t) => t > now - 60000), now];
   const view = envelope.view;
   if (view !== undefined && isViewKind(intent.kind)) {
-    (next.last[view] ??= {})[input.from] = now;
+    if (isReserved(view) || isReserved(input.from)) return refused(state, refuse(REASONS.invalid, 422));
+    (next.last[view] ??= dict<number>())[input.from] = now;
     if (intent.kind === "visit") {
       const owner = next.participants[view];
       if (owner) {
@@ -605,7 +644,7 @@ async function abilityGate(host: EngineHost, ref: Ref, ability: string): Promise
 
 /** Join: identity, config, ended, not live, members, ability, already joined, consent, full. */
 export async function evaluateJoin(host: EngineHost, state: SessionState, input: OpInput): Promise<Result> {
-  const checks = prelude(host) ?? sessionGate(state) ?? (await membersGate(host, input.from)) ?? (await abilityGate(host, input.from, "join"));
+  const checks = prelude(host, input.from) ?? sessionGate(state) ?? (await membersGate(host, input.from)) ?? (await abilityGate(host, input.from, "join"));
   if (checks) return refused(state, checks);
   if (state.participants[input.from]) return { decision: ALLOW, state, events: [] };
   const config = host.config!;
@@ -621,7 +660,7 @@ export async function evaluateJoin(host: EngineHost, state: SessionState, input:
 
 /** Activate: identity, config, ended, not requested, members, ability, consent, full. */
 export async function evaluateActivate(host: EngineHost, state: SessionState, input: OpInput): Promise<Result> {
-  const early = prelude(host);
+  const early = prelude(host, input.from);
   if (early) return refused(state, early);
   if (state.state === "ended") return refused(state, refuse(REASONS.ended, 410));
   if (state.state !== "requested") return refused(state, refuse(REASONS.notRequested, 409));
@@ -644,7 +683,7 @@ export async function evaluateActivate(host: EngineHost, state: SessionState, in
 
 /** Consent: identity, config, ended, the sender is the subject. */
 export async function evaluateConsent(host: EngineHost, state: SessionState, input: OpInput): Promise<Result> {
-  const early = prelude(host);
+  const early = prelude(host, input.from);
   if (early) return refused(state, early);
   if (state.state === "ended") return refused(state, refuse(REASONS.ended, 410));
   if (input.from !== subjectOf(state, host.config!)) return refused(state, refuse(REASONS.notSubject, 403));
@@ -656,7 +695,7 @@ export async function evaluateConsent(host: EngineHost, state: SessionState, inp
 
 /** End: identity, config, ended, live member, ability `end`. */
 export async function evaluateEnd(host: EngineHost, state: SessionState, input: OpInput): Promise<Result> {
-  const early = prelude(host);
+  const early = prelude(host, input.from);
   if (early) return refused(state, early);
   if (state.state === "ended") return refused(state, refuse(REASONS.ended, 410));
   if (!host.members) return refused(state, refuse(REASONS.unconfiguredMembers, 403));
@@ -672,6 +711,7 @@ export async function evaluateEnd(host: EngineHost, state: SessionState, input: 
 
 /** Leave: the sender must be a participant. Nothing else is asked. */
 export async function evaluateLeave(_host: EngineHost, state: SessionState, input: OpInput): Promise<Result> {
+  if (!isRef(input.from)) return refused(state, refuse(REASONS.unidentified, 401));
   if (!state.participants[input.from]) return refused(state, refuse(REASONS.membership, 403));
   const next = clone(state);
   const events: CoworkEvent[] = [{ type: "PeerLeft", session: next.id, ref: input.from, ...withActor(input), at: input.now }];
@@ -682,7 +722,7 @@ export async function evaluateLeave(_host: EngineHost, state: SessionState, inpu
 
 /** Follow (or `target: null` to stop): identity, config, ended, not live, members, ability `follow`. */
 export async function evaluateFollow(host: EngineHost, state: SessionState, input: OpInput & { target: Ref | null }): Promise<Result> {
-  const early = prelude(host) ?? sessionGate(state);
+  const early = prelude(host, input.from) ?? sessionGate(state);
   if (early) return refused(state, early);
   if (!host.members) return refused(state, refuse(REASONS.unconfiguredMembers, 403));
   for (const ref of input.target === null ? [input.from] : [input.from, input.target]) {
@@ -708,7 +748,7 @@ export type NewSessionInput = {
 
 /** A fresh session state. Participants given here are already joined. */
 export function createSessionState(input: NewSessionInput): SessionState {
-  const participants: Record<Ref, ParticipantState> = {};
+  const participants = dict<ParticipantState>();
   for (const p of input.participants ?? []) {
     participants[p.ref] = participantFrom({
       from: p.ref,
@@ -727,8 +767,8 @@ export function createSessionState(input: NewSessionInput): SessionState {
     createdAt: input.now,
     endedAt: null,
     participants,
-    control: {},
-    last: {},
-    rate: {},
+    control: dict<ViewControl>(),
+    last: dict<Record<Ref, number>>(),
+    rate: dict<{ all: number[]; visit: number[]; app: number[] }>(),
   };
 }
