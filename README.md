@@ -723,6 +723,52 @@ or DOM-mutation tool in this bridge, so none can reach an area or strip the
 marker. `page_focus` only reports a rect. A tool added later must go through
 `guard` the same way.
 
+## Co-work sessions — people sharing one live UI
+
+Several people (and agents) in one session, each with **their own view** (route,
+scroll, focus), exchanging **intents, never DOM**: one person driving another's view,
+several following a leader, a support rep activating a visitor's request, editors on
+different pages of one document. There is **no chat**; the only message-shaped thing
+is the opaque `app` intent, handed to `onAppMessage` untouched. The servers are
+`particle-academy/fancy-cowork` (PHP) and `@particle-academy/fancy-cowork` (Node).
+
+```tsx
+import { useCoworkSession, createServerTransport, CoworkPresence, CoBrowseCursorLayer } from "@particle-academy/agent-integrations";
+
+const channel = echo.join(`cowork.session.${sessionId}`);
+const transport = createServerTransport({ sessionId, fetch: hostFetch, channel, self: me.ref });
+const session = useCoworkSession({
+  sessionId,
+  self: me,                        // { ref, label } -- an opaque host ref, never a model
+  transport,
+  adapter,                          // your NavigationBridgeAdapter: how THIS page is driven
+  config: { consent: "notify", control: { mode: "baton" } },
+  authorize: (ref, ability) => policy.allows(ref, ability), // the host's policy, for any ref
+  onAppMessage: ({ from, topic, payload }) => handle(from, topic, payload), // untrusted data
+});
+
+<CoworkPresence session={session} />
+<CoBrowseCursorLayer peers={session} />
+```
+
+- **Nothing works until the host configures it.** No `config` or no `authorize`: every
+  intent is refused with its named reason and nothing is sent.
+- **Report what the person does**: `reportVisit(url)`, `reportScroll(y, anchor?)`,
+  `reportField(handle, value)`, `moveCursor({ anchor, fx, fy })`. Followers mirror your
+  visits and scrolls; peers on your route see your cursor.
+- **A masked value never leaves the browser.** Config `limits.mask` / `limits.viewOnly`,
+  sensitive inputs (password, `cc-*`, `one-time-code`, `data-private`) and anything
+  inside `data-cowork="view-only"` are reported only as "field active".
+- **Only the view's owner performs a side effect**, through your adapter, after its
+  `guard`. `submit` goes through `adapter.confirm` when you provide one.
+- **Routing**: `createServerTransport` (the server runs the pipeline and relays) or
+  `createWhisperTransport` (`direct`, over presence whispers; every receiver re-runs the
+  pipeline). `direct` needs client events enabled on your socket server and a channel
+  that passes the server-stamped `userId` to whisper listeners. `createMemoryTransport`
+  is for tests and demos.
+- `@particle-academy/agent-integrations/cowork` is the headless entry (engine,
+  transports, `createCoworkSession`), with no React.
+
 ## Tools shipped (whiteboard bridge)
 
 | Tool | Purpose |

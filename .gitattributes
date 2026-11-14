@@ -1,0 +1,4 @@
+# The co-work conformance fixture is compared by SHA-256 across three
+# repositories (fancy-cowork, fancy-cowork-js and this one). A CRLF checkout of
+# it would fail the suite on a perfectly good copy, so it is never converted.
+src/cowork/__tests__/cowork-v1.json -text

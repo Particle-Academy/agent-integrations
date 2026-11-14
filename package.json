@@ -417,6 +417,16 @@
         "default": "./dist/sharing.cjs"
       }
     },
+    "./cowork": {
+      "import": {
+        "types": "./dist/cowork/index.d.ts",
+        "default": "./dist/cowork.js"
+      },
+      "require": {
+        "types": "./dist/cowork/index.d.cts",
+        "default": "./dist/cowork.cjs"
+      }
+    },
     "./relay-server": {
       "import": {
         "types": "./dist/relay-server/index.d.ts",

@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { useAgentActivity } from "../../presence/use-agent-activity";
 import { AgentCursor } from "../AgentCursor/AgentCursor";
 import { AgentActivityHighlight } from "../AgentActivityHighlight/AgentActivityHighlight";
+import { attributeHandle } from "../../dom-navigation/agent";
+import type { CoworkCursor, CoworkPeer } from "../../cowork/session";
 
 type Rect = { x: number; y: number; width: number; height: number };
 
@@ -40,7 +42,51 @@ export type CoBrowseCursorLayerProps = {
    * in the activity log; the cursor is for *motion*.
    */
   idleAfterMs?: number;
+  /**
+   * Co-work peers (`useCoworkSession`'s result, or anything with `peers`): one
+   * cursor per peer that has one. A session only reports a peer's cursor while
+   * that peer is on this browser's route, and never this browser's own. Omit
+   * it and the layer behaves exactly as before: the one agent cursor.
+   */
+  peers?: { peers: readonly CoworkPeer[] };
+  /** Find a cursor anchor's element. Default: the handle lookup the navigation agent uses. */
+  resolveAnchor?: (handle: string) => Element | null;
 };
+
+const PEER_COLORS = ["#0ea5e9", "#f97316", "#10b981", "#e11d48", "#8b5cf6", "#ca8a04", "#0d9488", "#db2777"];
+
+/** A stable color per ref, so a peer keeps its color across renders and sessions. */
+export function peerColor(ref: string): string {
+  let hash = 0;
+  for (let i = 0; i < ref.length; i++) hash = (hash * 31 + ref.charCodeAt(i)) | 0;
+  return PEER_COLORS[Math.abs(hash) % PEER_COLORS.length]!;
+}
+
+function defaultResolveAnchor(handle: string): Element | null {
+  if (typeof document === "undefined") return null;
+  for (const el of Array.from(document.querySelectorAll("[data-co-handle], [name], [id]"))) {
+    if (attributeHandle(el) === handle) return el;
+  }
+  return null;
+}
+
+/**
+ * A peer's cursor in viewport coordinates: inside its anchor's rect when it has
+ * one (so it lands on the same element whatever the two screens' layouts), else
+ * its document coordinates less this page's scroll. `null` when the anchor is
+ * not on this page.
+ */
+export function peerCursorPoint(cursor: CoworkCursor, resolve: (handle: string) => Element | null): { x: number; y: number } | null {
+  if ("anchor" in cursor) {
+    const el = resolve(cursor.anchor);
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    return { x: rect.left + cursor.fx * rect.width, y: rect.top + cursor.fy * rect.height };
+  }
+  const scrollX = typeof window === "undefined" ? 0 : window.scrollX;
+  const scrollY = typeof window === "undefined" ? 0 : window.scrollY;
+  return { x: cursor.x - scrollX, y: cursor.y - scrollY };
+}
 
 /**
  * Session lifecycle chatter. Real events, but nothing the agent DID — so they
@@ -66,6 +112,8 @@ export function CoBrowseCursorLayer({
   active = true,
   zIndex = 2147483000,
   idleAfterMs = 15_000,
+  peers,
+  resolveAnchor = defaultResolveAnchor,
 }: CoBrowseCursorLayerProps) {
   const { latest } = useAgentActivity(undefined, { capacity: 12 });
   const [cursor, setCursor] = useState<{ x: number; y: number; name: string; color: string; status?: string; glideMs: number } | null>(
@@ -131,10 +179,41 @@ export function CoBrowseCursorLayer({
     return () => clearTimeout(timer);
   }, [lastActionAt, idleAfterMs]);
 
-  if (!active || !cursor || typeof document === "undefined") return null;
+  // Peer cursors are anchored to elements, so they move when this page scrolls
+  // or resizes even though no frame arrived. Re-measure then.
+  const [, setLayoutTick] = useState(0);
+  const hasPeerCursors = Boolean(peers?.peers.some((p) => !p.self && p.cursor));
+  useEffect(() => {
+    if (!hasPeerCursors || typeof window === "undefined") return;
+    const bump = () => setLayoutTick((n) => n + 1);
+    window.addEventListener("scroll", bump, { passive: true });
+    window.addEventListener("resize", bump);
+    return () => {
+      window.removeEventListener("scroll", bump);
+      window.removeEventListener("resize", bump);
+    };
+  }, [hasPeerCursors]);
+
+  const peerCursors = (peers?.peers ?? [])
+    .filter((p) => !p.self && p.cursor)
+    .map((p) => ({ peer: p, point: peerCursorPoint(p.cursor!, resolveAnchor) }))
+    .filter((c): c is { peer: CoworkPeer; point: { x: number; y: number } } => c.point !== null);
+
+  if (!active || (!cursor && peerCursors.length === 0) || typeof document === "undefined") return null;
 
   return createPortal(
     <div data-co-browse-cursor-layer="" style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex }}>
+      {peerCursors.map(({ peer, point }) => (
+        <div
+          key={peer.ref}
+          data-cowork-cursor={peer.ref}
+          data-x={String(Math.round(point.x))}
+          data-y={String(Math.round(point.y))}
+          data-idle={peer.idle ? "" : undefined}
+        >
+          <AgentCursor x={point.x} y={point.y} name={peer.label ?? peer.ref} color={peerColor(peer.ref)} />
+        </div>
+      ))}
       {pulse && (
         <AgentActivityHighlight
           x={pulse.rect.x}
@@ -145,6 +224,7 @@ export function CoBrowseCursorLayer({
           pulseKey={pulse.key}
         />
       )}
+      {cursor && (
       <AgentCursor
         x={cursor.x}
         y={cursor.y}
@@ -157,6 +237,7 @@ export function CoBrowseCursorLayer({
             : "none",
         }}
       />
+      )}
     </div>,
     document.body,
   );

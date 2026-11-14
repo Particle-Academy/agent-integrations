@@ -267,6 +267,23 @@ export {
  */
 export { BridgeContributions, type BridgeContribution } from "./sharing/bridge-contributions";
 
+// Co-work sessions (people + agents sharing live UI). The full engine and wire
+// types are on the `./cowork` subpath; the root carries what a page mounts.
+export { useCoworkSession, type UseCoworkSessionOptions, type CoworkSessionHandle } from "./cowork/use-cowork-session";
+export {
+  createCoworkSession,
+  createMemoryTransport,
+  createWhisperTransport,
+  createServerTransport,
+  type CoworkSession,
+  type CoworkSessionOptions,
+  type CoworkSnapshot,
+  type CoworkPeer,
+  type PeerTransport,
+  type CoworkFrame,
+  type PresenceChannelLike,
+} from "./cowork";
+
 // Components
 export { AgentPanel } from "./components/AgentPanel";
 export type { AgentPanelProps, AgentActivity } from "./components/AgentPanel";
@@ -283,6 +300,7 @@ export { ShareControls, buildAgentPrompt } from "./components/ShareControls";
 export type { ShareControlsProps } from "./components/ShareControls";
 export { CoBrowsePresence, type CoBrowsePresenceProps } from "./components/CoBrowsePresence";
 export { CoBrowseCursorLayer, type CoBrowseCursorLayerProps } from "./components/CoBrowseCursorLayer";
+export { CoworkPresence, type CoworkPresenceProps, type CoworkPresenceLabels } from "./components/CoworkPresence";
 export { SimulateUsersButton, type SimulateUsersButtonProps } from "./components/SimulateUsersButton";
 // SharedWhiteboard is NOT re-exported from the root barrel — it imports
 // fancy-whiteboard eagerly. Reach it via the subpath instead:

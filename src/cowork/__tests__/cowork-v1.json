@@ -1,0 +1,488 @@
+{
+  "contract": "fancy-cowork/v1",
+  "about": "Shared parity fixtures for fancy-cowork (PHP), fancy-cowork-js and the agent-integrations client engine. Byte-identical in every repo and pinned by SHA-256 in each suite. Spec: .ai/plans/human-cobrowse-and-chat.md section 11. Harness rules: `host.identify`/`host.config` false means that resolver is unbound; `host.members` null means unbound, else the refs members() answers yes for; `host.authorize` null means unbound, else ref -> ability globs (`*` is any run of characters) and a ref with no entry is refused; `host.predicates` names booleans the `when` limit criterion reads. `middleware` null is the default stack; otherwise names of defaults in order plus host entries `{host: refuse, reason, status}` (refuses whatever reaches it) and `{host: refuseKind, kind, reason, status}`. `session.participants` are already joined, each owning a view at `route` with revision 0. A step with `repeat` runs that many times, `every` ms apart from `at`. `{$repeat: s, count: n}` anywhere in an intent is s repeated n times. Every intent step's `expect` is the whole decision: allow true, or allow false with reason and status (and blockedUntil for a ranked refusal).",
+  "defaults": {
+    "middleware": ["membership", "authorize", "payloadSize", "sameOrigin", "masking", "limits", "revision", "control", "rateLimit", "audit"],
+    "config": {
+      "consent": "notify",
+      "control": { "mode": "baton" },
+      "routing": "server",
+      "limits": { "allow": [], "deny": [], "mask": [], "viewOnly": [] },
+      "rate": { "intentsPerSecond": 10, "visitsPerSecond": 1, "appPerMinute": 30, "startsPerMinute": 5 },
+      "size": { "intentBytes": 8192, "appBytes": 16384 },
+      "maxParticipants": 16
+    }
+  },
+  "cases": [
+    {
+      "name": "default deny: nothing bound refuses an intent with the identity reason",
+      "host": { "identify": false, "config": false, "members": null, "authorize": null },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 10 }, "expect": { "allow": false, "reason": "cowork.unconfigured.identity", "status": 403 } },
+        { "op": "join", "at": 10, "from": "b", "expect": { "allow": false, "reason": "cowork.unconfigured.identity", "status": 403 } }
+      ]
+    },
+    {
+      "name": "default deny: identity alone is not enough, config is next",
+      "host": { "identify": true, "config": false, "members": null, "authorize": null },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 10 }, "expect": { "allow": false, "reason": "cowork.unconfigured.config", "status": 403 } },
+        { "op": "join", "at": 10, "from": "b", "expect": { "allow": false, "reason": "cowork.unconfigured.config", "status": 403 } }
+      ]
+    },
+    {
+      "name": "default deny: members unbound refuses with its own reason",
+      "host": { "identify": true, "config": true, "members": null, "authorize": null },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 10 }, "expect": { "allow": false, "reason": "cowork.unconfigured.members", "status": 403 } },
+        { "op": "join", "at": 10, "from": "b", "expect": { "allow": false, "reason": "cowork.unconfigured.members", "status": 403 } }
+      ]
+    },
+    {
+      "name": "default deny: authorize unbound refuses with its own reason",
+      "host": { "identify": true, "config": true, "members": ["a", "b"], "authorize": null },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 10 }, "expect": { "allow": false, "reason": "cowork.unconfigured.authorize", "status": 403 } },
+        { "op": "join", "at": 10, "from": "b", "expect": { "allow": false, "reason": "cowork.unconfigured.authorize", "status": 403 } },
+        { "op": "intent", "at": 20, "from": "a", "intent": { "kind": "app", "topic": "note", "payload": {} }, "expect": { "allow": false, "reason": "cowork.unconfigured.authorize", "status": 403 } }
+      ]
+    },
+    {
+      "name": "validation runs before the session and the pipeline",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "session": { "state": "ended", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "teleport" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 10, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": -1 }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 20, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 30, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 40, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "name" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 50, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "click", "handle": "" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 60, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "control", "op": "steal" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 70, "from": "a", "envelope": { "view": "a" }, "intent": { "kind": "control", "op": "grant" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 80, "from": "a", "intent": { "kind": "app", "topic": "Chat!", "payload": "x" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 90, "from": "a", "intent": { "kind": "app", "topic": "note" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 100, "from": "a", "envelope": { "revision": 0 }, "intent": { "kind": "focus", "handle": "name" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 110, "from": "a", "envelope": { "view": "a" }, "intent": { "kind": "focus", "handle": "name" }, "expect": { "allow": false, "reason": "cowork.invalid.intent", "status": 422 } },
+        { "op": "intent", "at": 120, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "focus", "handle": "name" }, "expect": { "allow": false, "reason": "cowork.session.ended", "status": 410 } }
+      ]
+    },
+    {
+      "name": "a requested session refuses intents until it is live",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "session": { "state": "requested", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 5 }, "expect": { "allow": false, "reason": "cowork.session.not-live", "status": 409 } }
+      ]
+    },
+    {
+      "name": "membership: only live members send, receive or own the target view",
+      "host": { "identify": true, "config": true, "members": ["a", "c"], "authorize": { "a": ["*"], "b": ["*"], "c": ["*"] } },
+      "config": { "control": { "mode": "free" } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "c", "envelope": { "view": "c", "revision": 0 }, "intent": { "kind": "scroll", "y": 5 }, "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } },
+        { "op": "intent", "at": 10, "from": "b", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "scroll", "y": 5 }, "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } },
+        { "op": "intent", "at": 20, "from": "a", "envelope": { "view": "c", "revision": 0 }, "intent": { "kind": "scroll", "y": 5 }, "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } },
+        { "op": "intent", "at": 30, "from": "a", "envelope": { "to": ["c"] }, "intent": { "kind": "app", "topic": "note", "payload": 1 }, "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } },
+        { "op": "intent", "at": 40, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 5 }, "expect": { "allow": true } },
+        { "op": "leave", "at": 50, "from": "a", "expect": { "allow": true } },
+        { "op": "intent", "at": 60, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 5 }, "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } }
+      ]
+    },
+    {
+      "name": "authorize asks intent:<kind>, then view:<view>, then drive for a view that is not the sender's",
+      "host": { "identify": true, "config": true, "members": ["a", "b"], "authorize": { "a": ["intent:*", "view:*"], "b": ["intent:scroll", "view:b"] } },
+      "config": { "control": { "mode": "free" } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "b", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.authorize", "status": 403 } },
+        { "op": "intent", "at": 10, "from": "b", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 20, "from": "b", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": false, "reason": "cowork.denied.authorize", "status": 403 } },
+        { "op": "intent", "at": 30, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 40, "from": "a", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.authorize", "status": 403 } },
+        { "op": "intent", "at": 50, "from": "b", "intent": { "kind": "app", "topic": "note", "payload": 1 }, "expect": { "allow": false, "reason": "cowork.denied.authorize", "status": 403 } }
+      ]
+    },
+    {
+      "name": "drive granted: one person drives another's view",
+      "host": { "identify": true, "config": true, "members": ["a", "b"], "authorize": { "a": ["intent:*", "view:*", "drive"], "b": ["intent:*", "view:b"] } },
+      "config": { "control": { "mode": "free" } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "Ada" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 10, "from": "b", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.authorize", "status": 403 } }
+      ]
+    },
+    {
+      "name": "payload size: 8192 bytes of intent JSON pass, 8193 do not; app payload 16384 pass, 16385 do not",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "h", "value": { "$repeat": "x", "count": 8152 } }, "expect": { "allow": true } },
+        { "op": "intent", "at": 200, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "h", "value": { "$repeat": "x", "count": 8153 } }, "expect": { "allow": false, "reason": "cowork.denied.size", "status": 413 } },
+        { "op": "intent", "at": 400, "from": "a", "intent": { "kind": "app", "topic": "note", "payload": { "$repeat": "x", "count": 16382 } }, "expect": { "allow": true } },
+        { "op": "intent", "at": 600, "from": "a", "intent": { "kind": "app", "topic": "note", "payload": { "$repeat": "x", "count": 16383 } }, "expect": { "allow": false, "reason": "cowork.denied.size", "status": 413 } }
+      ]
+    },
+    {
+      "name": "same origin: visit takes a relative same-origin path only",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "/orders/7?tab=items#top" }, "expect": { "allow": true } },
+        { "op": "expectView", "view": "a", "route": "/orders/7", "revision": 1 },
+        { "op": "intent", "at": 100, "from": "a", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "visit", "url": "https://evil.example/" }, "expect": { "allow": false, "reason": "cowork.denied.origin", "status": 422 } },
+        { "op": "intent", "at": 200, "from": "a", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "visit", "url": "//evil.example/x" }, "expect": { "allow": false, "reason": "cowork.denied.origin", "status": 422 } },
+        { "op": "intent", "at": 300, "from": "a", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "visit", "url": "/\\evil.example" }, "expect": { "allow": false, "reason": "cowork.denied.origin", "status": 422 } },
+        { "op": "intent", "at": 400, "from": "a", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "visit", "url": "javascript:alert(1)" }, "expect": { "allow": false, "reason": "cowork.denied.origin", "status": 422 } },
+        { "op": "intent", "at": 500, "from": "a", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "visit", "url": "/a b" }, "expect": { "allow": false, "reason": "cowork.denied.origin", "status": 422 } },
+        { "op": "intent", "at": 600, "from": "a", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "visit", "url": "next/page" }, "expect": { "allow": false, "reason": "cowork.denied.origin", "status": 422 } },
+        { "op": "intent", "at": 700, "from": "a", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "visit", "url": "/tab\there" }, "expect": { "allow": false, "reason": "cowork.denied.origin", "status": 422 } },
+        { "op": "expectView", "view": "a", "route": "/orders/7", "revision": 1 }
+      ]
+    },
+    {
+      "name": "masking and view-only handles",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "config": { "limits": { "mask": ["card.*"], "viewOnly": ["terms.accept"] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "card.number", "value": "4242" }, "expect": { "allow": false, "reason": "cowork.denied.masked", "status": 403 } },
+        { "op": "intent", "at": 150, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "focus", "handle": "card.number" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 300, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "terms.accept", "value": true }, "expect": { "allow": false, "reason": "cowork.denied.view-only", "status": 403 } },
+        { "op": "intent", "at": 450, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "click", "handle": "terms.accept" }, "expect": { "allow": false, "reason": "cowork.denied.view-only", "status": 403 } },
+        { "op": "intent", "at": 600, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "submit", "handle": "terms.accept" }, "expect": { "allow": false, "reason": "cowork.denied.view-only", "status": 403 } },
+        { "op": "intent", "at": 750, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "focus", "handle": "terms.accept" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 900, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "Ada" }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "limits: a deny route rule refuses intents on that route and visits to it",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "config": { "limits": { "deny": [{ "routes": ["/admin*"] }] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/admin/users" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.limit", "status": 403 } },
+        { "op": "intent", "at": 100, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "/admin" }, "expect": { "allow": false, "reason": "cowork.denied.limit", "status": 403 } },
+        { "op": "intent", "at": 200, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "/home" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 300, "from": "a", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "limits: an applicable allow rule must match",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "config": { "limits": { "allow": [{ "kinds": ["field", "focus"], "handles": ["doc.*"] }] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/doc/1" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "doc.title", "value": "Q3" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 150, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "nav.search", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.limit", "status": 403 } },
+        { "op": "intent", "at": 300, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "click", "handle": "doc.title" }, "expect": { "allow": false, "reason": "cowork.denied.limit", "status": 403 } },
+        { "op": "intent", "at": 450, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 10 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 525, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "anchor": "nav.top", "y": 10 }, "expect": { "allow": false, "reason": "cowork.denied.limit", "status": 403 } },
+        { "op": "intent", "at": 600, "from": "a", "intent": { "kind": "app", "topic": "note", "payload": 1 }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "limits: deny wins over allow, and a rule naming handles does not apply to an intent without one",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "config": { "limits": { "allow": [{ "handles": ["doc.*"] }], "deny": [{ "handles": ["doc.secret"] }] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/doc/1" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "doc.secret", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.limit", "status": 403 } },
+        { "op": "intent", "at": 150, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "doc.body", "value": "x" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 300, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 10 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 450, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "nav.search", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.limit", "status": 403 } }
+      ]
+    },
+    {
+      "name": "limits: a when criterion asks the host predicate",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] }, "predicates": { "afterHours": true, "readOnlyMode": false } },
+      "config": { "limits": { "deny": [{ "when": "readOnlyMode" }, { "kinds": ["submit"], "when": "afterHours" }] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "submit", "handle": "checkout" }, "expect": { "allow": false, "reason": "cowork.denied.limit", "status": 403 } },
+        { "op": "intent", "at": 150, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "click", "handle": "checkout" }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "revision: a visit advances the view and stale intents are dropped",
+      "host": { "identify": true, "config": true, "members": ["a", "b"], "authorize": { "a": ["*"], "b": ["*"] } },
+      "config": { "control": { "mode": "free" } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "/next" }, "expect": { "allow": true } },
+        { "op": "expectView", "view": "a", "route": "/next", "revision": 1 },
+        { "op": "intent", "at": 100, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.stale", "status": 409 } },
+        { "op": "intent", "at": 200, "from": "b", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "click", "handle": "save" }, "expect": { "allow": false, "reason": "cowork.denied.stale", "status": 409 } },
+        { "op": "intent", "at": 300, "from": "b", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "click", "handle": "save" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 400, "from": "a", "envelope": { "view": "a", "revision": 2 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": true } },
+        { "op": "expectView", "view": "b", "route": "/", "revision": 0 }
+      ]
+    },
+    {
+      "name": "control free: last writer per handle, both peers may write",
+      "host": { "identify": true, "config": true, "members": ["a", "b"], "authorize": { "a": ["*"], "b": ["*"] } },
+      "config": { "control": { "mode": "free" } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "title", "value": "one" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1, "from": "b", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "title", "value": "two" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 2, "from": "a", "envelope": { "view": "a" }, "intent": { "kind": "control", "op": "request" }, "expect": { "allow": false, "reason": "cowork.denied.control-mode", "status": 409 } }
+      ]
+    },
+    {
+      "name": "control ranked: a higher rank blocks a lower one until exactly idleMs after its last intent",
+      "host": { "identify": true, "config": true, "members": ["admin", "user"], "authorize": { "admin": ["*"], "user": ["intent:*", "view:user"] } },
+      "config": { "consent": "notify", "control": { "mode": "ranked", "rank": { "admin": 10, "user": 1 }, "idleMs": 3000 } },
+      "session": { "state": "live", "starter": "user", "participants": [{ "ref": "user", "route": "/account" }, { "ref": "admin", "route": "/account" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "field", "handle": "email", "value": "u@example.com" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 100, "from": "admin", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "field", "handle": "email", "value": "a@example.com" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1000, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "field", "handle": "email", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409, "blockedUntil": 3100 } },
+        { "op": "intent", "at": 3099, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "scroll", "y": 40 }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409, "blockedUntil": 3100 } },
+        { "op": "intent", "at": 3100, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "scroll", "y": 40 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 3200, "from": "admin", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "click", "handle": "save" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 3300, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "click", "handle": "save" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409, "blockedUntil": 6200 } },
+        { "op": "intent", "at": 3400, "from": "admin", "envelope": { "view": "admin", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 6200, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "click", "handle": "save" }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "control ranked: equal ranks are last-writer-wins, an unranked ref ranks 0, and the latest blocker decides blockedUntil",
+      "host": { "identify": true, "config": true, "members": ["a", "b", "c"], "authorize": { "a": ["*"], "b": ["*"], "c": ["*"] } },
+      "config": { "control": { "mode": "ranked", "rank": { "a": 5, "b": 5 }, "idleMs": 3000 } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }, { "ref": "c", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "t", "value": 1 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 10, "from": "b", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "t", "value": 2 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 20, "from": "c", "envelope": { "view": "c", "revision": 0 }, "intent": { "kind": "field", "handle": "t", "value": 3 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 30, "from": "c", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "field", "handle": "t", "value": 4 }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409, "blockedUntil": 3010 } }
+      ]
+    },
+    {
+      "name": "control baton: request, grant, release and revoke",
+      "host": { "identify": true, "config": true, "members": ["a", "b"], "authorize": { "a": ["*"], "b": ["*"] } },
+      "config": { "control": { "mode": "baton" } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "expectHolder", "view": "b", "holder": "b" },
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409 } },
+        { "op": "intent", "at": 150, "from": "b", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "mine" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 300, "from": "a", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "request" }, "expect": { "allow": true } },
+        { "op": "expectHolder", "view": "b", "holder": "b", "requests": ["a"] },
+        { "op": "intent", "at": 450, "from": "a", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409 } },
+        { "op": "intent", "at": 600, "from": "a", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "grant", "target": "a" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409 } },
+        { "op": "intent", "at": 750, "from": "b", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "grant", "target": "a" }, "expect": { "allow": true } },
+        { "op": "expectHolder", "view": "b", "holder": "a", "requests": [] },
+        { "op": "intent", "at": 900, "from": "a", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "theirs" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1050, "from": "b", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "mine" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409 } },
+        { "op": "intent", "at": 1200, "from": "a", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "release" }, "expect": { "allow": true } },
+        { "op": "expectHolder", "view": "b", "holder": "b", "requests": [] },
+        { "op": "intent", "at": 1350, "from": "a", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409 } },
+        { "op": "intent", "at": 1500, "from": "a", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "release" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409 } },
+        { "op": "intent", "at": 1650, "from": "a", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "request" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1800, "from": "b", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "grant", "target": "a" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1950, "from": "a", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "revoke" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409 } },
+        { "op": "intent", "at": 2100, "from": "b", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "revoke" }, "expect": { "allow": true } },
+        { "op": "expectHolder", "view": "b", "holder": "b", "requests": [] },
+        { "op": "intent", "at": 2250, "from": "b", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "grant", "target": "c" }, "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } }
+      ]
+    },
+    {
+      "name": "control baton: a holder who leaves hands the view back to its owner",
+      "host": { "identify": true, "config": true, "members": ["a", "b"], "authorize": { "a": ["*"], "b": ["*"] } },
+      "config": { "control": { "mode": "baton" } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "b", "envelope": { "view": "b" }, "intent": { "kind": "control", "op": "grant", "target": "a" }, "expect": { "allow": true } },
+        { "op": "expectHolder", "view": "b", "holder": "a", "requests": [] },
+        { "op": "leave", "at": 100, "from": "a", "expect": { "allow": true } },
+        { "op": "expectHolder", "view": "b", "holder": "b", "requests": [] },
+        { "op": "intent", "at": 200, "from": "b", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "field", "handle": "name", "value": "mine" }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "rate: 10 intents per 1000 ms, counted over committed intents only",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "repeat": 10, "every": 1, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 500, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": false, "reason": "cowork.denied.rate", "status": 429 } },
+        { "op": "intent", "at": 999, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": false, "reason": "cowork.denied.rate", "status": 429 } },
+        { "op": "intent", "at": 1000, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1001, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1001, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": false, "reason": "cowork.denied.rate", "status": 429 } }
+      ]
+    },
+    {
+      "name": "rate: one visit per 1000 ms",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "/one" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 999, "from": "a", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "visit", "url": "/two" }, "expect": { "allow": false, "reason": "cowork.denied.rate", "status": 429 } },
+        { "op": "expectView", "view": "a", "route": "/one", "revision": 1 },
+        { "op": "intent", "at": 1000, "from": "a", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "visit", "url": "/two" }, "expect": { "allow": true } },
+        { "op": "expectView", "view": "a", "route": "/two", "revision": 2 }
+      ]
+    },
+    {
+      "name": "rate: 30 app intents per 60000 ms",
+      "host": { "identify": true, "config": true, "members": ["a", "b"], "authorize": { "a": ["*"], "b": ["*"] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "repeat": 30, "every": 200, "from": "a", "envelope": { "to": ["b"] }, "intent": { "kind": "app", "topic": "cart.updated", "payload": { "items": 1 } }, "expect": { "allow": true } },
+        { "op": "intent", "at": 10000, "from": "a", "intent": { "kind": "app", "topic": "cart.updated", "payload": { "items": 2 } }, "expect": { "allow": false, "reason": "cowork.denied.rate", "status": 429 } },
+        { "op": "intent", "at": 10100, "from": "b", "intent": { "kind": "app", "topic": "cart.updated", "payload": { "items": 2 } }, "expect": { "allow": true } },
+        { "op": "intent", "at": 60000, "from": "a", "intent": { "kind": "app", "topic": "cart.updated", "payload": { "items": 3 } }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "host middleware before the defaults runs first",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "middleware": [{ "host": "refuseKind", "kind": "app", "reason": "host.app-closed", "status": 403 }, "membership", "authorize", "payloadSize", "sameOrigin", "masking", "limits", "revision", "control", "rateLimit", "audit"],
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "z", "intent": { "kind": "app", "topic": "note", "payload": 1 }, "expect": { "allow": false, "reason": "host.app-closed", "status": 403 } },
+        { "op": "intent", "at": 100, "from": "z", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } },
+        { "op": "intent", "at": 200, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "host middleware after the defaults only sees what the defaults allowed",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "middleware": ["membership", "authorize", "payloadSize", "sameOrigin", "masking", "limits", "revision", "control", "rateLimit", "audit", { "host": "refuse", "reason": "host.closed", "status": 403 }],
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "z", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } },
+        { "op": "intent", "at": 100, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "https://evil.example/" }, "expect": { "allow": false, "reason": "cowork.denied.origin", "status": 422 } },
+        { "op": "intent", "at": 200, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "/ok" }, "expect": { "allow": false, "reason": "host.closed", "status": 403 } },
+        { "op": "expectView", "view": "a", "route": "/", "revision": 0 }
+      ]
+    },
+    {
+      "name": "removing a default removes exactly that check",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
+      "middleware": ["membership", "authorize", "payloadSize", "masking", "limits", "revision", "control", "rateLimit", "audit"],
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "https://elsewhere.example/" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1000, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "visit", "url": "/x" }, "expect": { "allow": false, "reason": "cowork.denied.stale", "status": 409 } },
+        { "op": "intent", "at": 2000, "from": "z", "envelope": { "view": "a", "revision": 1 }, "intent": { "kind": "visit", "url": "/x" }, "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } }
+      ]
+    },
+    {
+      "name": "the authorize default can only be removed, and removing it is explicit",
+      "host": { "identify": true, "config": true, "members": ["a"], "authorize": null },
+      "middleware": ["membership", "payloadSize", "sameOrigin", "masking", "limits", "revision", "control", "rateLimit", "audit"],
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "a", "envelope": { "view": "a", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "consent accept: nobody but the subject joins until the subject consents",
+      "host": { "identify": true, "config": true, "members": ["a", "b", "c"], "authorize": { "a": ["*"], "b": ["*"], "c": ["*"] } },
+      "config": { "consent": "accept" },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "join", "at": 0, "from": "c", "expect": { "allow": false, "reason": "cowork.consent.pending", "status": 403 } },
+        { "op": "consent", "at": 10, "from": "b", "expect": { "allow": false, "reason": "cowork.consent.not-subject", "status": 403 } },
+        { "op": "consent", "at": 20, "from": "a", "expect": { "allow": true } },
+        { "op": "join", "at": 30, "from": "c", "expect": { "allow": true } },
+        { "op": "intent", "at": 40, "from": "c", "envelope": { "view": "c", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "consent accept names its subject explicitly",
+      "host": { "identify": true, "config": true, "members": ["a", "b", "c"], "authorize": { "a": ["*"], "b": ["*"], "c": ["*"] } },
+      "config": { "consent": "accept", "subject": "b" },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "join", "at": 0, "from": "b", "expect": { "allow": true } },
+        { "op": "join", "at": 10, "from": "c", "expect": { "allow": false, "reason": "cowork.consent.pending", "status": 403 } },
+        { "op": "consent", "at": 20, "from": "a", "expect": { "allow": false, "reason": "cowork.consent.not-subject", "status": 403 } },
+        { "op": "consent", "at": 30, "from": "b", "expect": { "allow": true } },
+        { "op": "join", "at": 40, "from": "c", "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "consent none and notify admit at once",
+      "host": { "identify": true, "config": true, "members": ["a", "b", "c"], "authorize": { "a": ["*"], "b": ["*"], "c": ["*"] } },
+      "config": { "consent": "none" },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "join", "at": 0, "from": "b", "expect": { "allow": true } },
+        { "op": "join", "at": 10, "from": "b", "expect": { "allow": true } },
+        { "op": "intent", "at": 20, "from": "b", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "join asks members() and then the join ability, and respects maxParticipants",
+      "host": { "identify": true, "config": true, "members": ["a", "b", "c"], "authorize": { "a": ["*"], "b": ["join"], "c": ["intent:*"] } },
+      "config": { "consent": "notify", "maxParticipants": 2 },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },
+      "steps": [
+        { "op": "join", "at": 0, "from": "d", "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } },
+        { "op": "join", "at": 10, "from": "c", "expect": { "allow": false, "reason": "cowork.denied.authorize", "status": 403 } },
+        { "op": "join", "at": 20, "from": "b", "expect": { "allow": true } },
+        { "op": "leave", "at": 30, "from": "b", "expect": { "allow": true } },
+        { "op": "join", "at": 40, "from": "b", "expect": { "allow": true } },
+        { "op": "join", "at": 50, "from": "a", "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "maxParticipants refuses the next join",
+      "host": { "identify": true, "config": true, "members": ["a", "b", "c"], "authorize": { "a": ["*"], "b": ["*"], "c": ["*"] } },
+      "config": { "maxParticipants": 2 },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "join", "at": 0, "from": "c", "expect": { "allow": false, "reason": "cowork.denied.full", "status": 409 } }
+      ]
+    },
+    {
+      "name": "anonymous support request: a requested session goes live on an authorised activate",
+      "host": { "identify": true, "config": true, "members": ["guest:7", "rep", "other"], "authorize": { "guest:7": ["intent:*", "view:guest:7", "join"], "rep": ["activate", "join", "intent:*", "view:*", "drive"], "other": ["join"] } },
+      "config": { "consent": "notify" },
+      "session": { "state": "requested", "starter": "guest:7", "participants": [{ "ref": "guest:7", "route": "/help" }] },
+      "steps": [
+        { "op": "join", "at": 0, "from": "other", "expect": { "allow": false, "reason": "cowork.session.not-live", "status": 409 } },
+        { "op": "activate", "at": 10, "from": "other", "expect": { "allow": false, "reason": "cowork.denied.authorize", "status": 403 } },
+        { "op": "activate", "at": 20, "from": "rep", "expect": { "allow": true } },
+        { "op": "activate", "at": 30, "from": "rep", "expect": { "allow": false, "reason": "cowork.session.not-requested", "status": 409 } },
+        { "op": "intent", "at": 40, "from": "guest:7", "envelope": { "view": "guest:7" }, "intent": { "kind": "control", "op": "grant", "target": "rep" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 50, "from": "rep", "envelope": { "view": "guest:7", "revision": 0 }, "intent": { "kind": "field", "handle": "order", "value": "A-1" }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "consent accept also gates the activation of a request",
+      "host": { "identify": true, "config": true, "members": ["guest:7", "rep"], "authorize": { "guest:7": ["*"], "rep": ["*"] } },
+      "config": { "consent": "accept" },
+      "session": { "state": "requested", "starter": "guest:7", "participants": [{ "ref": "guest:7", "route": "/help" }] },
+      "steps": [
+        { "op": "activate", "at": 0, "from": "rep", "expect": { "allow": false, "reason": "cowork.consent.pending", "status": 403 } },
+        { "op": "consent", "at": 10, "from": "guest:7", "expect": { "allow": true } },
+        { "op": "activate", "at": 20, "from": "rep", "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "end needs the end ability, and an ended session refuses everything",
+      "host": { "identify": true, "config": true, "members": ["a", "b", "c"], "authorize": { "a": ["*"], "b": ["intent:*", "view:b"], "c": ["*"] } },
+      "session": { "state": "live", "starter": "a", "participants": [{ "ref": "a", "route": "/" }, { "ref": "b", "route": "/" }] },
+      "steps": [
+        { "op": "end", "at": 0, "from": "b", "expect": { "allow": false, "reason": "cowork.denied.authorize", "status": 403 } },
+        { "op": "end", "at": 10, "from": "c", "expect": { "allow": false, "reason": "cowork.denied.membership", "status": 403 } },
+        { "op": "end", "at": 20, "from": "a", "expect": { "allow": true } },
+        { "op": "intent", "at": 30, "from": "b", "envelope": { "view": "b", "revision": 0 }, "intent": { "kind": "scroll", "y": 1 }, "expect": { "allow": false, "reason": "cowork.session.ended", "status": 410 } },
+        { "op": "join", "at": 40, "from": "c", "expect": { "allow": false, "reason": "cowork.session.ended", "status": 410 } },
+        { "op": "consent", "at": 50, "from": "a", "expect": { "allow": false, "reason": "cowork.session.ended", "status": 410 } },
+        { "op": "end", "at": 60, "from": "a", "expect": { "allow": false, "reason": "cowork.session.ended", "status": 410 } }
+      ]
+    }
+  ]
+}
