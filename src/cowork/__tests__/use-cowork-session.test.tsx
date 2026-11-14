@@ -82,6 +82,8 @@ describe("CoworkPresence", () => {
     const { container } = render(<CoworkPresence session={snapshot()} />);
     const root = container.querySelector("[data-cowork-presence]")!;
     expect(root.getAttribute("data-tone")).toBe("neutral");
+    // A control surface: input blocking never swallows a press inside it.
+    expect(root.hasAttribute("data-cowork-control")).toBe(true);
     expect(Array.from(root.querySelectorAll("[data-cowork-peer]")).map((el) => el.getAttribute("data-cowork-peer"))).toEqual(["user", "admin", "ed"]);
     expect(root.querySelector('[data-cowork-peer="admin"]')?.hasAttribute("data-drives")).toBe(true);
     expect(root.querySelector('[data-cowork-peer="ed"]')?.hasAttribute("data-idle")).toBe(true);

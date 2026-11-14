@@ -759,6 +759,16 @@ const session = useCoworkSession({
 - **A masked value never leaves the browser.** Config `limits.mask` / `limits.viewOnly`,
   sensitive inputs (password, `cc-*`, `one-time-code`, `data-private`) and anything
   inside `data-cowork="view-only"` are reported only as "field active".
+- **Control is enforced on the person's input, not only shown.** While someone else
+  has control of your view (ranked: a higher rank acted within `idleMs`; baton: the
+  baton is elsewhere), your own keyboard, presses, wheel, paste and drop are swallowed
+  before the page sees them; pointer movement stays free, so your cursor still moves.
+  The hand-back happens at exactly `idleMs` after the higher rank's last intent, and
+  the root (or `<html>`) carries `data-cowork-blocked="ranked|baton"` meanwhile.
+  The controlling peer's intents still land (only trusted events are blocked), and
+  anything inside `[data-cowork-control]` (`<CoworkPresence>` is one) stays usable so a
+  blocked owner can revoke. `blockInput: false` turns it off; `createInputBlocker` is
+  exported for a host that wants it elsewhere.
 - **Only the view's owner performs a side effect**, through your adapter, after its
   `guard`. `submit` goes through `adapter.confirm` when you provide one.
 - **Routing**: `createServerTransport` (the server runs the pipeline and relays) or

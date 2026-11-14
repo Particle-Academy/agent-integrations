@@ -275,6 +275,7 @@ export {
   createMemoryTransport,
   createWhisperTransport,
   createServerTransport,
+  createInputBlocker,
   type CoworkSession,
   type CoworkSessionOptions,
   type CoworkSnapshot,

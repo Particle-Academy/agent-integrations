@@ -43,6 +43,7 @@ import {
   type PipelineContext,
   type Result,
 } from "./engine";
+import { createInputBlocker, type InputBlocker } from "./input-block";
 import { readFrame, type CoworkFrame, type PeerInfo, type PeerTransport, type PresenceEvent, type ReceivedFrame } from "./transport";
 import type { Decision, Envelope, HostAnswer, Intent, MaybePromise, Ref, SessionConfig, SessionConfigInput, SessionState } from "./types";
 
@@ -122,6 +123,15 @@ export type CoworkSessionOptions = {
   idleAfterMs?: number;
   /** Minimum gap between cursor frames. Default 50 ms (20 Hz). */
   cursorIntervalMs?: number;
+  /**
+   * Block this person's own keyboard and pointer presses while someone else has
+   * control of their view (ranked: a higher rank acted within `idleMs`; baton: the
+   * baton is elsewhere). Pointer movement stays free, and the controlling peer's
+   * intents still land. Default ON. `false` leaves only the `blocked` snapshot state
+   * for the host to render. The root element (or `<html>`) carries
+   * `data-cowork-blocked="ranked|baton"` while it holds.
+   */
+  blockInput?: boolean | { target?: EventTarget; isUserEvent?: (event: Event) => boolean; onBlocked?: (event: Event) => void };
 };
 
 export type SendOptions = { view?: Ref; to?: Ref[] };
@@ -306,10 +316,49 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     if (snapshot && key === snapshotKey) return;
     snapshot = next;
     snapshotKey = key;
+    syncBlock();
     for (const listener of [...listeners]) {
       try { listener(); } catch { /* One subscriber cannot break the others. */ }
     }
   };
+
+  // -------------------------------------------------------------------------
+  // Input blocking (ranked / baton control)
+  // -------------------------------------------------------------------------
+
+  /** Live, against the clock: the hand-back happens at `until` even between refreshes. */
+  const isBlockedNow = (): boolean => {
+    if (destroyed) return false;
+    const blocked = session.getSnapshot().blocked;
+    if (!blocked) return false;
+    return blocked.until === undefined || now() < blocked.until;
+  };
+  const blockOption = options.blockInput ?? true;
+  const blockTarget = (): EventTarget | undefined => {
+    if (typeof blockOption === "object" && blockOption.target) return blockOption.target;
+    const r = root();
+    return r ? (r as unknown as EventTarget) : undefined;
+  };
+  const markElement = (): Element | null => {
+    const r = root();
+    if (r && typeof (r as Element).setAttribute === "function") return r as Element;
+    return typeof document === "undefined" ? null : document.documentElement;
+  };
+  let handBackTimer: ReturnType<typeof setTimeout> | undefined;
+  let blocker: InputBlocker | undefined;
+  function syncBlock(): void {
+    clearTimeout(handBackTimer);
+    handBackTimer = undefined;
+    const blocked = destroyed ? null : snapshot?.blocked ?? null;
+    const live = blocked !== null && (blocked.until === undefined || now() < blocked.until);
+    const mark = markElement();
+    if (live && blockOption !== false) mark?.setAttribute("data-cowork-blocked", blocked.mode);
+    else mark?.removeAttribute("data-cowork-blocked");
+    // Re-read the state at the hand-back, so the banner and the attribute clear on time.
+    if (blocked?.until !== undefined && !destroyed) {
+      handBackTimer = setTimeout(changed, Math.max(0, blocked.until - now()));
+    }
+  }
 
   // -------------------------------------------------------------------------
   // DOM masking
@@ -686,11 +735,25 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       if (destroyed) return;
       destroyed = true;
       clearTimeout(cursorTimer);
+      blocker?.destroy();
+      syncBlock();
       offFrame();
       offPresence();
       transport.close();
       listeners.clear();
     },
   };
+  if (blockOption !== false) {
+    const extra = typeof blockOption === "object" ? blockOption : {};
+    const target = blockTarget();
+    if (target) {
+      blocker = createInputBlocker({
+        target,
+        isBlocked: isBlockedNow,
+        ...(extra.isUserEvent ? { isUserEvent: extra.isUserEvent } : {}),
+        ...(extra.onBlocked ? { onBlocked: extra.onBlocked } : {}),
+      });
+    }
+  }
   return session;
 }

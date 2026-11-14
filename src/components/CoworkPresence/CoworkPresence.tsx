@@ -67,7 +67,7 @@ export function CoworkPresence({ session, labels, now = Date.now, className }: C
   }
 
   return (
-    <div className={className} data-cowork-presence="" data-tone={blocked ? "warning" : "neutral"}>
+    <div className={className} data-cowork-presence="" data-cowork-control="" data-tone={blocked ? "warning" : "neutral"}>
       {indicator !== null && (
         <span data-cowork-indicator="" role="status" aria-live="polite">
           {indicator}

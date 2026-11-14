@@ -41,6 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The one-line text sanitiser the navigation bridge applies to page-supplied strings moved to an internal module (`src/bridges/text-safety.ts`) so the sign bridge uses the same one. No behaviour change; it is not exported.
 
 
+- **Co-work control blocks the person's input for real** (MOIC's ranked hand-back).
+  While a higher-ranked peer is active on your view, or the baton is elsewhere,
+  `createCoworkSession` / `useCoworkSession` swallow your trusted keyboard, press,
+  wheel, paste and drop events in the capture phase; pointer movement stays free. The
+  check reads the clock on every event, so the hand-back lands at exactly `idleMs`, and
+  a timer re-reads the state then, so the banner and `data-cowork-blocked` clear
+  without a poll. The controlling peer's intents still land (they arrive as untrusted
+  events), and input inside `[data-cowork-control]` is never blocked;
+  `<CoworkPresence>` carries it, so a blocked owner can still revoke. **On by
+  default**; pass `blockInput: false` for the previous banner-only behaviour.
+  `createInputBlocker`, `BLOCKED_EVENTS` and `CONTROL_ATTRIBUTE` are exported.
+
 ### Security
 
 - **Co-work client: a peer-supplied ref can no longer reach `Object.prototype`** (code
