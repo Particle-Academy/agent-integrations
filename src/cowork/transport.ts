@@ -1,7 +1,8 @@
 /**
  * The `PeerTransport` seam for co-work sessions: how frames travel between
- * peers. Three ship here, and no other transport is planned (Reverb/Echo is the
- * only network transport; WebRTC would need third-party approval):
+ * peers. Three ship here, and no other transport is planned (a Pusher-protocol
+ * socket server, e.g. Genie's WebSockets service, is the only network transport;
+ * WebRTC would need third-party approval):
  *
  * - {@link createMemoryTransport}: an in-process hub, for tests and demos.
  * - {@link createWhisperTransport}: `direct` routing over a presence channel's
