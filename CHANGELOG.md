@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-11-14
+
 ### Added
 
 - **Co-work sessions, client side** (CC-fancy-0037): several people (and agents) sharing live UI, each with their **own view**, exchanging **intents, never DOM**. Pairs with the servers `particle-academy/fancy-cowork` (PHP) and `@particle-academy/fancy-cowork` (Node); neither is a dependency, and **no dependency of any kind was added**. **Nothing to do** if you do not use it: every existing export and component behaves as before.
@@ -74,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hole: an envelope `view` of `__proto__` wrote onto `Object.prototype`. `__proto__`,
   `constructor` and `prototype` are now never a ref, in the engine, in a presence member
   and in a frame's `view` / `follows` / `target`; the state maps are null-prototype.
-  Handles keep their own rule. Unreleased.
+  Handles keep their own rule.
 
 ## [0.59.0] - 2026-11-12
 
