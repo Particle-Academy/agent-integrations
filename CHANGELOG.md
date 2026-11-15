@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-11-15
+
 ### Added
 
 - **`registerAgentChatBridge` at `./bridges/agent-chat`** (CC-fancy-0042), for the
