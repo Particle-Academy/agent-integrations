@@ -194,6 +194,22 @@ export {
 // An agent joins a co-work session as an ordinary participant, under the same
 // policy and control mode as a person. Closed tool list; see ./bridges/cowork.
 export { registerCoworkBridge, COWORK_BRIDGE_TOOLS, type CoworkBridgeOptions } from "./bridges/cowork";
+// Agent chat, for a CO-DRIVING agent or coach: read the thread, read status and
+// HITL, scroll, stage a draft. Nothing here decides an approval, answers a
+// question or sends as the human, and nothing ever should; see ./bridges/agent-chat.
+export {
+  registerAgentChatBridge,
+  AGENT_CHAT_BRIDGE_TOOLS,
+  AGENT_CHAT_FORBIDDEN_TOOL_NAME,
+  type AgentChatActorLike,
+  type AgentChatBridgeAdapter,
+  type AgentChatBridgeLimits,
+  type AgentChatBridgeOptions,
+  type AgentChatHitlItemLike,
+  type AgentChatKnowledgeHitLike,
+  type AgentChatRowLike,
+  type AgentChatStatusLike,
+} from "./bridges/agent-chat";
 // E-signature, the SENDER's half only: read envelopes, author a draft, propose
 // send / void / reminder. Nothing here verifies a code, consents, adopts a mark,
 // signs or declines, and nothing ever should; see the header of ./bridges/sign.

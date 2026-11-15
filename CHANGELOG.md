@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`registerAgentChatBridge` at `./bridges/agent-chat`** (CC-fancy-0042), for the
+  fancy-chat-ui agent chat surface. It serves a co-driving agent or coach, never
+  the agent taking the turn: `chat_read` (rows after a seq cursor), `chat_status`,
+  `chat_scroll_to`, `chat_draft_set` (STAGES a draft; the human sends it;
+  undoable), `hitl_list` (read-only), and `knowledge_search` only when the host
+  supplies a knowledge adapter whose scope the host binds. **There is no tool that
+  decides an approval, answers a question or sends as the human**; a closed-list
+  test and `AGENT_CHAT_FORBIDDEN_TOOL_NAME` fail CI if one is added, and the bridge
+  refuses to register a reserved name at runtime. Thread text reaches the agent as
+  `{ untrusted: "chat-text", text }` on one line. Row, text, draft and hit caps are
+  configurable through `limits`. The adapter is declared locally, so no fancy-chat
+  package is needed to build. New entry point; nothing to migrate.
+
 ## [0.61.0] - 2026-11-14
 
 ### Added

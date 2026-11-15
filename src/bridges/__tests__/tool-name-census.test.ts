@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { ToolRegistry, type ToolHost } from "../../mcp/tool-host";
 import type { RegisteredTool, ToolDefinition } from "../../mcp/types";
 import { resetAllUndoStacks } from "../../undo/undo-stack";
+import { registerAgentChatBridge } from "../agent-chat";
 import { registerArtboardBridge } from "../artboard";
 import { registerCatalogBridge } from "../catalog";
 import { registerChartsBridge } from "../charts";
@@ -63,6 +64,7 @@ function anything(): any {
 
 /** Each bridge, keyed by its entry point. Adapter ids are distinct per bridge kind. */
 const BRIDGES: Record<string, (host: ToolHost) => unknown> = {
+  registerAgentChatBridge: (h) => registerAgentChatBridge(h, { adapter: anything() } as never),
   registerArtboardBridge: (h) => registerArtboardBridge(h, { adapter: anything() } as never),
   registerCatalogBridge: (h) => registerCatalogBridge(h, { adapter: anything() } as never),
   registerChartsBridge: (h) => registerChartsBridge(h, { adapter: anything() } as never),

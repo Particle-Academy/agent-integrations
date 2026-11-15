@@ -90,6 +90,7 @@ Every bridge has a matching subpath if you'd rather import surgically:
 | screen contents     | `…/bridges/screen-doc`                                 |
 | passkeys            | `…/bridges/passkeys`                                   |
 | sign (e-signature)  | `…/bridges/sign`                                       |
+| agent chat          | `…/bridges/agent-chat`                                 |
 | content reactions   | `…/bridges/content-reaction`                           |
 | sheets adapter hook | `…/sheets-adapter`                                     |
 | presence            | `…/presence`                                           |
@@ -851,6 +852,16 @@ to you:
   `confirm` argument that would apply it (revoking the last passkey is a lockout).
   `passkey_list` re-projects onto the public summary fields, so handing it your
   ORM model cannot leak a public key, a user handle, or a signature counter.
+- **Agent chat is for a co-driving agent, never the agent in the turn.**
+  `registerAgentChatBridge` (fancy-chat-ui) reads the thread (`chat_read`, after a
+  seq cursor), the status (`chat_status`) and the waiting approvals and questions
+  (`hitl_list`), scrolls the surface (`chat_scroll_to`) and **stages** a composer
+  draft the human sends (`chat_draft_set`, undoable). `knowledge_search` appears
+  only when the host supplies a knowledge adapter, inside a scope the host binds.
+  There is no tool that decides an approval, answers a question or sends as the
+  human; `AGENT_CHAT_FORBIDDEN_TOOL_NAME` is the pattern a test holds every name
+  against. Thread text reaches the agent as `{ "untrusted": "chat-text", "text": "..." }`
+  on one line.
 - **E-signature is the sender's half only, and that is not a gap.**
   `registerSignBridge` (fancy-sign) reads envelopes (`sign_list_envelopes`,
   `sign_get_envelope`, `sign_timeline`, `sign_verify`), authors a **draft**

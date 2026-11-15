@@ -257,6 +257,16 @@
         "default": "./dist/bridges-sign.cjs"
       }
     },
+    "./bridges/agent-chat": {
+      "import": {
+        "types": "./dist/bridges/agent-chat.d.ts",
+        "default": "./dist/bridges-agent-chat.js"
+      },
+      "require": {
+        "types": "./dist/bridges/agent-chat.d.cts",
+        "default": "./dist/bridges-agent-chat.cjs"
+      }
+    },
     "./bridges/doc": {
       "import": {
         "types": "./dist/bridges/doc.d.ts",
