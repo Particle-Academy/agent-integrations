@@ -51,6 +51,7 @@ export const REASONS = {
   notLive: "cowork.session.not-live",
   notRequested: "cowork.session.not-requested",
   membership: "cowork.denied.membership",
+  refInUse: "cowork.denied.ref-in-use",
   authorize: "cowork.denied.authorize",
   size: "cowork.denied.size",
   origin: "cowork.denied.origin",
@@ -307,8 +308,13 @@ const membership: Middleware = async (ctx, intent, next) => {
   for (const ref of refs) {
     if (!session.participants[ref] || !(await askMembers(host, ref))) return refuse(REASONS.membership, 403);
   }
+  // One ref, one identity: the sender must be the participant that joined on
+  // this ref, acting for the same account (none counts as a value).
+  if (!sameActor(session.participants[ctx.from]?.actingFor, ctx.actingFor)) return refuse(REASONS.refInUse, 409);
   return next();
 };
+
+const sameActor = (a: Ref | undefined | null, b: Ref | undefined | null): boolean => (a ?? null) === (b ?? null);
 
 const authorize: Middleware = async (ctx, intent, next) => {
   const { host } = ctx;
@@ -680,7 +686,13 @@ async function abilityGate(host: EngineHost, ref: Ref, ability: string): Promise
 export async function evaluateJoin(host: EngineHost, state: SessionState, input: OpInput): Promise<Result> {
   const checks = prelude(host, input.from) ?? sessionGate(state) ?? (await membersGate(host, input.from)) ?? (await abilityGate(host, input.from, "join"));
   if (checks) return refused(state, checks);
-  if (state.participants[input.from]) return { decision: ALLOW, state, events: [] };
+  const joined = state.participants[input.from];
+  if (joined) {
+    // The same person again (a second tab) is fine; another identity on this ref is not.
+    return sameActor(joined.actingFor, input.actingFor)
+      ? { decision: ALLOW, state, events: [] }
+      : refused(state, refuse(REASONS.refInUse, 409));
+  }
   const config = host.config!;
   if (config.consent === "accept" && !state.consented && input.from !== subjectOf(state, config)) {
     return refused(state, refuse(REASONS.consentPending, 403));

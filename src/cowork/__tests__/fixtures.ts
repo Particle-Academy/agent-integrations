@@ -12,7 +12,7 @@ export const FIXTURES_PATH = join(dirname(fileURLToPath(import.meta.url)), "cowo
 // Pinned in EVERY leg: particle-academy/fancy-cowork (PHP), @particle-academy/fancy-cowork
 // (Node) and this client engine. A copy that drifts in one repository fails that
 // repository's suite, so "byte-identical" is a test result rather than a promise.
-export const FIXTURES_SHA256 = "bcf40fb69bf9d1ce03bdc2dd426bc42f1dd890dc7a6716314f3bdccb6b7c7106";
+export const FIXTURES_SHA256 = "ba7176adea2252ca914c65dcd0dd26707f437fb70a5e087b30e8ad8dd8e4f973";
 
 export const RAW = readFileSync(FIXTURES_PATH);
 export const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -27,6 +27,7 @@ export interface Step {
   repeat?: number;
   every?: number;
   from?: string;
+  actingFor?: string;
   envelope?: { view?: string; revision?: number; to?: string[] };
   intent?: Record<string, unknown>;
   expect?: Decision;
@@ -48,7 +49,7 @@ export interface Case {
   };
   config?: Record<string, unknown>;
   middleware?: Array<string | HostEntry> | null;
-  session: { state: SessionStatus; starter: string; participants: { ref: string; route: string }[] };
+  session: { state: SessionStatus; starter: string; participants: { ref: string; route: string; actingFor?: string }[] };
   steps: Step[];
 }
 
@@ -103,7 +104,7 @@ export function stateFor(c: Case) {
     id: "s1",
     state: c.session.state,
     starter: c.session.starter,
-    participants: c.session.participants.map((p) => ({ ref: p.ref, route: p.route })),
+    participants: c.session.participants.map((p) => ({ ref: p.ref, route: p.route, ...(p.actingFor !== undefined ? { actingFor: p.actingFor } : {}) })),
     now: 0,
   });
 }

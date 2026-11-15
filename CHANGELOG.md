@@ -11,6 +11,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Co-work: a shared field typed by one peer now reaches the other, and the receiver
+  holds the lower rank (MOIC's two-browser report).** Under server routing the receiver
+  re-ran the whole policy on every server-relayed intent against its own view of the
+  session, and that view was often stale: laravel-echo never repeats a `here` that fired
+  before the transport attached, so the session started with nobody but itself, and on
+  Sockudo it never learned peers' routes. Every relayed intent from an unknown peer was
+  dropped, so nothing applied and nothing blocked. The session now re-syncs from `GET
+  /cowork/sessions/{id}` when it starts, on every presence acknowledgement and member
+  join, and on a relayed intent from a peer it has not heard of, and it takes a relayed
+  intent as the server's verdict (committed, page-side guards only). **Nothing to do;
+  your composer now syncs.** Direct routing keeps the full receiver pipeline.
+- **`bindCoworkDom` flushes a pending value on unbind instead of dropping it**, so a
+  re-bind or unmount before the trailing edge no longer loses the last keystrokes.
+- **`bindCoworkDom` listens in the capture phase.** An editor, or a React `onInput`, that
+  stops its own `input` event from bubbling hid every keystroke from a listener on the
+  document or a panel above it, so no field intent was ever sent while cursors (reported
+  by the host) still were. Capture sees it first, and `input` / `change` fire after the
+  value changed, so the final text is the one read. **Nothing to do.** The recipe now
+  binds to the whole document: a composer in a portal is outside any panel element.
+- **`useCoworkSession` keeps one session per `sessionId`, `self.ref` and policy
+  binding.** A transport object rebuilt on every render used to restart the session on
+  every render (an endless restart loop); `adapter`, `sharedFields`, `isDestructive` and
+  `pendingMode` are now read live. To start over on another transport, change `sessionId`
+  or remount.
+- **The mirroring recipe ranked by role name** (`rank: { admin: 2, user: 1 }`); rank is
+  keyed by participant ref, so that map ranked nobody. The README now uses a function of
+  the ref and says the server must rank the same way. If you copied it, rank your refs.
+
+### Added
+
+- **One ref, one identity** in the client engine (fixtures `ba7176ad`): a join or intent
+  on a live participant's ref with a different `actingFor` is refused
+  `cowork.denied.ref-in-use`. **If your `identify` returned the same ref for two different
+  people, give each person their own ref** (`ref` is the person, `actingFor` the account).
+- **Live presence:** every peer carries `online`; a server transport sends a heartbeat
+  every `heartbeatMs` (default 30000) to `POST /cowork/sessions/{id}/heartbeat` and offers
+  `sync()` (`GET /cowork/sessions/{id}`); `readSync` and the `CoworkSync*` types are
+  exported. Needs a fancy-cowork server with the heartbeat route (an older one answers
+  404 to the heartbeat, which is ignored).
+
 ## [0.63.0] - 2026-11-15
 
 ### Added

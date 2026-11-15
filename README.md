@@ -815,20 +815,49 @@ const agent = createDomNavigationAgent({ exclude: ["#onetrust-consent-sdk"] });
 // tears the session down. Navigate the way the app does.
 const adapter = { ...agent, visit: (url: string) => openView(url) }; // or router.visit(url, { preserveState: true })
 
+// Create the transport ONCE (useMemo or module scope), never inline in the call below.
+const transport = useMemo(
+  () => createServerTransport({ sessionId, self: me.ref, channel, fetch, socketId }),
+  [channel, sessionId, me.ref],
+);
+
 const session = useCoworkSession({
-  sessionId, self, transport, adapter, authorize,
-  config: { consent: "notify", control: { mode: "ranked", scope: "session", rank: { admin: 2, user: 1 }, idleMs: 3000 } },
+  sessionId, self: me, transport, adapter, authorize,
+  // `rank` is keyed by PARTICIPANT REF, never by role name: ranking by role means a
+  // function of the ref. The SERVER's config must rank the same refs the same way, or
+  // it accepts what the client blocks.
+  config: { consent: "notify", control: { mode: "ranked", scope: "session", rank: (ref) => (isAdminRef(ref) ? 2 : 1), idleMs: 3000 } },
   presenceRouting: "server",
   sharedFields: ["composer", "order.*"], // specific globs; "*" would also share search boxes
 });
 
 // The handle carries the live session's reportField; bind once it is ready.
-useEffect(() => (session.ready ? bindCoworkDom(session, { root: panelEl }) : undefined), [session.ready, session.reportField]);
+// The whole document by default: a composer rendered in a portal (a chat drawer, a
+// popover) is outside any panel element. It listens in the capture phase, so an editor
+// that stops its own input events from bubbling is still seen.
+useEffect(() => (session.ready ? bindCoworkDom(session) : undefined), [session.ready, session.reportField]);
 useEffect(() => { void session.follow(otherRef); }, [otherRef]); // both sides follow each other
 // From the app's OWN view-change event (a panel switch is not always a URL visit):
 onViewChange((path) => void session.reportVisit(path)); // a same-origin path such as "/panel/orders/7"
 ```
 
+- **`ref` is the PERSON, `actingFor` the ACCOUNT.** An admin viewing as Bob is
+  `{ ref: "user:1", actingFor: "user:4" }` and Bob is `{ ref: "user:4" }`: two people, two
+  refs. If `identify` returned Bob's ref for the admin too, the two browsers would be one
+  participant (one person shown, each other's writes skipped as their own, nobody ranked
+  above anybody). The server refuses that now (`cowork.denied.ref-in-use`) and so does
+  the client engine.
+- **Joining late, or after the presence channel was joined, is fine.** The session
+  re-syncs from `GET /cowork/sessions/{id}` when it starts, on every presence
+  acknowledgement and member join, and on a relayed intent from a peer it has not heard
+  of: laravel-echo never repeats a `here` that fired before the transport attached, and
+  a server-routed session learns peers' routes only from the server (Sockudo drops the
+  unstamped `hello` whispers). Under server routing a relayed intent is the server's
+  verdict: the receiver commits it (so blocking and the banner follow) and applies only
+  the page-side guards (masking, view-only, your adapter's guard, owner-only side effects).
+- **Who is connected:** each peer carries `online` (presence-channel membership, else the
+  server's re-sync), and a server transport sends a heartbeat every `heartbeatMs`
+  (default 30000) so the server can expire a closed browser.
 - **Mutual follow does not loop.** A followed visit is applied and re-reported once; it
   comes back to a page already on that route and stops there. Your own navigation and
   scroll listeners WILL report what the session just applied: for `followEchoMs`

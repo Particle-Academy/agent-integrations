@@ -20,8 +20,8 @@ function fakeSession(overrides: Partial<CoworkSnapshot> = {}) {
     routing: "server",
     consent: "notify",
     peers: [
-      { ref: "agent", label: "Agent", self: true, view: { route: "/help", revision: 0 }, follows: null, drives: false, idle: false, cursor: null, activeField: null },
-      { ref: "user", label: "Ada", self: false, view: { route: "/account", revision: 3 }, follows: null, drives: false, idle: true, cursor: { anchor: "email", fx: 0.5, fy: 0.5 }, activeField: "card.number" },
+      { ref: "agent", label: "Agent", self: true, view: { route: "/help", revision: 0 }, follows: null, drives: false, idle: false, cursor: null, activeField: null, online: true },
+      { ref: "user", label: "Ada", self: false, view: { route: "/account", revision: 3 }, follows: null, drives: false, idle: true, cursor: { anchor: "email", fx: 0.5, fy: 0.5 }, activeField: "card.number", online: true },
     ],
     control: { user: { mode: "baton", holder: "user", requests: [] } },
     blocked: null,

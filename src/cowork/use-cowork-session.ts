@@ -5,7 +5,11 @@ import type { PeerTransport } from "./transport";
 import type { Decision } from "./types";
 
 export type UseCoworkSessionOptions = Omit<CoworkSessionOptions, "transport"> & {
-  /** Nothing happens until there is one; swap it (or `sessionId`) to start over. */
+  /**
+   * Nothing happens until there is one. Create it ONCE (useMemo on the channel, the
+   * session id and self.ref, or module scope): a new transport OBJECT does not restart
+   * the session. To start over on a different transport, change `sessionId` or remount.
+   */
   transport: PeerTransport | null | undefined;
 };
 
@@ -26,9 +30,11 @@ const noSubscribe = () => noop;
  * (`follow`, `requestControl`, `release`, `sendIntent`, ...).
  *
  * The session is created when a transport is present and destroyed on unmount
- * (which leaves the presence channel). Callbacks and `config` are read through a
- * ref, so passing new functions each render does not restart it; `authorize`
- * being bound or not is fixed at creation, like the transport.
+ * (which leaves the presence channel). ONE session per `sessionId`, `self.ref` and
+ * whether `authorize` is bound. Everything else may be an inline value rebuilt on
+ * every render (`self`, `config` with a rank function, `authorize`, `sharedFields`,
+ * `adapter`, callbacks, even the transport object): it is read through a ref and
+ * never restarts the session or changes its functions' identity.
  *
  * ```tsx
  * const session = useCoworkSession({ sessionId, self, transport, adapter, config, authorize, onAppMessage });
@@ -42,12 +48,19 @@ export function useCoworkSession(options: UseCoworkSessionOptions): CoworkSessio
   const [session, setSession] = useState<CoworkSession | null>(null);
   const bound = options.authorize !== null && options.authorize !== undefined;
 
+  const hasTransport = Boolean(options.transport);
   useEffect(() => {
-    const transport = options.transport;
+    const transport = latest.current.transport;
     if (!transport) return;
     const current = latest.current;
+    const live = latest;
     const created = createCoworkSession({
       ...current,
+      // Read at use, so an inline value passed on a later render is the one used.
+      get adapter() { return live.current.adapter; },
+      get sharedFields() { return live.current.sharedFields; },
+      get isDestructive() { return live.current.isDestructive; },
+      get pendingMode() { return live.current.pendingMode; },
       transport,
       config: () => {
         const config = latest.current.config;
@@ -64,8 +77,8 @@ export function useCoworkSession(options: UseCoworkSessionOptions): CoworkSessio
       created.destroy();
       setSession((s) => (s === created ? null : s));
     };
-    // Recreate only for a new session, transport, person or policy binding.
-  }, [options.sessionId, options.transport, options.self.ref, bound]);
+    // Recreate only for a new session, person or policy binding, or the first transport.
+  }, [options.sessionId, hasTransport, options.self.ref, bound]);
 
   const empty = useMemo<CoworkSnapshot>(
     () => ({

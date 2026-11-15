@@ -45,7 +45,7 @@ import {
   type Result,
 } from "./engine";
 import { createInputBlocker, type InputBlocker } from "./input-block";
-import { readFrame, type CoworkFrame, type PeerInfo, type PeerTransport, type PresenceEvent, type ReceivedFrame } from "./transport";
+import { readFrame, type CoworkSyncState, type CoworkFrame, type PeerInfo, type PeerTransport, type PresenceEvent, type ReceivedFrame } from "./transport";
 import type { Decision, Envelope, HostAnswer, Intent, MaybePromise, Ref, SessionConfig, SessionConfigInput, SessionState } from "./types";
 
 export type CoworkCursor = { anchor: string; fx: number; fy: number } | { x: number; y: number };
@@ -64,6 +64,12 @@ export type CoworkPeer = {
   cursor: CoworkCursor | null;
   /** A field it is editing whose value is not shared (masked), or the last one it said it was. */
   activeField: string | null;
+  /**
+   * Connected now: on the presence channel (its member list), else what the server's
+   * re-sync says. A joined participant who closed the browser is listed but offline
+   * until the server expires them.
+   */
+  online: boolean;
 };
 
 export type CoworkViewControl = {
@@ -165,6 +171,8 @@ export type CoworkSessionOptions = {
    * they edit it first), and an applied value is not echoed back. Default none.
    */
   sharedFields?: string[];
+  /** Server routing: how often to tell the server this participant is still here. Default 30000. */
+  heartbeatMs?: number;
 };
 
 export type SendOptions = { view?: Ref; to?: Ref[] };
@@ -235,6 +243,10 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const activeFields = new Map<Ref, string | null>();
   const lastSeen = new Map<Ref, number>();
   const heardHello = new Set<Ref>();
+  /** Live presence: who the presence channel says is connected, once it has said anything. */
+  const presentRefs = new Set<Ref>();
+  let presenceKnown = false;
+  const syncOnline = new Map<Ref, boolean>();
   const listeners = new Set<() => void>();
   let snapshot: CoworkSnapshot | null = null;
   let snapshotKey = "";
@@ -334,6 +346,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         idle: p.ref !== self && at - seen >= idleAfterMs,
         cursor: p.ref !== self && c && c.route === route ? c.cursor : null,
         activeField: activeFields.get(p.ref) ?? null,
+        online: p.ref === self || (presenceKnown ? presentRefs.has(p.ref) : (syncOnline.get(p.ref) ?? true)),
       };
     });
     let blocked: CoworkBlock | null = null;
@@ -632,7 +645,14 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const receiveIntent = async (from: Ref, frame: Extract<CoworkFrame, { t: "intent" }>) => {
     const envelope: Envelope = { ...frame.envelope, from };
     const intent = frame.intent;
-    const result = await evaluateIntent(host(), state, { from, envelope, intent, now: now() });
+    // Server routing: the server identified the sender and already ran the whole
+    // pipeline; this browser's view of the session can be stale (a peer it has not
+    // heard of yet, a route it missed), so re-running the policy here only drops
+    // good intents. Commit it (route, revision, ranked `last`, so blocking and the
+    // banner work) and keep only the page-side guards in applyToPage. Direct routing
+    // has no server in between and keeps the full receiver pipeline.
+    const evaluator = transport.routing === "server" ? trustedHost() : host();
+    const result = await evaluateIntent(evaluator, state, { from, envelope, intent, now: now() });
     if (!result.decision.allow) {
       report({ reason: result.decision.reason, status: result.decision.status, from, kind: String((intent as { kind?: unknown }).kind), stage: "receiver" });
       return;
@@ -742,7 +762,17 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       if (destroyed) return;
       const from = message.from;
       const frame = readFrame(message.frame);
-      if (!frame || from === self || !state.participants[from]) return;
+      if (!frame || from === self) return;
+      if (!state.participants[from]) {
+        // A server-relayed intent from a peer this browser has not heard of (a missed
+        // presence event): the server vouched for it, so learn the peer and re-sync.
+        if (transport.routing !== "server" || frame.t !== "intent" || !isValidRef(from)) return;
+        const next = structuredClone(state);
+        next.participants[from] = { ref: from, route: "/", revision: 0, follows: null, joinedAt: now() };
+        state = next;
+        await resyncNow();
+        if (!state.participants[from]) return;
+      }
       lastSeen.set(from, now());
       switch (frame.t) {
         case "intent":
@@ -815,6 +845,12 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         heardHello.delete(ref);
       };
       if (event.type === "here") {
+        presenceKnown = true;
+        presentRefs.clear();
+        for (const p of event.peers) presentRefs.add(p.ref);
+      } else if (event.type === "joining") presentRefs.add(event.peer.ref);
+      else presentRefs.delete(event.peer.ref);
+      if (event.type === "here") {
         const present = new Set(event.peers.map((p) => p.ref));
         for (const peer of event.peers) add(peer);
         for (const ref of Object.keys(state.participants)) if (!present.has(ref)) await drop(ref);
@@ -822,11 +858,77 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         await send(helloFrame());
       } else if (event.type === "joining") add(event.peer);
       else await drop(event.peer.ref);
+      // The server knows routes, revisions and follows a presence event does not carry.
+      if (event.type !== "leaving") await resyncNow();
       changed();
     });
 
+  // -------------------------------------------------------------------------
+  // Re-sync from the server (server routing)
+  // -------------------------------------------------------------------------
+
+  /** A host that accepts what the server already accepted: validation and the commit only. */
+  function trustedHost(): EngineHost {
+    return { identity: true, config: resolvedConfig() ?? resolveConfig({}), members: () => true, authorize: () => true, middleware: [] };
+  }
+
+  /** Merge the server's view: it lists who joined and where. Never call from outside `serial`. */
+  async function mergeSync(sync: CoworkSyncState): Promise<void> {
+    const listed = new Set(sync.participants.map((p) => p.ref));
+    const next = structuredClone(state);
+    for (const p of sync.participants) {
+      if (!isValidRef(p.ref)) continue;
+      if (p.label !== undefined) labels.set(p.ref, p.label);
+      if (p.online !== undefined) syncOnline.set(p.ref, p.online);
+      const local = next.participants[p.ref];
+      if (!local) {
+        next.participants[p.ref] = {
+          ref: p.ref,
+          ...(p.label !== undefined ? { label: p.label } : {}),
+          ...(p.actingFor !== undefined ? { actingFor: p.actingFor } : {}),
+          route: routeOf(p.route),
+          revision: p.revision,
+          follows: p.follows,
+          joinedAt: now(),
+        };
+      } else if (p.revision >= local.revision) {
+        // The server's route wins unless this browser has seen a newer revision; that
+        // includes this browser's own route when the host never reported the first page.
+        local.route = routeOf(p.route);
+        local.revision = p.revision;
+        local.follows = p.follows;
+      }
+    }
+    for (const [view, control] of Object.entries(sync.control?.views ?? {})) {
+      if (next.participants[view]) next.control[view] = { holder: control.holder, requests: [...control.requests] };
+    }
+    state = next;
+    for (const ref of Object.keys(state.participants)) {
+      if (ref === self || listed.has(ref)) continue;
+      const result = await evaluateLeave(host(), state, { from: ref, now: now() });
+      if (result.decision.allow) state = result.state;
+      cursors.delete(ref);
+      activeFields.delete(ref);
+    }
+  }
+
+  /** Re-sync inside the current serial task. */
+  async function resyncNow(): Promise<void> {
+    if (!transport.sync || destroyed) return;
+    const sync = await transport.sync();
+    if (!sync || destroyed) return;
+    await mergeSync(sync);
+    changed();
+  }
+
   const offFrame = transport.onFrame((message) => void receive(message));
   const offPresence = transport.onPresence((event) => void onPresence(event));
+  // At start, not only on an acknowledgement: laravel-echo never repeats a `here` that
+  // fired before this transport attached (the channel is usually joined first).
+  void serial(resyncNow);
+  const heartbeatTimer = transport.heartbeat
+    ? setInterval(() => { if (!destroyed) void transport.heartbeat!(); }, Math.max(1000, options.heartbeatMs ?? 30_000))
+    : undefined;
 
   // -------------------------------------------------------------------------
   // Cursors (lossy, throttled, never intents)
@@ -902,6 +1004,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       if (destroyed) return;
       destroyed = true;
       clearTimeout(cursorTimer);
+      clearInterval(heartbeatTimer);
       blocker?.destroy();
       syncBlock();
       focusScope?.removeEventListener("focusout", onFocusOut);

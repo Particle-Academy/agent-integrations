@@ -49,7 +49,33 @@ export interface PeerTransport {
   onFrame(listener: (message: ReceivedFrame) => void): () => void;
   onPresence(listener: (event: PresenceEvent) => void): () => void;
   close(): void;
+  /**
+   * Server routing only: the session as the server holds it (`GET /cowork/sessions/{id}`).
+   * The session re-syncs from it when it starts, on every presence acknowledgement and
+   * member join, and on a relayed intent from a peer it has not heard of.
+   */
+  sync?(): Promise<CoworkSyncState | null>;
+  /** Server routing only: tell the server this participant is still here. */
+  heartbeat?(): Promise<Decision>;
 }
+
+/** One participant as the server's re-sync describes it. */
+export type CoworkSyncParticipant = {
+  ref: Ref;
+  label?: string;
+  actingFor?: Ref;
+  route: string;
+  revision: number;
+  follows: Ref | null;
+  /** The server's live-presence view, when it reports one. */
+  online?: boolean;
+};
+
+/** The server's view of a session, for re-sync. */
+export type CoworkSyncState = {
+  participants: CoworkSyncParticipant[];
+  control?: { mode?: string; views?: Record<Ref, { holder: Ref; requests: Ref[] }> };
+};
 
 /**
  * The slice of a presence channel the whisper and server transports use. The
@@ -115,6 +141,40 @@ export function readFrame(value: unknown): CoworkFrame | null {
     default:
       return null;
   }
+}
+
+/**
+ * Read a `GET /cowork/sessions/{id}` body (`{ session: {...} }` or the session itself).
+ * Anything malformed is dropped, never trusted: the result only ever adds or updates
+ * participants the server lists.
+ */
+export function readSync(json: unknown): CoworkSyncState | null {
+  const body = isRecord(json) && isRecord(json.session) ? json.session : json;
+  if (!isRecord(body) || !Array.isArray(body.participants)) return null;
+  const participants: CoworkSyncParticipant[] = [];
+  for (const p of body.participants) {
+    if (!isRecord(p) || !isRef(p.ref) || !isRoute(p.route)) continue;
+    const revision = typeof p.revision === "number" && Number.isInteger(p.revision) && p.revision >= 0 ? p.revision : 0;
+    participants.push({
+      ref: p.ref,
+      ...(typeof p.label === "string" ? { label: p.label } : {}),
+      ...(isRef(p.actingFor) ? { actingFor: p.actingFor } : {}),
+      route: p.route,
+      revision,
+      follows: isRef(p.follows) ? p.follows : null,
+      ...(typeof p.online === "boolean" ? { online: p.online } : {}),
+    });
+  }
+  const control = isRecord(body.control) ? body.control : null;
+  const views: Record<Ref, { holder: Ref; requests: Ref[] }> = Object.create(null);
+  if (control && isRecord(control.views)) {
+    for (const [view, value] of Object.entries(control.views)) {
+      if (isRef(view) && isRecord(value) && isRef(value.holder)) {
+        views[view] = { holder: value.holder, requests: Array.isArray(value.requests) ? value.requests.filter(isRef) : [] };
+      }
+    }
+  }
+  return { participants, control: { ...(control && typeof control.mode === "string" ? { mode: control.mode } : {}), views } };
 }
 
 function stripFrom(envelope: Record<string, unknown>): Record<string, unknown> {
@@ -402,6 +462,17 @@ export function createServerTransport(options: ServerTransportOptions): PeerTran
     },
     onFrame: (listener) => pipe.frames.add(listener),
     onPresence: (listener) => pipe.onPresence(listener),
+    async sync() {
+      if (!pipe.isOpen()) return null;
+      try {
+        const response = await options.fetch(base, { method: "GET", headers: { Accept: "application/json" } });
+        if (!response.ok) return null;
+        return readSync(await response.json());
+      } catch {
+        return null;
+      }
+    },
+    heartbeat: () => (pipe.isOpen() ? post("/heartbeat", {}) : Promise.resolve(CLOSED)),
     close() {
       options.channel.stopListening?.(".cowork.intent", onRelayed);
       pipe.close();

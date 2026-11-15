@@ -77,12 +77,21 @@ export function bindCoworkDom(session: Pick<CoworkSession, "reportField">, optio
     else entry.timer = setTimeout(() => send(handle, entry), wait);
   };
 
-  root.addEventListener("input", onEdit);
-  root.addEventListener("change", onEdit);
+  // CAPTURE, not bubble: an editor (or a React onInput) that stops its own input event
+  // from bubbling would otherwise hide every keystroke, and input/change fire after the
+  // value changed, so capture already sees the final text.
+  root.addEventListener("input", onEdit, true);
+  root.addEventListener("change", onEdit, true);
   return () => {
-    root.removeEventListener("input", onEdit);
-    root.removeEventListener("change", onEdit);
-    for (const entry of pending.values()) clearTimeout(entry.timer);
+    root.removeEventListener("input", onEdit, true);
+    root.removeEventListener("change", onEdit, true);
+    // FLUSH, never drop: a re-bind (React re-running the effect) or an unmount before the
+    // trailing edge must still send the person's last value.
+    for (const [handle, entry] of pending) {
+      if (entry.timer === undefined) continue;
+      clearTimeout(entry.timer);
+      send(handle, entry);
+    }
     pending.clear();
   };
 }

@@ -138,6 +138,21 @@
       ]
     },
     {
+      "name": "one ref is one identity: a second identity on a live ref is refused, never merged (ref is the person, actingFor the account)",
+      "host": { "identify": true, "config": true, "members": ["user:1", "admin:7"], "authorize": { "user:1": ["*"], "admin:7": ["*"] } },
+      "config": { "control": { "mode": "free" } },
+      "session": { "state": "live", "starter": "user:1", "participants": [{ "ref": "user:1", "route": "/dashboard" }] },
+      "steps": [
+        { "op": "join", "at": 0, "from": "user:1", "actingFor": "admin:7", "expect": { "allow": false, "reason": "cowork.denied.ref-in-use", "status": 409 } },
+        { "op": "intent", "at": 10, "from": "user:1", "actingFor": "admin:7", "envelope": { "view": "user:1", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.ref-in-use", "status": 409 } },
+        { "op": "intent", "at": 20, "from": "user:1", "envelope": { "view": "user:1", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "mine" }, "expect": { "allow": true } },
+        { "op": "join", "at": 30, "from": "user:1", "expect": { "allow": true } },
+        { "op": "join", "at": 40, "from": "admin:7", "actingFor": "user:1", "expect": { "allow": true } },
+        { "op": "intent", "at": 50, "from": "admin:7", "actingFor": "user:1", "envelope": { "view": "admin:7", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "hi" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 60, "from": "admin:7", "envelope": { "view": "admin:7", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "hi" }, "expect": { "allow": false, "reason": "cowork.denied.ref-in-use", "status": 409 } }
+      ]
+    },
+    {
       "name": "a requested session refuses intents until it is live",
       "host": { "identify": true, "config": true, "members": ["a"], "authorize": { "a": ["*"] } },
       "session": { "state": "requested", "starter": "a", "participants": [{ "ref": "a", "route": "/" }] },

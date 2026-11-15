@@ -70,9 +70,9 @@ const snapshot = (over: Partial<CoworkSnapshot> = {}): CoworkSnapshot => ({
   control: {},
   blocked: null,
   peers: [
-    { ref: "user", label: "Uma", self: true, view: { route: "/", revision: 0 }, follows: null, drives: false, idle: false, cursor: null, activeField: null },
-    { ref: "admin", label: "Admin", self: false, view: { route: "/", revision: 0 }, follows: "user", drives: true, idle: false, cursor: { x: 40, y: 60 }, activeField: null },
-    { ref: "ed", label: "Ed", self: false, view: { route: "/", revision: 0 }, follows: null, drives: false, idle: true, cursor: null, activeField: null },
+    { ref: "user", label: "Uma", self: true, view: { route: "/", revision: 0 }, follows: null, drives: false, idle: false, cursor: null, activeField: null, online: true },
+    { ref: "admin", label: "Admin", self: false, view: { route: "/", revision: 0 }, follows: "user", drives: true, idle: false, cursor: { x: 40, y: 60 }, activeField: null, online: true },
+    { ref: "ed", label: "Ed", self: false, view: { route: "/", revision: 0 }, follows: null, drives: false, idle: true, cursor: null, activeField: null, online: true },
   ],
   ...over,
 });
