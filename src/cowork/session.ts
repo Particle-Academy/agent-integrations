@@ -512,8 +512,8 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const followEcho = { route: null as string | null, visitUntil: 0, scrollUntil: 0 };
   const followEchoMs = Math.max(0, options.followEchoMs ?? 1000);
 
-  const sendIntent = (intent: Intent, sendOptions: SendOptions = {}, internal = false): Promise<Decision> =>
-    serial(async () => {
+  /** One send, run inside `serial`. Callers go through {@link sendIntent}. */
+  const runSend = async (intent: Intent, sendOptions: SendOptions = {}, internal = false): Promise<Decision> => {
       const isView = VIEW_KINDS.has(intent.kind);
       const view = sendOptions.view ?? (isView || intent.kind === "control" ? self : undefined);
       // The host reporting what following just did to this page: allowed, not sent.
@@ -573,7 +573,69 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       }
       commit(result);
       return result.decision;
+  };
+
+  // Coalescing (approved lab test 87, run 762): on a slow server every keystroke was
+  // its own serial POST, so a burst drained for many seconds and a final value waited
+  // behind stale ones. While a report waits in the queue, a newer one for the same
+  // slot REPLACES it and shares its promise, so the queued job sends the latest value.
+  const coalesceKey = (intent: Intent, sendOptions: SendOptions): string | null => {
+    if (sendOptions.to !== undefined) return null;
+    const view = sendOptions.view ?? self;
+    if (intent.kind === "field") return `field|${view}|${intent.handle}`;
+    if (intent.kind === "scroll") return `scroll|${view}`;
+    return null;
+  };
+  const queuedSends = new Map<string, { intent: Intent; options: SendOptions; internal: boolean; done: Promise<Decision> }>();
+
+  // Re-send after a hold: a field report refused because the person was held (409
+  // with blockedUntil) or rate-limited (429) is sent again, as the LATEST value for
+  // that field, once the hold or the window ends. A newer report replaces it.
+  const heldFields = new Map<string, { intent: Intent; options: SendOptions; timer: ReturnType<typeof setTimeout> }>();
+  const afterSend = (intent: Intent, sendOptions: SendOptions, decision: Decision): void => {
+    if (intent.kind !== "field" || sendOptions.to !== undefined || (sendOptions.view ?? self) !== self) return;
+    const key = intent.handle;
+    const pending = heldFields.get(key);
+    if (pending) clearTimeout(pending.timer);
+    heldFields.delete(key);
+    if (decision.allow || destroyed) return;
+    const blockedUntil = (decision as { blockedUntil?: unknown }).blockedUntil;
+    const wait = decision.reason === "cowork.denied.control" && typeof blockedUntil === "number"
+      ? Math.max(0, blockedUntil - now()) + 50
+      : decision.status === 429 || decision.reason === "cowork.denied.rate" ? 1_000 : null;
+    if (wait === null) return;
+    const entry = {
+      intent,
+      options: sendOptions,
+      timer: setTimeout(() => {
+        if (heldFields.get(key) !== entry || destroyed) return;
+        heldFields.delete(key);
+        void sendIntent(entry.intent, entry.options);
+      }, wait),
+    };
+    heldFields.set(key, entry);
+  };
+
+  const sendIntent = (intent: Intent, sendOptions: SendOptions = {}, internal = false): Promise<Decision> => {
+    const key = coalesceKey(intent, sendOptions);
+    if (key === null) return serial(() => runSend(intent, sendOptions, internal));
+    const waiting = queuedSends.get(key);
+    if (waiting) {
+      waiting.intent = intent;
+      waiting.options = sendOptions;
+      waiting.internal = internal;
+      return waiting.done;
+    }
+    const entry = { intent, options: sendOptions, internal, done: Promise.resolve<Decision>(ALLOW_DECISION) };
+    queuedSends.set(key, entry);
+    entry.done = serial(async () => {
+      if (queuedSends.get(key) === entry) queuedSends.delete(key);
+      const decision = await runSend(entry.intent, entry.options, entry.internal);
+      afterSend(entry.intent, entry.options, decision);
+      return decision;
     });
+    return entry.done;
+  };
 
   // -------------------------------------------------------------------------
   // Receiving
@@ -802,7 +864,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
           }
           if (!heardHello.has(from)) {
             heardHello.add(from);
-            await send(helloFrame());
+            if (transport.routing !== "server") await send(helloFrame()); // Sockudo refuses client events (4301); the re-sync carries this
           }
           changed();
           return;
@@ -855,7 +917,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         for (const peer of event.peers) add(peer);
         for (const ref of Object.keys(state.participants)) if (!present.has(ref)) await drop(ref);
         // Say where this browser is; everyone who has not heard from it answers in kind.
-        await send(helloFrame());
+        if (transport.routing !== "server") await send(helloFrame()); // Sockudo refuses client events (4301); the re-sync carries this
       } else if (event.type === "joining") add(event.peer);
       else await drop(event.peer.ref);
       // The server knows routes, revisions and follows a presence event does not carry.
@@ -937,6 +999,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   let lastCursorAt = -Infinity;
   let pendingCursor: CoworkCursor | null = null;
   let cursorTimer: ReturnType<typeof setTimeout> | undefined;
+  let queuedCursor: ({ route: string } & CoworkCursor) | null = null;
   const flushCursor = () => {
     cursorTimer = undefined;
     if (!pendingCursor || destroyed) return;
@@ -944,7 +1007,17 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     pendingCursor = null;
     lastCursorAt = Date.now();
     const route = state.participants[self]?.route ?? "/";
-    if (presenceRouting === "server") void serial(() => sendPresence({ kind: "cursor", route, ...cursor }));
+    if (presenceRouting === "server") {
+      // Coalesced: while a cursor send waits in the queue, a newer position replaces it.
+      // A job that finds a newer position already sent does nothing, so a slow send
+      // never queues stale positions behind it.
+      queuedCursor = { route, ...cursor };
+      void serial(async () => {
+        const latest = queuedCursor;
+        queuedCursor = null;
+        if (latest) await sendPresence({ kind: "cursor", ...latest });
+      });
+    }
     else void send({ t: "cursor", route, ...cursor });
   };
 
@@ -1004,6 +1077,9 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       if (destroyed) return;
       destroyed = true;
       clearTimeout(cursorTimer);
+      for (const held of heldFields.values()) clearTimeout(held.timer);
+      heldFields.clear();
+      queuedSends.clear();
       clearInterval(heartbeatTimer);
       blocker?.destroy();
       syncBlock();

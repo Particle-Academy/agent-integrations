@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **On a slow server, a final value no longer waits behind stale ones, and a held
+  person's value is no longer lost** (approved lab test 87, run 762). Field and scroll
+  reports coalesce: while one waits in the queue a newer one for the same field
+  replaces it, so a typing burst sends the latest value, not every keystroke. A field
+  report refused because the person was held (409 `cowork.denied.control` with
+  `blockedUntil`) or rate-limited (429) is sent again, as the latest value, once the
+  hold or window ends. Server-routed cursors coalesce the same way. On a server
+  transport the session sends no client events at all (it whispered `hello`, which
+  Sockudo and Genie's WebSockets service refuse with 4301; the re-sync carries it).
+  Nothing to do.
 - **Co-work: a shared field typed by one peer now reaches the other, and the receiver
   holds the lower rank (MOIC's two-browser report).** Under server routing the receiver
   re-ran the whole policy on every server-relayed intent against its own view of the
