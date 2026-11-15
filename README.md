@@ -824,8 +824,10 @@ const transport = useMemo(
 const session = useCoworkSession({
   sessionId, self: me, transport, adapter, authorize,
   // `rank` is keyed by PARTICIPANT REF, never by role name: ranking by role means a
-  // function of the ref. The SERVER's config must rank the same refs the same way, or
-  // it accepts what the client blocks.
+  // function of the ref. On a server transport the SERVER publishes every participant's
+  // rank, the scope and idleMs on the re-sync (fancy-cowork 0.4.1+), and those win: this
+  // page's rank is only the fallback for a ref the server did not rank, and a page never
+  // needs to know other people's roles. A disagreement is warned on the console once.
   config: { consent: "notify", control: { mode: "ranked", scope: "session", rank: (ref) => (isAdminRef(ref) ? 2 : 1), idleMs: 3000 } },
   presenceRouting: "server",
   sharedFields: ["composer", "order.*"], // specific globs; "*" would also share search boxes

@@ -64,6 +64,8 @@ export {
   resolveStack,
   validIntent,
   holderOf,
+  rankedSummary,
+  type RankedSummary,
   globMatch,
   routeOf,
   isSameOriginPath,

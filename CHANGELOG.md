@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Ranked control comes from the server.** A server transport's re-sync now carries each
+  participant's effective `rank` and the session's `scope` and `idleMs` (fancy-cowork
+  0.4.1 / fancy-cowork-js 0.3.0). The session uses them, so a page holds its person from
+  a higher rank's relayed intent without knowing anyone else's role. The page's own
+  `rank` (map or function) is now only the fallback for a ref the server did not rank,
+  and the server's scope and idle window win over the page's. When the page's rank
+  function and the server disagree on a ref, the server wins and the console warns once
+  per session. `readSync` returns `participants[].rank`, `control.scope` and
+  `control.idleMs`. The engine exports `rankedSummary(state, config)`. Shared fixtures
+  re-pinned (`d036861f`). **Nothing to do**; an older server publishes no ranks and the
+  page's config applies as before.
+
 ## [0.64.1] - 2026-11-15
 
 ### Changed

@@ -69,12 +69,20 @@ export type CoworkSyncParticipant = {
   follows: Ref | null;
   /** The server's live-presence view, when it reports one. */
   online?: boolean;
+  /** Ranked control: this participant's effective rank, as the SERVER computes it. */
+  rank?: number;
 };
 
 /** The server's view of a session, for re-sync. */
 export type CoworkSyncState = {
   participants: CoworkSyncParticipant[];
-  control?: { mode?: string; views?: Record<Ref, { holder: Ref; requests: Ref[] }> };
+  control?: {
+    mode?: string;
+    /** Ranked control, as the server applies it. */
+    scope?: "view" | "session";
+    idleMs?: number;
+    views?: Record<Ref, { holder: Ref; requests: Ref[] }>;
+  };
 };
 
 /**
@@ -163,6 +171,7 @@ export function readSync(json: unknown): CoworkSyncState | null {
       revision,
       follows: isRef(p.follows) ? p.follows : null,
       ...(typeof p.online === "boolean" ? { online: p.online } : {}),
+      ...(typeof p.rank === "number" && Number.isFinite(p.rank) ? { rank: p.rank } : {}),
     });
   }
   const control = isRecord(body.control) ? body.control : null;
@@ -174,7 +183,17 @@ export function readSync(json: unknown): CoworkSyncState | null {
       }
     }
   }
-  return { participants, control: { ...(control && typeof control.mode === "string" ? { mode: control.mode } : {}), views } };
+  const scope = control && (control.scope === "view" || control.scope === "session") ? control.scope : undefined;
+  const idleMs = control && typeof control.idleMs === "number" && Number.isFinite(control.idleMs) && control.idleMs >= 0 ? control.idleMs : undefined;
+  return {
+    participants,
+    control: {
+      ...(control && typeof control.mode === "string" ? { mode: control.mode } : {}),
+      ...(scope !== undefined ? { scope } : {}),
+      ...(idleMs !== undefined ? { idleMs } : {}),
+      views,
+    },
+  };
 }
 
 function stripFrom(envelope: Record<string, unknown>): Record<string, unknown> {

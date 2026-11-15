@@ -10,6 +10,7 @@ import {
   evaluateJoin,
   evaluateLeave,
   holderOf,
+  rankedSummary,
   type Result,
 } from "../engine";
 import type { Envelope, Intent, SessionState } from "../types";
@@ -49,6 +50,11 @@ describe("co-work client engine: shared conformance fixtures", () => {
             route: step.route,
             revision: step.revision,
           });
+          continue;
+        }
+        if (step.op === "expectRanked") {
+          const summary = rankedSummary(state, host.config!);
+          expect({ step: i, ...summary, ranks: { ...summary?.ranks } }).toEqual({ step: i, ranks: step.ranks, scope: step.scope, idleMs: step.idleMs });
           continue;
         }
         if (step.op === "expectHolder") {

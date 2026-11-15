@@ -12,7 +12,7 @@ export const FIXTURES_PATH = join(dirname(fileURLToPath(import.meta.url)), "cowo
 // Pinned in EVERY leg: particle-academy/fancy-cowork (PHP), @particle-academy/fancy-cowork
 // (Node) and this client engine. A copy that drifts in one repository fails that
 // repository's suite, so "byte-identical" is a test result rather than a promise.
-export const FIXTURES_SHA256 = "ba7176adea2252ca914c65dcd0dd26707f437fb70a5e087b30e8ad8dd8e4f973";
+export const FIXTURES_SHA256 = "d036861f36042bf7ef1f0aeced6a137d753b1bf6982c70cca95e4c948adcda35";
 
 export const RAW = readFileSync(FIXTURES_PATH);
 export const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -22,7 +22,7 @@ type HostEntry =
   | { host: "refuseKind"; kind: string; reason: string; status: number };
 
 export interface Step {
-  op: "intent" | "join" | "activate" | "consent" | "end" | "leave" | "expectView" | "expectHolder";
+  op: "intent" | "join" | "activate" | "consent" | "end" | "leave" | "expectView" | "expectHolder" | "expectRanked";
   at?: number;
   repeat?: number;
   every?: number;
@@ -36,6 +36,9 @@ export interface Step {
   revision?: number;
   holder?: string;
   requests?: string[];
+  ranks?: Record<string, number>;
+  scope?: "view" | "session";
+  idleMs?: number;
 }
 
 export interface Case {

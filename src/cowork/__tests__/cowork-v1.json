@@ -1,6 +1,6 @@
 {
   "contract": "fancy-cowork/v1",
-  "about": "Shared parity fixtures for fancy-cowork (PHP), fancy-cowork-js and the agent-integrations client engine. Byte-identical in every repo and pinned by SHA-256 in each suite. Spec: .ai/plans/human-cobrowse-and-chat.md section 11. Harness rules: `host.identify`/`host.config` false means that resolver is unbound; `host.members` null means unbound, else the refs members() answers yes for; `host.authorize` null means unbound, else ref -> ability globs (`*` is any run of characters) and a ref with no entry is refused; `host.predicates` names booleans the `when` limit criterion reads. `middleware` null is the default stack; otherwise names of defaults in order plus host entries `{host: refuse, reason, status}` (refuses whatever reaches it) and `{host: refuseKind, kind, reason, status}`. `session.participants` are already joined, each owning a view at `route` with revision 0. A step with `repeat` runs that many times, `every` ms apart from `at`. `{$repeat: s, count: n}` anywhere in an intent is s repeated n times. Every intent step's `expect` is the whole decision: allow true, or allow false with reason and status (and blockedUntil for a ranked refusal).",
+  "about": "Shared parity fixtures for fancy-cowork (PHP), fancy-cowork-js and the agent-integrations client engine. Byte-identical in every repo and pinned by SHA-256 in each suite. Spec: .ai/plans/human-cobrowse-and-chat.md section 11. Harness rules: `host.identify`/`host.config` false means that resolver is unbound; `host.members` null means unbound, else the refs members() answers yes for; `host.authorize` null means unbound, else ref -> ability globs (`*` is any run of characters) and a ref with no entry is refused; `host.predicates` names booleans the `when` limit criterion reads. `middleware` null is the default stack; otherwise names of defaults in order plus host entries `{host: refuse, reason, status}` (refuses whatever reaches it) and `{host: refuseKind, kind, reason, status}`. `session.participants` are already joined, each owning a view at `route` with revision 0. A step with `repeat` runs that many times, `every` ms apart from `at`. `{$repeat: s, count: n}` anywhere in an intent is s repeated n times. Every intent step's `expect` is the whole decision: allow true, or allow false with reason and status (and blockedUntil for a ranked refusal). An `expectRanked` step asserts what a server publishes on the re-sync under the case's ranked config: `ranks` is each listed participant's effective rank (0 for a ref the config does not rank), `scope` the effective scope (`view` when unset) and `idleMs` the effective idle window (3000 when unset).",
   "defaults": {
     "middleware": ["membership", "authorize", "payloadSize", "sameOrigin", "masking", "limits", "revision", "control", "rateLimit", "audit"],
     "config": {
@@ -592,6 +592,24 @@
         { "op": "join", "at": 40, "from": "c", "expect": { "allow": false, "reason": "cowork.session.ended", "status": 410 } },
         { "op": "consent", "at": 50, "from": "a", "expect": { "allow": false, "reason": "cowork.session.ended", "status": 410 } },
         { "op": "end", "at": 60, "from": "a", "expect": { "allow": false, "reason": "cowork.session.ended", "status": 410 } }
+      ]
+    },
+    {
+      "name": "ranked, published: each participant's effective rank, the scope and idleMs a server sends on the re-sync",
+      "host": { "identify": true, "config": true, "members": ["user:1", "user:4", "user:9"], "authorize": { "user:1": ["*"], "user:4": ["*"], "user:9": ["*"] } },
+      "config": { "consent": "notify", "control": { "mode": "ranked", "scope": "session", "rank": { "user:1": 2, "user:4": 1 }, "idleMs": 2500 } },
+      "session": { "state": "live", "starter": "user:1", "participants": [{ "ref": "user:1", "route": "/dashboard" }, { "ref": "user:4", "route": "/dashboard" }, { "ref": "user:9", "route": "/dashboard" }] },
+      "steps": [
+        { "op": "expectRanked", "ranks": { "user:1": 2, "user:4": 1, "user:9": 0 }, "scope": "session", "idleMs": 2500 }
+      ]
+    },
+    {
+      "name": "ranked, published defaults: scope view and idleMs 3000 when the config leaves them unset",
+      "host": { "identify": true, "config": true, "members": ["admin", "user"], "authorize": { "admin": ["*"], "user": ["*"] } },
+      "config": { "consent": "notify", "control": { "mode": "ranked", "rank": { "admin": 5 } } },
+      "session": { "state": "live", "starter": "user", "participants": [{ "ref": "user", "route": "/" }, { "ref": "admin", "route": "/" }] },
+      "steps": [
+        { "op": "expectRanked", "ranks": { "admin": 5, "user": 0 }, "scope": "view", "idleMs": 3000 }
       ]
     }
   ]

@@ -288,9 +288,44 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     return run;
   };
 
-  const resolvedConfig = (): SessionConfig | null => {
+  /**
+   * Ranked control as the SERVER published it on the last re-sync: each participant's
+   * effective rank, the scope and the idle window. The server is the authority, so a
+   * browser never needs to know other people's roles to hold its person; the host's own
+   * rank function is the fallback for a ref the server did not rank (an older server).
+   */
+  let publishedControl: { mode: string; scope?: "view" | "session"; idleMs?: number; ranks: Map<Ref, number> } | null = null;
+  let warnedRankDisagreement = false;
+
+  const hostConfig = (): SessionConfig | null => {
     const source = typeof options.config === "function" ? options.config() : options.config;
     return source == null ? null : resolveConfig(source);
+  };
+  /** The host's own rank for `ref`, or undefined when it has none. */
+  const hostRankOf = (config: SessionConfig | null, ref: Ref): number | undefined => {
+    if (!config || config.control.mode !== "ranked") return undefined;
+    const rank = config.control.rank;
+    let value: unknown;
+    try { value = typeof rank === "function" ? rank(ref) : rank?.[ref]; } catch { value = undefined; }
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  };
+
+  const resolvedConfig = (): SessionConfig | null => {
+    const base = hostConfig();
+    const published = publishedControl;
+    if (!base || !published || published.mode !== "ranked") return base;
+    const host = base.control.mode === "ranked" ? base.control : null;
+    const scope = published.scope ?? host?.scope;
+    const idleMs = published.idleMs ?? host?.idleMs;
+    return {
+      ...base,
+      control: {
+        mode: "ranked",
+        rank: (ref: Ref) => published.ranks.get(ref) ?? hostRankOf(base, ref) ?? 0,
+        ...(scope !== undefined ? { scope } : {}),
+        ...(idleMs !== undefined ? { idleMs } : {}),
+      },
+    };
   };
 
   const host = (): EngineHost => ({
@@ -995,6 +1030,29 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   /** Merge the server's view: it lists who joined and where. Never call from outside `serial`. */
   async function mergeSync(sync: CoworkSyncState): Promise<void> {
     const listed = new Set(sync.participants.map((p) => p.ref));
+    if (sync.control?.mode !== undefined) {
+      const ranks = new Map<Ref, number>();
+      for (const p of sync.participants) if (isValidRef(p.ref) && p.rank !== undefined) ranks.set(p.ref, p.rank);
+      publishedControl = {
+        mode: sync.control.mode,
+        ...(sync.control.scope !== undefined ? { scope: sync.control.scope } : {}),
+        ...(sync.control.idleMs !== undefined ? { idleMs: sync.control.idleMs } : {}),
+        ranks,
+      };
+      if (!warnedRankDisagreement && typeof console !== "undefined") {
+        const base = hostConfig();
+        for (const [ref, rank] of ranks) {
+          const mine = hostRankOf(base, ref);
+          if (mine === undefined || mine === rank) continue;
+          warnedRankDisagreement = true;
+          console.warn(
+            `[cowork] rank for ${ref}: this page's rank function says ${mine}, the server says ${rank}. ` +
+              "The server's rank is used. This warning is shown once per session.",
+          );
+          break;
+        }
+      }
+    }
     const next = structuredClone(state);
     for (const p of sync.participants) {
       if (!isValidRef(p.ref)) continue;
