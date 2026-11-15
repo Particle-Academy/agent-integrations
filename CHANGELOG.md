@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-11-15
+
+### Added
+
+- **One ref, one identity** in the client engine (fixtures `ba7176ad`): a join or intent
+  on a live participant's ref with a different `actingFor` is refused
+  `cowork.denied.ref-in-use`. **If your `identify` returned the same ref for two different
+  people, give each person their own ref** (`ref` is the person, `actingFor` the account).
+- **Live presence:** every peer carries `online`; a server transport sends a heartbeat
+  every `heartbeatMs` (default 30000) to `POST /cowork/sessions/{id}/heartbeat` and offers
+  `sync()` (`GET /cowork/sessions/{id}`); `readSync` and the `CoworkSync*` types are
+  exported. Needs a fancy-cowork server with the heartbeat route (an older one answers
+  404 to the heartbeat, which is ignored).
+
 ### Fixed
 
 - **On a slow server, a final value no longer waits behind stale ones, and a held
@@ -50,18 +64,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The mirroring recipe ranked by role name** (`rank: { admin: 2, user: 1 }`); rank is
   keyed by participant ref, so that map ranked nobody. The README now uses a function of
   the ref and says the server must rank the same way. If you copied it, rank your refs.
-
-### Added
-
-- **One ref, one identity** in the client engine (fixtures `ba7176ad`): a join or intent
-  on a live participant's ref with a different `actingFor` is refused
-  `cowork.denied.ref-in-use`. **If your `identify` returned the same ref for two different
-  people, give each person their own ref** (`ref` is the person, `actingFor` the account).
-- **Live presence:** every peer carries `online`; a server transport sends a heartbeat
-  every `heartbeatMs` (default 30000) to `POST /cowork/sessions/{id}/heartbeat` and offers
-  `sync()` (`GET /cowork/sessions/{id}`); `readSync` and the `CoworkSync*` types are
-  exported. Needs a fancy-cowork server with the heartbeat route (an older one answers
-  404 to the heartbeat, which is ignored).
 
 ## [0.63.0] - 2026-11-15
 
