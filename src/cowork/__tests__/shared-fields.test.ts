@@ -145,6 +145,22 @@ describe("shared document fields", () => {
     expect(a.applied).toEqual([["doc.body", "draft, revised"]]);
   });
 
+  it("sends a person's edit back to their own earlier value after a peer's value was applied", async () => {
+    const a = editor("a");
+    const b = editor("b");
+    await settle();
+    await b.session.reportField("doc.title", "mine");
+    await settle();
+    await a.session.reportField("doc.title", "theirs");
+    await settle();
+    expect(b.applied.at(-1)).toEqual(["doc.title", "theirs"]);
+    // Back to "mine": a real edit on b's side, even though b once sent it.
+    const before = a.applied.length;
+    await b.session.reportField("doc.title", "mine");
+    await settle();
+    expect(a.applied.slice(before)).toEqual([["doc.title", "mine"]]);
+  });
+
   it("does not overwrite a field the person is typing in; applies the latest value on blur", async () => {
     const a = editor("a");
     const b = editor("b");

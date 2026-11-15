@@ -124,6 +124,23 @@ describe("a slow server", () => {
     expect(fieldValues(sent)).toEqual(["be", "beta", "beta"]);
   });
 
+  it("does not send a value the server already accepted for that field (a textarea's blur `change` repeats it)", async () => {
+    const { transport, sent } = slowServer(() => ({ allow: true }), 50);
+    const s = session(transport);
+    const first = s.reportField("composer", "alpha from admin");
+    await vi.advanceTimersByTimeAsync(200);
+    await first;
+    const again = s.reportField("composer", "alpha from admin");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(await again).toEqual({ allow: true });
+    expect(fieldValues(sent)).toEqual(["alpha from admin"]);
+    // A real change still goes out.
+    const changed = s.reportField("composer", "alpha from admin!");
+    await vi.advanceTimersByTimeAsync(200);
+    await changed;
+    expect(fieldValues(sent)).toEqual(["alpha from admin", "alpha from admin!"]);
+  });
+
   it("never re-sends a masked field's value", async () => {
     document.body.innerHTML = '<div id="root"><input data-co-handle="pin" type="password" /></div>';
     const { transport, sent } = slowServer((frame) => (frame.t === "intent" ? { allow: false, reason: "cowork.denied.rate", status: 429 } : { allow: true }), 50);

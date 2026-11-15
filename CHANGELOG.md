@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An unchanged field value is not sent again.** A textarea fires `change` on blur,
+  so its final value went out twice; under ranked control the duplicate restarted
+  the lower rank's hold on the other side just as they began to type. A report
+  equal to the value the server last accepted for that field (or a peer's value
+  applied here) is skipped. Nothing to do.
 - **A peer's text lands in a contenteditable as a minimal edit.** `setEditableText`
   (the DOM agent's and the session's write into a contenteditable) replaced
   `textContent`, which discarded the text node a framework holds and put the caret

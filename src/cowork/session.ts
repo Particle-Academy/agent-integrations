@@ -253,6 +253,8 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   let destroyed = false;
   /** Shared fields: the value last applied from a peer, per handle (its echo is not re-sent). */
   const appliedShared = new Map<string, string>();
+  /** Own fields: the value the server last ACCEPTED (or a peer's value applied here). */
+  const acceptedField = new Map<string, string>();
   /** Shared fields: a peer's value waiting for the person to leave the field. */
   const waitingShared = new Map<string, { from: Ref; intent: Extract<Intent, { kind: "field" }> }>();
 
@@ -536,6 +538,10 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         const applied = appliedShared.get(intent.handle);
         appliedShared.delete(intent.handle);
         if (applied !== undefined && applied === stableJson(intent.value)) return ALLOW_DECISION;
+        // Not an edit: the server already holds this value for the field. Sending it
+        // again (a textarea's blur `change` repeats the last `input`) would only
+        // restart a lower rank's hold on the other side.
+        if (acceptedField.get(intent.handle) === stableJson(intent.value)) return ALLOW_DECISION;
       }
 
       // Masking happens HERE, before the pipeline and before the wire: a masked
@@ -572,6 +578,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         return sent;
       }
       commit(result);
+      if (intent.kind === "field" && view === self) acceptedField.set(intent.handle, stableJson(intent.value));
       return result.decision;
   };
 
@@ -795,6 +802,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   /** Apply through the same DOM masking and guard as a drive; remember it so its echo is not re-sent. */
   async function applyShared(from: Ref, intent: Extract<Intent, { kind: "field" }>): Promise<void> {
     appliedShared.set(intent.handle, stableJson(intent.value));
+    acceptedField.set(intent.handle, stableJson(intent.value));
     await applyToPage(from, intent);
   }
   const onFocusOut = (event: Event) => {
