@@ -17,6 +17,8 @@ export {
   walk,
   readPage,
   setNativeValue,
+  setEditableText,
+  isEditableText,
   isVisible,
   isSensitive,
   roleOf,

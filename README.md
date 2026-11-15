@@ -804,6 +804,51 @@ const session = useCoworkSession({
 - `@particle-academy/agent-integrations/cowork` is the headless entry (engine,
   transports, `createCoworkSession`), with no React.
 
+### Symmetric mirroring
+
+Two people (an admin and the user, say) who each see the other's navigation and typing,
+with the admin taking precedence while active:
+
+```ts
+const agent = createDomNavigationAgent({ exclude: ["#onetrust-consent-sdk"] });
+// REQUIRED in an SPA: the default visit is location.assign, a full page load that
+// tears the session down. Navigate the way the app does.
+const adapter = { ...agent, visit: (url: string) => openView(url) }; // or router.visit(url, { preserveState: true })
+
+const session = useCoworkSession({
+  sessionId, self, transport, adapter, authorize,
+  config: { consent: "notify", control: { mode: "ranked", scope: "session", rank: { admin: 2, user: 1 }, idleMs: 3000 } },
+  presenceRouting: "server",
+  sharedFields: ["composer", "order.*"], // specific globs; "*" would also share search boxes
+});
+
+// The handle carries the live session's reportField; bind once it is ready.
+useEffect(() => (session.ready ? bindCoworkDom(session, { root: panelEl }) : undefined), [session.ready, session.reportField]);
+useEffect(() => { void session.follow(otherRef); }, [otherRef]); // both sides follow each other
+// From the app's OWN view-change event (a panel switch is not always a URL visit):
+onViewChange((path) => void session.reportVisit(path)); // a same-origin path such as "/panel/orders/7"
+```
+
+- **Mutual follow does not loop.** A followed visit is applied and re-reported once; it
+  comes back to a page already on that route and stops there. Your own navigation and
+  scroll listeners WILL report what the session just applied: for `followEchoMs`
+  (default 1000) after applying a followed visit or scroll, a report of that same route,
+  or any scroll report, is allowed and not sent, so nothing is duplicated and two
+  viewports cannot bounce a scroll.
+- **Typing**: `bindCoworkDom(session, { root })` reports the person's trusted `input` /
+  `change` from fields with a handle (`data-co-handle`, `name` or `id`), including a
+  contenteditable composer, throttled per handle (`throttleMs`, default 150) with the final
+  value always sent. It ignores untrusted events, which is what a peer's applied write
+  dispatches, so nothing echoes. Give the composer `data-co-handle="composer"`.
+  **contenteditable is plain text**: the DOM agent writes `textContent` and fires an
+  `input` event (`insertReplacementText`); rich content such as tag chips is not carried.
+- **Precedence**: `control: { mode: "ranked", scope: "session" }`. With mirroring each
+  person writes only their own view, so the default per-view ranking would never hold
+  anyone. With `scope: "session"` a higher rank acting anywhere holds every lower rank
+  everywhere until `idleMs`, and the input blocker and banner follow. While the person is
+  held, a shared field's value from a peer lands even in a focused field (they cannot
+  type); otherwise a focused field still waits for blur.
+
 ## Tools shipped (whiteboard bridge)
 
 | Tool | Purpose |

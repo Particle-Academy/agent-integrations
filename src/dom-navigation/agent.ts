@@ -367,9 +367,22 @@ function safeText(root: Node, hide: TextFilter = sensitiveOnly): string {
   return out;
 }
 
+/**
+ * A contenteditable editing host (a chat composer, a tag input). `isContentEditable`
+ * is read when the DOM has it; the attribute decides otherwise (jsdom has no
+ * isContentEditable). Plain text only: rich content is not carried.
+ */
+export function isEditableText(el: Element): boolean {
+  const native = (el as HTMLElement).isContentEditable;
+  if (typeof native === "boolean") return native;
+  const attr = el.getAttribute("contenteditable");
+  return attr !== null && attr.toLowerCase() !== "false";
+}
+
 export function roleOf(el: Element): string {
   const explicit = el.getAttribute("role");
   if (explicit) return explicit;
+  if (isEditableText(el)) return "textbox";
   const t = tag(el);
   if (t === "A") return "link";
   if (t === "BUTTON") return "button";
@@ -516,7 +529,7 @@ function walkFenced(
 
     let value: unknown;
     if (role === "textbox" || role === "select") {
-      value = isSensitive(el) ? undefined : (el as HTMLInputElement).value;
+      value = isSensitive(el) ? undefined : isField(el) ? (el as HTMLInputElement).value : isEditableText(el) ? (el.textContent ?? "") : undefined;
     } else if (role === "checkbox" || role === "radio") {
       value = (el as HTMLInputElement).checked;
     }
@@ -550,6 +563,20 @@ function isField(el: Element): el is FieldElement {
  *   toggle. A radio cannot be unchecked by clicking it; that one case falls
  *   back to the setter.
  */
+/**
+ * Replace a contenteditable's text (plain text, never markup) and fire the input
+ * event an editor or framework listens for.
+ */
+export function setEditableText(el: HTMLElement, value: unknown): void {
+  const view = (el.ownerDocument.defaultView ?? globalThis) as typeof globalThis;
+  const text = value === null || value === undefined ? "" : String(value);
+  el.textContent = text;
+  const Ctor = (view as unknown as { InputEvent?: typeof InputEvent }).InputEvent;
+  el.dispatchEvent(
+    Ctor ? new Ctor("input", { bubbles: true, inputType: "insertReplacementText", data: text }) : new view.Event("input", { bubbles: true }),
+  );
+}
+
 export function setNativeValue(el: FieldElement, value: unknown): void {
   const view = (el.ownerDocument.defaultView ?? globalThis) as typeof globalThis;
   const fire = () => {
@@ -727,6 +754,10 @@ export function createDomNavigationAgent(options: DomNavigationAgentOptions = {}
       if (refused) return { ok: false, error: refused };
       if (isField(el)) {
         setNativeValue(el, value);
+        return { ok: true };
+      }
+      if (isEditableText(el)) {
+        setEditableText(el as HTMLElement, value);
         return { ok: true };
       }
       return { ok: false, error: `Handle "${handle}" is not a form field` };

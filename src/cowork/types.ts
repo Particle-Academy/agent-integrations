@@ -58,7 +58,18 @@ export type Routing = "server" | "direct";
 
 export type ControlConfig =
   | { mode: "free" }
-  | { mode: "ranked"; rank?: Record<Ref, number> | ((ref: Ref) => number); idleMs?: number }
+  | {
+      mode: "ranked";
+      rank?: Record<Ref, number> | ((ref: Ref) => number);
+      idleMs?: number;
+      /**
+       * `view` (default): a higher rank blocks a lower one only for intents into the
+       * view it acted on. `session`: a higher rank acting on ANY view blocks every
+       * lower rank on every view, for mirrored co-work (mutual follow plus shared
+       * fields), where each person writes only their own view.
+       */
+      scope?: "view" | "session";
+    }
   | { mode: "baton" };
 
 /** A limits rule. Every named criterion must match; see the README for "applicable". */

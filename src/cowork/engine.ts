@@ -404,6 +404,18 @@ const rankOf = (config: SessionConfig, ref: Ref): number => {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 };
 
+/**
+ * The committed acts ranked control weighs: per view by default, or every view's
+ * with `scope: "session"`. Exported so the session's blocked state agrees exactly.
+ */
+export function rankedActs(session: SessionState, config: SessionConfig, view: Ref): Array<[Ref, number]> {
+  const sessionScope = config.control.mode === "ranked" && config.control.scope === "session";
+  if (!sessionScope) return Object.entries(session.last[view] ?? {});
+  const acts: Array<[Ref, number]> = [];
+  for (const times of Object.values(session.last)) acts.push(...Object.entries(times));
+  return acts;
+}
+
 const control: Middleware = (ctx, intent, next) => {
   const { config, session, from } = ctx;
   const mode = config.control.mode;
@@ -422,7 +434,7 @@ const control: Middleware = (ctx, intent, next) => {
     const idleMs = config.control.mode === "ranked" ? (config.control.idleMs ?? 3000) : 3000;
     const mine = rankOf(config, from);
     let blockedUntil: number | undefined;
-    for (const [ref, at] of Object.entries(session.last[view] ?? {})) {
+    for (const [ref, at] of rankedActs(session, config, view)) {
       if (ref === from || rankOf(config, ref) <= mine || ctx.now - at >= idleMs) continue;
       blockedUntil = Math.max(blockedUntil ?? 0, at + idleMs);
     }

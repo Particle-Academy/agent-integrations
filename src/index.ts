@@ -295,6 +295,8 @@ export {
   createWhisperTransport,
   createServerTransport,
   createInputBlocker,
+  bindCoworkDom,
+  type BindCoworkDomOptions,
   type CoworkSession,
   type CoworkSessionOptions,
   type CoworkSnapshot,

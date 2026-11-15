@@ -11,6 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Ranked control across the whole session** (`control: { mode: "ranked", scope:
+  "session" }`), for symmetric mirroring: a higher rank acting on ANY view holds every
+  lower rank on every view until `idleMs`, and the blocked state, input blocker and
+  banner follow. The server legs (fancy-cowork, fancy-cowork-js) enforce the same rule
+  from the shared fixtures. **Nothing to do unless** you mirror two people who each write
+  only their own view; the default stays `scope: "view"`.
+- **`bindCoworkDom(session, { root, throttleMs })`**: reports the person's trusted edits
+  (inputs, textareas, checkboxes, selects, contenteditables) as `reportField`, throttled
+  per handle with the final value always sent, and never echoes a peer's applied write.
+  **Nothing to do unless** you were wiring `reportField` by hand.
+- **contenteditable fields in the DOM agent**: described as a textbox carrying its text
+  (never a sensitive one's), and `setField` writes plain `textContent` and fires an
+  `input` event (`insertReplacementText`). Rich content such as tag chips is not carried.
+  `isEditableText` and `setEditableText` are exported. **Nothing to do unless** a
+  composer is contenteditable: give it a `data-co-handle`.
+- **`followEchoMs`** (default 1000): after the session applies a followed peer's visit or
+  scroll, the host's own report of that same route, or any scroll report, within the
+  window is allowed and not sent. Mutual follow no longer sends each visit twice or
+  bounces scrolls. **Nothing to do unless** you want a different window.
+
+### Changed
+
+- **A held person's focused shared field takes a peer's value at once** (ranked or baton
+  control): they cannot type, so there is nothing of theirs to protect. A focused field
+  still waits for blur while the person is free. **Nothing to do.**
+
 ## [0.62.0] - 2026-11-15
 
 ### Added

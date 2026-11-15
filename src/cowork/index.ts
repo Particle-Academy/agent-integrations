@@ -25,6 +25,7 @@ export {
   type CoworkAppMessage,
   type SendOptions as CoworkSendOptions,
 } from "./session";
+export { bindCoworkDom, type BindCoworkDomOptions } from "./dom-binding";
 export { createInputBlocker, BLOCKED_EVENTS, CONTROL_ATTRIBUTE, type InputBlocker, type InputBlockerOptions } from "./input-block";
 export {
   createMemoryTransport,

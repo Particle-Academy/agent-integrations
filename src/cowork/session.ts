@@ -35,6 +35,7 @@ import {
   globMatch,
   holderOf,
   isValidRef,
+  rankedActs,
   refuse,
   resolveConfig,
   routeOf,
@@ -127,6 +128,14 @@ export type CoworkSessionOptions = {
    * through the server.
    */
   cursorIntervalMs?: number;
+  /**
+   * After this browser applies a FOLLOWED peer's visit or scroll, a local
+   * `reportVisit` of that same route, or any `reportScroll`, within this many ms
+   * is allowed but not sent. A host's own navigation and scroll listeners report
+   * what the session just applied; without this, mutual follow would send each
+   * visit twice and bounce scrolls between two viewports. Default 1000.
+   */
+  followEchoMs?: number;
   /**
    * How cursors and the masked-field "activity" indicator travel. `direct`
    * whispers them on the presence channel; the receiver attributes a whisper only
@@ -276,7 +285,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     const idleMs = config.control.idleMs ?? 3000;
     const mine = rankOf(config, ref);
     let best: { until: number; by: Ref } | null = null;
-    for (const [other, last] of Object.entries(state.last[view] ?? {})) {
+    for (const [other, last] of rankedActs(state, config, view)) {
       if (other === ref || rankOf(config, other) <= mine || at - last >= idleMs) continue;
       if (!best || last + idleMs > best.until) best = { until: last + idleMs, by: other };
     }
@@ -486,10 +495,19 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     commit(result);
   };
 
-  const sendIntent = (intent: Intent, sendOptions: SendOptions = {}): Promise<Decision> =>
+  /** What a followed peer's visit or scroll just made this page do, so its echo is not re-sent. */
+  const followEcho = { route: null as string | null, visitUntil: 0, scrollUntil: 0 };
+  const followEchoMs = Math.max(0, options.followEchoMs ?? 1000);
+
+  const sendIntent = (intent: Intent, sendOptions: SendOptions = {}, internal = false): Promise<Decision> =>
     serial(async () => {
       const isView = VIEW_KINDS.has(intent.kind);
       const view = sendOptions.view ?? (isView || intent.kind === "control" ? self : undefined);
+      // The host reporting what following just did to this page: allowed, not sent.
+      if (!internal && view === self && now() < followEcho.visitUntil && intent.kind === "visit" && routeOf(intent.url) === followEcho.route) {
+        return ALLOW_DECISION;
+      }
+      if (!internal && view === self && now() < followEcho.scrollUntil && intent.kind === "scroll") return ALLOW_DECISION;
       const local = (reason: string, status = 403): Decision => {
         const decision = refuse(reason, status);
         report({ reason, status, from: self, kind: intent.kind, stage: "sender" });
@@ -654,7 +672,8 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     if (view === from && from !== self && intent.kind === "field" && sharesField(intent.handle) && onSameRoute(from)) {
       // A peer on this same page edited a shared document field: last writer wins,
       // except over a field the person is typing in, which waits for their blur.
-      if (isFocused(intent.handle)) {
+      // A person who is held cannot type, so there is nothing of theirs to protect.
+      if (isFocused(intent.handle) && !isBlockedNow()) {
         waitingShared.set(intent.handle, { from, intent });
         return;
       }
@@ -665,9 +684,13 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       // Following: mirror the leader's navigation onto this page, then say where we are now.
       if (intent.kind === "visit") {
         if (routeOf(intent.url) === state.participants[self]?.route) return;
+        followEcho.route = routeOf(intent.url);
+        followEcho.visitUntil = now() + followEchoMs;
         await applyToPage(from, intent);
-        void sendIntentLater({ kind: "visit", url: intent.url });
+        // This page's own report of where it now is: the one that must go out.
+        void sendIntentLater({ kind: "visit", url: intent.url }, true);
       } else {
+        followEcho.scrollUntil = now() + followEchoMs;
         await applyToPage(from, intent);
       }
     }
@@ -707,7 +730,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   focusScope?.addEventListener("focusout", onFocusOut);
 
   /** Queue a report behind the current work rather than inside it. */
-  const sendIntentLater = (intent: Intent) => Promise.resolve().then(() => sendIntent(intent));
+  const sendIntentLater = (intent: Intent, internal = false) => Promise.resolve().then(() => sendIntent(intent, {}, internal));
 
   const helloFrame = (): CoworkFrame => {
     const me = state.participants[self];
@@ -853,7 +876,8 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       return () => listeners.delete(listener);
     },
     refresh: changed,
-    sendIntent,
+    // Never the internal flag: only the session itself re-reports a followed visit.
+    sendIntent: (intent, sendOptions) => sendIntent(intent, sendOptions),
     reportVisit: (url) => sendIntent({ kind: "visit", url }),
     reportScroll: (y, anchor) => sendIntent({ kind: "scroll", y, ...(anchor !== undefined ? { anchor } : {}) }),
     reportField: (handle, value) => sendIntent({ kind: "field", handle, value }),

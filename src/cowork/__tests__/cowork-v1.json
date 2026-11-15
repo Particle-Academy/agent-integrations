@@ -319,6 +319,35 @@
       ]
     },
     {
+      "name": "control ranked, default scope view: a higher rank acting on its OWN view does not block the lower rank's view",
+      "host": { "identify": true, "config": true, "members": ["admin", "user"], "authorize": { "admin": ["*"], "user": ["*"] } },
+      "config": { "control": { "mode": "ranked", "rank": { "admin": 10, "user": 1 }, "idleMs": 3000 } },
+      "session": { "state": "live", "starter": "user", "participants": [{ "ref": "user", "route": "/chat" }, { "ref": "admin", "route": "/chat" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "admin", "envelope": { "view": "admin", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "hi" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 100, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "yo" }, "expect": { "allow": true } }
+      ]
+    },
+    {
+      "name": "control ranked, scope session: a higher rank's intent on ANY view blocks the lower rank everywhere until idleMs (mirrored co-work)",
+      "host": { "identify": true, "config": true, "members": ["admin", "user"], "authorize": { "admin": ["*"], "user": ["*"] } },
+      "config": { "control": { "mode": "ranked", "scope": "session", "rank": { "admin": 10, "user": 1 }, "idleMs": 3000 } },
+      "session": { "state": "live", "starter": "user", "participants": [{ "ref": "user", "route": "/chat" }, { "ref": "admin", "route": "/chat" }] },
+      "steps": [
+        { "op": "intent", "at": 0, "from": "admin", "envelope": { "view": "admin", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "hi" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 1000, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "yo" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409, "blockedUntil": 3000 } },
+        { "op": "intent", "at": 1100, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "scroll", "y": 10 }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409, "blockedUntil": 3000 } },
+        { "op": "intent", "at": 1200, "from": "user", "intent": { "kind": "cursor", "route": "/chat", "x": 5, "y": 5 }, "expect": { "allow": true } },
+        { "op": "intent", "at": 2999, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "yo" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409, "blockedUntil": 3000 } },
+        { "op": "intent", "at": 3000, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "yo" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 3100, "from": "admin", "envelope": { "view": "admin", "revision": 0 }, "intent": { "kind": "visit", "url": "/orders" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 3200, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "visit", "url": "/orders" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409, "blockedUntil": 6100 } },
+        { "op": "intent", "at": 3300, "from": "admin", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "typed for you" }, "expect": { "allow": true } },
+        { "op": "intent", "at": 4000, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "field", "handle": "composer", "value": "x" }, "expect": { "allow": false, "reason": "cowork.denied.control", "status": 409, "blockedUntil": 6300 } },
+        { "op": "intent", "at": 6300, "from": "user", "envelope": { "view": "user", "revision": 0 }, "intent": { "kind": "visit", "url": "/orders" }, "expect": { "allow": true } }
+      ]
+    },
+    {
       "name": "control ranked: equal ranks are last-writer-wins, an unranked ref ranks 0, and the latest blocker decides blockedUntil",
       "host": { "identify": true, "config": true, "members": ["a", "b", "c"], "authorize": { "a": ["*"], "b": ["*"], "c": ["*"] } },
       "config": { "control": { "mode": "ranked", "rank": { "a": 5, "b": 5 }, "idleMs": 3000 } },
