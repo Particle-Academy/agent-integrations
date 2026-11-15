@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`bindCoworkDom` sees a rich-text composer.** It listened only for `input` /
+  `change`. An editor such as Lexical, ProseMirror or Slate cancels the trusted
+  `beforeinput` and edits the DOM itself, and a cancelled `beforeinput` fires no `input`,
+  so most of the person's typing was never reported (only keys the editor let through
+  natively). After each trusted edit gesture (`beforeinput`, `keyup`, `paste`, `cut`,
+  `drop`, `compositionend`) the binding now reads the field once the editor has had its
+  turn, and reports it if the value changed. A value that did not change (an arrow key, a
+  draft already there when the person first focused it, a peer's write the session just
+  applied) is never reported. **Nothing to do.**
+
 - **A visit to the route the page is already on is not a navigation.** `reportVisit` of
   the same route (the same URL again, or only a query or hash change) is allowed and NOT
   sent, so it bumps no revision. A host that reported its URL from an effect keyed on the

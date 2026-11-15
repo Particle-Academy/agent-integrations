@@ -51,6 +51,23 @@ describe("useCoworkSession", () => {
     other.close();
   });
 
+  it("keeps every action's identity across snapshot changes, so an effect keyed on reportField does not rebind", async () => {
+    const hub = createMemoryTransport();
+    const other = hub.connect({ ref: "b", label: "B" });
+    const handles: Array<ReturnType<typeof useCoworkSession>> = [];
+    render(<Room {...base(hub.connect({ ref: "a", label: "A" }), "a")} onSession={(s) => { handles.push(s); }} />);
+    await settle();
+    const first = handles.at(-1)!;
+    await act(async () => { await first.follow("b"); });
+    await settle();
+    const last = handles.at(-1)!;
+    expect(last).not.toBe(first); // a new snapshot, a new handle object
+    for (const name of ["reportField", "reportVisit", "reportScroll", "moveCursor", "follow", "sendIntent"] as const) {
+      expect(last[name]).toBe(first[name]);
+    }
+    other.close();
+  });
+
   it("is inert and refuses until it has a transport", async () => {
     let handle: ReturnType<typeof useCoworkSession> | undefined;
     render(<Room {...base(undefined as unknown as PeerTransport, "a")} transport={undefined} onSession={(s) => { handle = s; }} />);
