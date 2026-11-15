@@ -214,12 +214,19 @@ describe("mutual follow does not ping-pong", () => {
     await b.session.reportVisit("/orders/8");
     await settle(12);
     expect(intents("visit", "b").map((m) => (m.frame as { intent: { url: string } }).intent.url)).toEqual(["/orders/7", "/orders/8"]);
-    // And once the window has passed, reporting the same route again goes out too.
+    // Once the window has passed, reporting the route a is ALREADY on is still not a
+    // navigation: it is not sent (and bumps no revision). MOIC 0.64.0: an effect keyed on
+    // the snapshot re-reported its URL on every change, and each report was a revision.
     clock += 1_001;
     await a.session.reportVisit("/orders/8");
+    await a.session.reportVisit("/orders/8?tab=2");
     await settle(12);
-    // a: its own visit, its re-report after following b, and this later report.
-    expect(intents("visit", "a").map((m) => (m.frame as { intent: { url: string } }).intent.url)).toEqual(["/orders/7", "/orders/8", "/orders/8"]);
+    // a: its own visit and its re-report after following b; nothing for the same route.
+    expect(intents("visit", "a").map((m) => (m.frame as { intent: { url: string } }).intent.url)).toEqual(["/orders/7", "/orders/8"]);
+    // A different route still goes out.
+    await a.session.reportVisit("/orders/9");
+    await settle(12);
+    expect(intents("visit", "a").map((m) => (m.frame as { intent: { url: string } }).intent.url)).toEqual(["/orders/7", "/orders/8", "/orders/9"]);
     expect(a.applied).toContainEqual(["visit", "/orders/8"]);
   });
 

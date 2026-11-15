@@ -836,10 +836,22 @@ const session = useCoworkSession({
 // popover) is outside any panel element. It listens in the capture phase, so an editor
 // that stops its own input events from bubbling is still seen.
 useEffect(() => (session.ready ? bindCoworkDom(session) : undefined), [session.ready, session.reportField]);
-useEffect(() => { void session.follow(otherRef); }, [otherRef]); // both sides follow each other
+// The handle is a NEW object on every snapshot change. An effect that calls the session
+// must not depend on it: read it through a ref and key the effect on `ready` (and the
+// inputs that really change, such as the peer to follow or the path).
+const live = useRef(session);
+live.current = session;
+useEffect(() => { if (session.ready) void live.current.follow(otherRef); }, [session.ready, otherRef]); // both sides follow each other
+useEffect(() => { if (session.ready) void live.current.reportVisit(location.pathname); }, [session.ready]); // where this page is, once
 // From the app's OWN view-change event (a panel switch is not always a URL visit):
-onViewChange((path) => void session.reportVisit(path)); // a same-origin path such as "/panel/orders/7"
+onViewChange((path) => void live.current.reportVisit(path)); // a same-origin path such as "/panel/orders/7"
 ```
+
+- **Never key an effect that calls the session on the handle itself.** `useEffect(...,
+  [session])` runs on every snapshot change: each visit it reports changes the snapshot
+  and runs it again. Since 0.64.1 a report of the route the page is already on is not
+  sent, so this no longer storms, but the same mistake on any other call (a cursor, a
+  field, a follow) still sends one per change.
 
 - **`ref` is the PERSON, `actingFor` the ACCOUNT.** An admin viewing as Bob is
   `{ ref: "user:1", actingFor: "user:4" }` and Bob is `{ ref: "user:4" }`: two people, two

@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A visit to the route the page is already on is not a navigation.** `reportVisit` of
+  the same route (the same URL again, or only a query or hash change) is allowed and NOT
+  sent, so it bumps no revision. A host that reported its URL from an effect keyed on the
+  session handle (which changes on every snapshot change) made each visit trigger the
+  next one: a visit storm. On a slow host every visit was a serial POST and the field
+  reports queued behind it never went out, so typing sent nothing and the other person
+  was never held. Reproduced on fancy-cowork 0.4.0 with real browsers: 8 visit POSTs and
+  no field POST after typing. **Nothing to do**, but key such effects on `ready` and read
+  the session through a ref (see the README recipe).
+- **Visits coalesce** like field and scroll reports: a newer visit replaces one still
+  queued behind a slow POST, so only where the page is now is sent.
+- **A stale answer on this page's own view is retried once, silently.** When the server
+  answers `409 cowork.denied.stale` for an intent into the page's OWN view, the session
+  re-syncs, takes the server's revision and sends the intent once more. Only a second
+  refusal is reported to `onRefused`. A drive into another person's view that went stale
+  is still refused, because that page really moved.
+
 ## [0.64.0] - 2026-11-15
 
 ### Added

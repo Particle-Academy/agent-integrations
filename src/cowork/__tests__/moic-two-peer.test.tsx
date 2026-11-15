@@ -334,6 +334,105 @@ describe("MOIC's mirror sequence: a contenteditable composer mounted after the s
     unbindAdmin();
     unbindBob();
   });
+
+  // MOIC's re-test on 0.4.0 / 0.64.0: they now report the current URL once the session
+  // is ready, and follow each other. After that change the admin's typing sent NO field
+  // intent (only visit, cursor, heartbeat), and Bob was not held until the server's 409.
+  it("with reportVisit on ready and mutual follow: the admin's typing still posts, lands in Bob's composer, and holds Bob before he types", async () => {
+    const { server, adminChannel, bobChannel } = moic();
+    const admin = peer(server, "user:1", adminChannel);
+    const bob = peer(server, "user:4", bobChannel);
+    await settle();
+    const isUser = (e: Event) => (e as Event & { user?: boolean }).user === true;
+    const unbindAdmin = bindCoworkDom(admin.session, { root: admin.root, isUserEvent: isUser });
+    const unbindBob = bindCoworkDom(bob.session, { root: bob.root, isUserEvent: isUser });
+    // Once ready: report where each page is, then follow each other.
+    await admin.session.reportVisit("/dashboard");
+    await bob.session.reportVisit("/dashboard");
+    await settle();
+    await admin.session.follow("user:4");
+    await bob.session.follow("user:1");
+    await vi.advanceTimersByTimeAsync(1_500);
+    await settle();
+
+    const composerFor = (root: HTMLElement) => {
+      const el = document.createElement("div");
+      el.setAttribute("contenteditable", "true");
+      el.setAttribute("data-co-handle", "composer");
+      root.querySelector("textarea")?.remove();
+      root.appendChild(el);
+      return el;
+    };
+    const adminComposer = composerFor(admin.root);
+    const bobComposer = composerFor(bob.root);
+    await settle();
+
+    adminComposer.dispatchEvent(Object.assign(new MouseEvent("click", { bubbles: true }), { user: true }));
+    await typeInto(adminComposer, "Hello from support");
+    await vi.advanceTimersByTimeAsync(400);
+    await settle();
+
+    expect(fieldPosts(server, "user:1").map((r) => (r.body.intent as { value?: unknown }).value)).toContain("Hello from support");
+    // Bob is held BEFORE he types: the relayed admin intent alone sets the hold.
+    expect(bob.root.getAttribute("data-cowork-blocked")).toBe("ranked");
+    // ...and his keys are swallowed locally, so nothing of his is posted.
+    const bobPostsBefore = fieldPosts(server, "user:4").length;
+    await typeInto(bobComposer, "zz");
+    await settle();
+    expect(fieldPosts(server, "user:4").length).toBe(bobPostsBefore);
+    expect(bob.calls).toContainEqual(["composer", "Hello from support"]);
+    unbindAdmin();
+    unbindBob();
+  });
+
+  // MOIC's next re-test: a new chat AUTOFOCUSES Bob's composer. The admin's value must
+  // be applied into that focused field, because the relayed admin intent holds Bob, and
+  // a held person cannot type, so there is nothing of his to protect.
+  for (const kind of ["textarea", "contenteditable"] as const) {
+    it(`a relayed admin value lands in Bob's FOCUSED ${kind} composer, and holds Bob, without waiting for his blur`, async () => {
+      const { server, adminChannel, bobChannel } = moic();
+      const admin = peer(server, "user:1", adminChannel, { now: () => Date.now() });
+      const bob = peer(server, "user:4", bobChannel, { now: () => Date.now() });
+      await settle();
+      const isUser = (e: Event) => (e as Event & { user?: boolean }).user === true;
+      const unbindAdmin = bindCoworkDom(admin.session, { root: admin.root, isUserEvent: isUser });
+      await admin.session.reportVisit("/dashboard");
+      await bob.session.reportVisit("/dashboard");
+      await admin.session.follow("user:4");
+      await bob.session.follow("user:1");
+      await vi.advanceTimersByTimeAsync(4_000);
+      await settle();
+
+      const make = (root: HTMLElement) => {
+        root.querySelector("textarea")?.remove();
+        const el = document.createElement(kind === "textarea" ? "textarea" : "div");
+        if (kind === "contenteditable") el.setAttribute("contenteditable", "true");
+        el.setAttribute("data-co-handle", "composer");
+        el.tabIndex = 0;
+        root.appendChild(el);
+        return el;
+      };
+      const adminComposer = make(admin.root);
+      const bobComposer = make(bob.root);
+      bobComposer.focus(); // the new chat's autofocus
+      expect(document.activeElement).toBe(bobComposer);
+
+      for (const ch of "Hello") {
+        if (kind === "textarea") (adminComposer as HTMLTextAreaElement).value += ch;
+        else adminComposer.textContent = (adminComposer.textContent ?? "") + ch;
+        adminComposer.dispatchEvent(Object.assign(new InputEvent("input", { bubbles: true }), { user: true }));
+        await vi.advanceTimersByTimeAsync(40);
+      }
+      await vi.advanceTimersByTimeAsync(400);
+      await settle();
+
+      expect(document.activeElement).toBe(bobComposer);
+      expect(bob.session.getSnapshot().blocked).toMatchObject({ by: "user:1", mode: "ranked" });
+      expect(bob.root.getAttribute("data-cowork-blocked")).toBe("ranked");
+      expect(bob.calls).toContainEqual(["composer", "Hello"]);
+      unbindAdmin();
+    });
+  }
 });
 
 describe("the hook and bindCoworkDom under MOIC's inline props", () => {

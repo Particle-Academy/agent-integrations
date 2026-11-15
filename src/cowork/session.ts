@@ -36,6 +36,7 @@ import {
   holderOf,
   isValidRef,
   rankedActs,
+  REASONS,
   refuse,
   resolveConfig,
   routeOf,
@@ -523,6 +524,13 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         return ALLOW_DECISION;
       }
       if (!internal && view === self && now() < followEcho.scrollUntil && intent.kind === "scroll") return ALLOW_DECISION;
+      // Not a navigation: this page is already on that route (a query or hash change, or
+      // the same URL reported again). Sending it would bump the revision, and a host that
+      // reports from an effect keyed on the snapshot would then report again, forever:
+      // a visit storm that starves every field report queued behind it (MOIC, 0.64.0).
+      if (intent.kind === "visit" && view === self && sendOptions.to === undefined && routeOf(intent.url) === state.participants[self]?.route) {
+        return ALLOW_DECISION;
+      }
       const local = (reason: string, status = 403): Decision => {
         const decision = refuse(reason, status);
         report({ reason, status, from: self, kind: intent.kind, stage: "sender" });
@@ -572,14 +580,30 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         report({ reason, status, from: self, kind: intent.kind, stage: "sender" });
         return result.decision;
       }
-      const sent = await send({ t: "intent", envelope, intent });
+      let sent = await send({ t: "intent", envelope, intent });
+      let committed = result;
+      // Stale on this page's OWN view: the server committed a revision of it this browser
+      // missed (a lost answer, a relay it never heard). The report describes the page as
+      // it is now, so only the counter is behind: re-sync, take the server's revision and
+      // send it again, once. A drive into another view is never retried: that page moved.
+      if (!sent.allow && sent.reason === REASONS.stale && view === self && isView && transport.sync) {
+        await resyncNow();
+        const rebased: Envelope = { ...envelope, id: newId(), revision: state.participants[self]?.revision ?? 0 };
+        const again = await evaluateIntent(host(), state, { from: self, envelope: rebased, intent, now: now() });
+        if (!again.decision.allow) {
+          report({ reason: again.decision.reason, status: again.decision.status, from: self, kind: intent.kind, stage: "sender" });
+          return again.decision;
+        }
+        sent = await send({ t: "intent", envelope: rebased, intent });
+        committed = again;
+      }
       if (!sent.allow) {
         report({ reason: sent.reason, status: sent.status, from: self, kind: intent.kind, stage: "sender" });
         return sent;
       }
-      commit(result);
+      commit(committed);
       if (intent.kind === "field" && view === self) acceptedField.set(intent.handle, stableJson(intent.value));
-      return result.decision;
+      return committed.decision;
   };
 
   // Coalescing (approved lab test 87, run 762): on a slow server every keystroke was
@@ -591,6 +615,8 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     const view = sendOptions.view ?? self;
     if (intent.kind === "field") return `field|${view}|${intent.handle}`;
     if (intent.kind === "scroll") return `scroll|${view}`;
+    // Where the page is NOW is all a visit reports: a newer one replaces a queued one.
+    if (intent.kind === "visit") return `visit|${view}`;
     return null;
   };
   const queuedSends = new Map<string, { intent: Intent; options: SendOptions; internal: boolean; done: Promise<Decision> }>();
