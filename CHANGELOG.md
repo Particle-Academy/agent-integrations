@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A peer's text lands in a contenteditable as a minimal edit.** `setEditableText`
+  (the DOM agent's and the session's write into a contenteditable) replaced
+  `textContent`, which discarded the text node a framework holds and put the caret
+  at the start, so a person typing at the end lost their place. It now replaces only
+  the range between the common prefix and suffix, in place, so the caret, the
+  selection and the node survive; an unchanged value is no edit and no event. A
+  focused field still waits for blur unless its person is held. Nothing to do.
 - **On a slow server, a final value no longer waits behind stale ones, and a held
   person's value is no longer lost** (approved lab test 87, run 762). Field and scroll
   reports coalesce: while one waits in the queue a newer one for the same field

@@ -567,10 +567,61 @@ function isField(el: Element): el is FieldElement {
  * Replace a contenteditable's text (plain text, never markup) and fire the input
  * event an editor or framework listens for.
  */
+/** A character offset in `el`'s text, as a text node and an offset in it (document order). */
+function textPosition(el: HTMLElement, offset: number): { node: Text; offset: number } | null {
+  const walker = el.ownerDocument.createTreeWalker(el, 4 /* NodeFilter.SHOW_TEXT */);
+  let seen = 0;
+  let last: Text | null = null;
+  for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+    if (offset <= seen + n.data.length) return { node: n, offset: offset - seen };
+    seen += n.data.length;
+    last = n;
+  }
+  return last ? { node: last, offset: last.data.length } : null;
+}
+
+/**
+ * Replace only what differs between `current` and `text` (the common prefix and
+ * suffix stay untouched). Within one text node this is `replaceData`, which the DOM
+ * spec has every live range (the caret included) follow; across nodes it is a Range.
+ * Returns false when the element holds no text node to edit.
+ */
+function replaceEditableRange(el: HTMLElement, current: string, text: string): boolean {
+  let start = 0;
+  const max = Math.min(current.length, text.length);
+  while (start < max && current[start] === text[start]) start++;
+  let endCurrent = current.length;
+  let endText = text.length;
+  while (endCurrent > start && endText > start && current[endCurrent - 1] === text[endText - 1]) {
+    endCurrent--;
+    endText--;
+  }
+  const insert = text.slice(start, endText);
+  const from = textPosition(el, start);
+  const to = textPosition(el, endCurrent);
+  if (!from || !to) return false;
+  if (from.node === to.node) {
+    from.node.replaceData(from.offset, to.offset - from.offset, insert);
+    return true;
+  }
+  const range = el.ownerDocument.createRange();
+  range.setStart(from.node, from.offset);
+  range.setEnd(to.node, to.offset);
+  range.deleteContents();
+  from.node.insertData(from.offset, insert);
+  return true;
+}
+
 export function setEditableText(el: HTMLElement, value: unknown): void {
   const view = (el.ownerDocument.defaultView ?? globalThis) as typeof globalThis;
   const text = value === null || value === undefined ? "" : String(value);
-  el.textContent = text;
+  const current = el.textContent ?? "";
+  // Already showing it: no edit, no event (an echo must not look like typing).
+  if (current === text) return;
+  // A MINIMAL edit: only the changed range, in place, so the caret, the selection
+  // and the text node a framework holds survive. Replacing textContent threw the
+  // node away and put the caret at the start of the field.
+  if (!replaceEditableRange(el, current, text)) el.textContent = text;
   const Ctor = (view as unknown as { InputEvent?: typeof InputEvent }).InputEvent;
   el.dispatchEvent(
     Ctor ? new Ctor("input", { bubbles: true, inputType: "insertReplacementText", data: text }) : new view.Event("input", { bubbles: true }),
