@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { bindCoworkDom } from "../dom-binding";
 import { createCoworkSession, type CoworkSession, type CoworkSessionOptions } from "../session";
@@ -565,4 +565,105 @@ describe("the hook and bindCoworkDom under MOIC's inline props", () => {
     unbind(); // a re-bind or unmount before the trailing edge
     expect(reports.at(-1)).toBe("Hello");
   });
+});
+
+describe("MOIC's page, mirrored (0.64.0 live report: no field intents in one run)", () => {
+  // As MOIC builds it: useCoworkSession with the same config on both pages, effects that
+  // read the session through a ref and are keyed on `ready`, bindCoworkDom keyed on
+  // [ready, reportField], the composer mounted on "New Chat" (a controlled textarea, or a
+  // contenteditable whose tags are inserted through a Range), and mutual follow.
+  // Both pages share ONE jsdom document, so each gets its own root (the session's, for the
+  // input blocker and masking, and the binding's): with `document` for both, Bob's hold
+  // would swallow the admin's keys too, which no real pair of browsers can do.
+  const isUser = (e: Event) => (e as Event & { user?: boolean }).user === true;
+  function MoicPage(props: { server: ReturnType<typeof moicServer>; channel: PresenceChannelLike; me: string; other: string; field: "textarea" | "editable"; calls: Array<[string, unknown]>; root: HTMLElement; onHandle: (h: CoworkSessionHandle) => void }) {
+    const transport = useMemo(() => createServerTransport({ sessionId: "s1", self: props.me, channel: props.channel, fetch: props.server.fetchFor(props.me) as never }), []);
+    const session = useCoworkSession({
+      sessionId: "s1",
+      self: { ref: props.me, label: props.me },
+      transport,
+      adapter: recordingAdapter(props.calls),
+      config: { consent: "notify", control: { mode: "ranked", scope: "session", idleMs: 3000, rank: (ref: string) => (ref === "user:4" ? 1 : 2) } },
+      authorize: () => true,
+      presenceRouting: "server",
+      sharedFields: ["composer"],
+      now: () => Date.now(),
+      blockInput: { isUserEvent: isUser },
+      root: props.root,
+    } as never);
+    props.onHandle(session);
+    const live = useRef(session);
+    live.current = session;
+    const [chat, setChat] = useState(false);
+    const [text, setText] = useState("");
+    useEffect(() => (session.ready ? bindCoworkDom(session, { root: props.root, isUserEvent: isUser }) : undefined), [session.ready, session.reportField]);
+    useEffect(() => { if (session.ready) void live.current.reportVisit("/dashboard"); }, [session.ready]);
+    useEffect(() => { if (session.ready) void live.current.follow(props.other); }, [session.ready, props.other]);
+    return (
+      <div data-page={props.me}>
+        <button type="button" data-new-chat="" onClick={() => setChat(true)}>New Chat</button>
+        {chat && (props.field === "textarea"
+          ? <textarea data-co-handle="composer" autoFocus value={text} onChange={(e) => setText(e.target.value)} />
+          : <div data-co-handle="composer" contentEditable suppressContentEditableWarning autoFocus onInput={(e) => setText((e.target as HTMLElement).textContent ?? "")} />)}
+      </div>
+    );
+  }
+
+  for (const field of ["textarea", "editable"] as const) {
+    it(`${field}: the admin's typing posts field intents, lands in Bob's focused composer, and holds Bob`, async () => {
+      const { server, adminChannel, bobChannel } = moic();
+      const adminCalls: Array<[string, unknown]> = [];
+      const bobCalls: Array<[string, unknown]> = [];
+      let admin: CoworkSessionHandle | undefined;
+      let bob: CoworkSessionHandle | undefined;
+      const adminRoot = document.body.appendChild(document.createElement("section"));
+      const bobRoot = document.body.appendChild(document.createElement("section"));
+      render(<MoicPage server={server} channel={adminChannel} me="user:1" other="user:4" field={field} calls={adminCalls} root={adminRoot} onHandle={(h) => { admin = h; }} />, { container: adminRoot });
+      render(<MoicPage server={server} channel={bobChannel} me="user:4" other="user:1" field={field} calls={bobCalls} root={bobRoot} onHandle={(h) => { bob = h; }} />, { container: bobRoot });
+      await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
+      expect(admin?.ready && bob?.ready).toBe(true);
+
+      // New Chat on both pages; Bob's composer autofocuses.
+      for (const page of ["user:1", "user:4"]) {
+        await act(async () => { (document.querySelector(`[data-page="${page}"] [data-new-chat]`) as HTMLButtonElement).click(); });
+      }
+      const adminComposer = document.querySelector('[data-page="user:1"] [data-co-handle="composer"]') as HTMLElement;
+      const bobComposer = document.querySelector('[data-page="user:4"] [data-co-handle="composer"]') as HTMLElement;
+      bobComposer.focus();
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+
+      const typeKey = async (ch: string) => {
+        await act(async () => {
+          if (field === "textarea") setter.call(adminComposer, (adminComposer as HTMLTextAreaElement).value + ch);
+          else adminComposer.appendChild(document.createTextNode(ch));
+          adminComposer.dispatchEvent(Object.assign(new InputEvent("input", { bubbles: true }), { user: true }));
+          await vi.advanceTimersByTimeAsync(40);
+        });
+      };
+      for (const ch of "Hi ") await typeKey(ch);
+      if (field === "editable") {
+        // InputTag's contentEditableAdapter: a tag marker inserted through a Range, then an input event.
+        await act(async () => {
+          const range = document.createRange();
+          range.selectNodeContents(adminComposer);
+          range.collapse(false);
+          const tag = document.createElement("span");
+          tag.setAttribute("data-tag", "order");
+          tag.textContent = "#order";
+          range.insertNode(tag);
+          adminComposer.dispatchEvent(Object.assign(new InputEvent("input", { bubbles: true }), { user: true }));
+        });
+      }
+      for (const ch of " Bob") await typeKey(ch);
+      await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+
+      const finalText = field === "textarea" ? (adminComposer as HTMLTextAreaElement).value : adminComposer.textContent;
+      const posted = server.requests.filter((r) => r.from === "user:1" && r.url.endsWith("/intents") && (r.body.intent as { kind: string }).kind === "field");
+      expect(posted.length).toBeGreaterThan(0);
+      expect((posted.at(-1)!.body.intent as { value: unknown }).value).toBe(finalText);
+      expect(document.activeElement).toBe(bobComposer);
+      expect(bob!.blocked).toMatchObject({ by: "user:1", mode: "ranked" });
+      expect(bobCalls).toContainEqual(["composer", finalText]);
+    });
+  }
 });

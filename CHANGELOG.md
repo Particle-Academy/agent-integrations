@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.64.1] - 2026-11-15
 
+### Changed
+
+- **A refusal with no `onRefused` is warned on the console**, once per stage, kind and
+  reason (`[cowork] field refused at the sender: cowork.denied.masked ...`). A refusal at
+  the sender is decided before the network, so with no handler it left no trace at all:
+  a run in which no field intent was ever posted looked exactly like a run with nothing
+  typed. **Pass `onRefused` to handle refusals yourself**; then nothing is logged.
+
 ### Fixed
 
 - **`bindCoworkDom` sees a rich-text composer.** It listened only for `input` /

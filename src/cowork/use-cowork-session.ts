@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import { createCoworkSession, type CoworkSession, type CoworkSessionOptions, type CoworkSnapshot } from "./session";
+import { createCoworkSession, createRefusalWarner, type CoworkSession, type CoworkSessionOptions, type CoworkSnapshot } from "./session";
 import type { PeerTransport } from "./transport";
 import type { Decision } from "./types";
 
@@ -54,6 +54,7 @@ export function useCoworkSession(options: UseCoworkSessionOptions): CoworkSessio
     if (!transport) return;
     const current = latest.current;
     const live = latest;
+    const warnRefusal = createRefusalWarner();
     const created = createCoworkSession({
       ...current,
       // Read at use, so an inline value passed on a later render is the one used.
@@ -70,7 +71,8 @@ export function useCoworkSession(options: UseCoworkSessionOptions): CoworkSessio
       ...(current.members ? { members: (ref) => latest.current.members?.(ref) ?? false } : {}),
       ...(current.predicate ? { predicate: (name, ctx, intent) => latest.current.predicate?.(name, ctx, intent) } : {}),
       onAppMessage: (message) => latest.current.onAppMessage?.(message),
-      onRefused: (refusal) => latest.current.onRefused?.(refusal),
+      // No handler from the host: warn once per kind of refusal rather than drop it.
+      onRefused: (refusal) => (latest.current.onRefused ? latest.current.onRefused(refusal) : warnRefusal(refusal)),
     });
     setSession(created);
     return () => {

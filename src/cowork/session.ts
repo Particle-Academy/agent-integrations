@@ -100,6 +100,25 @@ export type CoworkSnapshot = {
 export type CoworkRefusal = { reason: string; status: number; from: Ref; kind?: string; stage: "sender" | "receiver" | "apply" };
 export type CoworkAppMessage = { from: Ref; topic: string; payload: unknown };
 
+/**
+ * What a session does with a refusal when the host passed no `onRefused`: one console
+ * warning per stage, kind and reason. A refusal at the sender is decided before the
+ * network, so without this it leaves no trace anywhere (MOIC, 0.64.0: a run with no
+ * field intents at all, and nothing to say why). Internal; the hook uses it too.
+ */
+export function createRefusalWarner(): (refusal: CoworkRefusal) => void {
+  const warned = new Set<string>();
+  return (refusal) => {
+    const key = `${refusal.stage}|${refusal.kind ?? ""}|${refusal.reason}`;
+    if (warned.has(key) || typeof console === "undefined") return;
+    warned.add(key);
+    console.warn(
+      `[cowork] ${refusal.kind ?? "intent"} refused at the ${refusal.stage}: ${refusal.reason} (${refusal.status}, from ${refusal.from}). ` +
+        "Pass onRefused to handle refusals; this warning is shown once per stage, kind and reason.",
+    );
+  };
+}
+
 type ConfigSource = SessionConfigInput | null | undefined | (() => SessionConfigInput | null | undefined);
 
 export type CoworkSessionOptions = {
@@ -471,8 +490,13 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   // Sending
   // -------------------------------------------------------------------------
 
+  const warnRefusal = createRefusalWarner();
   const report = (refusal: CoworkRefusal) => {
-    try { options.onRefused?.(refusal); } catch { /* A host callback cannot break the session. */ }
+    if (!options.onRefused) {
+      warnRefusal(refusal);
+      return;
+    }
+    try { options.onRefused(refusal); } catch { /* A host callback cannot break the session. */ }
   };
 
   const newId = () => `${self.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 16) || "p"}-${Math.random().toString(36).slice(2, 12)}`;
