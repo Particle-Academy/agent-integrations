@@ -43,6 +43,11 @@ export interface PeerTransport {
   /** Whom this transport treats as its own sender (a server transport's `self`). */
   readonly self?: Ref;
   /**
+   * The channel object it listens on (a server transport's `channel`). useCoworkSession
+   * restarts its session when this changes: a re-joined channel is a new object.
+   */
+  readonly channel?: unknown;
+  /**
    * Hand a frame to the transport. Resolves to the SERVER's decision for an
    * intent in server routing; otherwise `{ allow: true }` once handed off, or
    * a refusal when the transport is closed or failed.
@@ -464,6 +469,29 @@ export function createServerTransport(options: ServerTransportOptions): PeerTran
     }
     pipe.frames.emit({ from, frame });
   };
+
+  // A laravel-echo channel that was left, re-joined (a new pusher channel object under the
+  // same name) or whose client was disconnected (a second Echo replaced it) keeps nothing
+  // bound here: relayed intents stop arriving while every POST still works. Measured with
+  // laravel-echo 2.6.3 + pusher-js 8.6.0; a plain reconnect keeps the binding. Duck-typed:
+  // a channel without those internals (fancy-query's own client) is never judged.
+  const staleReason = (): string | null => {
+    const c = options.channel as unknown as { name?: unknown; subscription?: unknown; pusher?: { channel?: (n: string) => unknown; connection?: { state?: unknown } } };
+    if (!c || typeof c.name !== "string" || c.subscription === undefined || !c.pusher || typeof c.pusher.channel !== "function") return null;
+    if (c.pusher.connection?.state === "disconnected") return "its client is disconnected";
+    try {
+      if (c.pusher.channel(c.name) !== c.subscription) return "it was left or re-joined";
+    } catch {
+      return null;
+    }
+    return null;
+  };
+  const checkLive = () => {
+    const why = staleReason();
+    if (why === null) return;
+    const name = (options.channel as unknown as { name: string }).name;
+    drop("stale-channel", `The presence channel ${name} this transport listens on is no longer the live subscription (${why}): relayed intents no longer arrive here. Create a new transport on the channel the page now uses; useCoworkSession restarts on it.`);
+  };
   options.channel.listen?.(".cowork.intent", onRelayed);
 
   const post = async (path: string, body: Record<string, unknown>): Promise<Decision> => {
@@ -491,8 +519,10 @@ export function createServerTransport(options: ServerTransportOptions): PeerTran
   return {
     routing: "server",
     self: options.self,
+    channel: options.channel,
     async send(frame) {
       if (!pipe.isOpen()) return CLOSED;
+      checkLive();
       if (frame.t === "intent") {
         const socketId = options.socketId?.();
         return post("/intents", {
@@ -522,7 +552,11 @@ export function createServerTransport(options: ServerTransportOptions): PeerTran
         return null;
       }
     },
-    heartbeat: () => (pipe.isOpen() ? post("/heartbeat", {}) : Promise.resolve(CLOSED)),
+    heartbeat: () => {
+      if (!pipe.isOpen()) return Promise.resolve(CLOSED);
+      checkLive();
+      return post("/heartbeat", {});
+    },
     close() {
       options.channel.stopListening?.(".cowork.intent", onRelayed);
       pipe.close();

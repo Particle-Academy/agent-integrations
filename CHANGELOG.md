@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A session follows its page onto a re-joined channel.** A consumer's receiver got the
+  admin's `cowork.intent` frames on its socket and ran nothing, not even 0.65.1's receive
+  warnings, after its connection was re-established. Measured against laravel-echo 2.6.3
+  and pusher-js 8.6.0: a reconnect keeps a channel's bindings, but a re-join
+  (`Echo.leave` + `Echo.join`, or a second Echo instance) makes a NEW pusher channel
+  object, and the transport stayed bound to the old, unsubscribed one. `useCoworkSession`
+  kept the first transport it saw, so every POST still worked and every relayed intent
+  went nowhere. The hook now restarts its session when the transport's channel object
+  changes; a transport rebuilt inline on the SAME channel still does not restart it.
+  `createServerTransport` exposes `channel`. **Nothing to do**, but build the transport
+  in a `useMemo` on the channel, so a re-joined channel gives a new transport.
+- **A transport on a dead channel warns.** When a server transport's laravel-echo channel
+  is no longer the live subscription for its name (left, re-joined, or its client
+  disconnected), the next send or heartbeat warns once on the console. A plain
+  reconnect does not warn. Channels without laravel-echo internals are never judged.
+
 ## [0.65.1] - 2026-11-15
 
 ### Changed

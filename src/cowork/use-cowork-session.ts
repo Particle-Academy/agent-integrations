@@ -7,8 +7,9 @@ import type { Decision } from "./types";
 export type UseCoworkSessionOptions = Omit<CoworkSessionOptions, "transport"> & {
   /**
    * Nothing happens until there is one. Create it ONCE (useMemo on the channel, the
-   * session id and self.ref, or module scope): a new transport OBJECT does not restart
-   * the session. To start over on a different transport, change `sessionId` or remount.
+   * session id and self.ref, or module scope). A new transport object on the SAME channel
+   * does not restart the session; a transport on a NEW channel (the page re-joined, or a
+   * second Echo) does, because the old channel no longer delivers anything.
    */
   transport: PeerTransport | null | undefined;
 };
@@ -49,6 +50,22 @@ export function useCoworkSession(options: UseCoworkSessionOptions): CoworkSessio
   const bound = options.authorize !== null && options.authorize !== undefined;
 
   const hasTransport = Boolean(options.transport);
+  // The CHANNEL a server transport listens on, as a stable key: a page that re-joins its
+  // channel (or builds a second Echo) gets a new channel object, and a session left on the
+  // old one hears nothing while its POSTs still work. A transport rebuilt inline on the
+  // same channel keeps the same key, so it never restarts the session.
+  const channelIds = useRef(new WeakMap<object, number>());
+  const nextChannelId = useRef(0);
+  const channel = (options.transport as { channel?: unknown } | null | undefined)?.channel;
+  let channelKey = 0;
+  if (channel !== null && typeof channel === "object") {
+    let id = channelIds.current.get(channel);
+    if (id === undefined) {
+      id = ++nextChannelId.current;
+      channelIds.current.set(channel, id);
+    }
+    channelKey = id;
+  }
   useEffect(() => {
     const transport = latest.current.transport;
     if (!transport) return;
@@ -79,8 +96,9 @@ export function useCoworkSession(options: UseCoworkSessionOptions): CoworkSessio
       created.destroy();
       setSession((s) => (s === created ? null : s));
     };
-    // Recreate only for a new session, person or policy binding, or the first transport.
-  }, [options.sessionId, hasTransport, options.self.ref, bound]);
+    // Recreate only for a new session, person or policy binding, the first transport, or a
+    // transport on a NEW channel.
+  }, [options.sessionId, hasTransport, options.self.ref, bound, channelKey]);
 
   const empty = useMemo<CoworkSnapshot>(
     () => ({
