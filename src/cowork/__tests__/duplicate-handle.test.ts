@@ -137,3 +137,42 @@ describe("a page that reverts the written field", () => {
     expect(w).toHaveLength(1);
   });
 });
+
+describe("our own write on a HELD receiver with bindCoworkDom on (the coordinator's theory)", () => {
+  it("is not blocked, reverted or reported back as the held person's edit", async () => {
+    const { bindCoworkDom } = await import("../dom-binding");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    document.body.innerHTML = '<div contenteditable="true" data-co-handle="composer"></div>';
+    const posts: Array<{ kind: string; value?: unknown }> = [];
+    const { channel, relay } = channelDouble();
+    const fetchFn = (async (url: string, init?: { method?: string; body?: string }) => {
+      if ((init?.method ?? "GET") !== "GET" && String(url).endsWith("/intents")) posts.push(JSON.parse(String(init?.body)).intent);
+      return (sync as unknown as (u: string, i?: unknown) => Promise<unknown>)(url, init);
+    }) as never;
+    const s = createCoworkSession({
+      sessionId: "s1", self: { ref: "user:4" },
+      transport: createServerTransport({ sessionId: "s1", self: "user:4", channel, fetch: fetchFn }),
+      config: { consent: "notify", control: { mode: "ranked", scope: "session", rank: (r: string) => (r === "user:4" ? 1 : 2), idleMs: 3000 } },
+      authorize: () => true, presenceRouting: "server", sharedFields: ["composer"],
+      adapter: { ...createDomNavigationAgent(), visit: () => {} },
+      // The default input blocker (on) and bindCoworkDom with its default isUserEvent
+      // (event.isTrusted): exactly the consumer's page.
+    } as never);
+    sessions.push(s);
+    const unbind = bindCoworkDom(s);
+    await wait();
+    relay(field);
+    await wait(20);
+    // Held by the writer at the moment of the write...
+    expect(document.documentElement.getAttribute("data-cowork-blocked")).toBe("ranked");
+    const composer = document.querySelector("[data-co-handle]") as HTMLElement;
+    expect(composer.textContent).toBe("Hello from support");
+    // ...and it stays, past the verify window and the revert watch.
+    await wait(1_200);
+    expect(composer.textContent).toBe("Hello from support");
+    // Our write is never posted back as the held person's own field edit.
+    expect(posts.filter((p) => p.kind === "field")).toEqual([]);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("[cowork]"))).toEqual([]);
+    unbind();
+  });
+});
