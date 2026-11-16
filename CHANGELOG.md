@@ -11,6 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A received frame never waits on this page's own network calls.** A consumer's 0.65.4
+  trace: the admin's field frame arrived, then waited `queued waiting=2` for over 1.5 s,
+  behind the subject's OWN field POST (and its result), before it was committed and
+  applied; the subject was not held meanwhile, so he typed and got 409. The session's one
+  queue ran every POST and re-sync GET inside it. It is now split:
+  - the STATE queue still orders every change to the session's state (that is why it
+    exists), but nothing in it waits on the network;
+  - a SEND queue keeps this page's own sends in order: each is judged in the state queue,
+    posted outside it, then committed in it on the state as it is by then (frames
+    received while it was in flight are already in it);
+  - presence (cursor, activity) sends and follows work the same way, and a re-sync GET
+    runs outside, with only its merge queued. A frame from a sender this page has not
+    heard of waits for that one re-sync, then is taken at its arrival time.
+- **The hold starts when the frame ARRIVES.** A higher rank's relayed view intent holds
+  the person from the moment it reaches the page (`until` = arrival + idleMs), before it
+  is processed, and it is committed at its arrival time.
+
+### Changed
+
+- **`debug`:** `queued` names the steps ahead (`ahead=["judge own field", ...]`),
+  `dequeued` says how long it waited, and a key swallowed while the person is held is
+  traced (`input blocked while held`). By design such keys never land and are not
+  reported later: the person sees they are held, and a value typed blind would only
+  overwrite the higher rank's text.
+
 ## [0.65.4] - 2026-11-16
 
 ### Changed

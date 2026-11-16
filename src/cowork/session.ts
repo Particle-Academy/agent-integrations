@@ -319,7 +319,9 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   // cancelled from here, but it must never be silent.
   const stuckAfterMs = Math.max(1, options.stuckAfterMs ?? 10_000);
   let queued = 0;
-  const timed = <T>(work: () => Promise<T>) => async (): Promise<T> => {
+  /** What is in the state queue now (running or waiting), for `debug`. */
+  const pendingSteps: string[] = [];
+  const timed = <T>(work: () => Promise<T>, label: string) => async (): Promise<T> => {
     const timer = setTimeout(() => {
       warnReceive("stuck", `A co-work step has been waiting over ${Math.round(stuckAfterMs / 1000)} s and ${Math.max(0, queued - 1)} queued after it (frames received, intents to send) wait too: a host call it awaits (the transport's fetch, an adapter method) is not settling.`);
     }, stuckAfterMs);
@@ -328,13 +330,30 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     } finally {
       clearTimeout(timer);
       queued -= 1;
+      const at = pendingSteps.indexOf(label);
+      if (at >= 0) pendingSteps.splice(at, 1);
     }
   };
-  const serial = <T>(work: () => Promise<T>): Promise<T> => {
+  /**
+   * The STATE queue: every change to this session's state, one at a time, and nothing
+   * in it ever waits on the network. A page's own POSTs and re-sync GETs are made outside
+   * it (judged in it, sent, then committed in it on the state as it is by then), so a
+   * frame received while one of them is in flight is judged and applied at once. That is
+   * the whole reason the queue exists: ordering of state changes, not of network calls.
+   */
+  const serial = <T>(work: () => Promise<T>, label = "step"): Promise<T> => {
     queued += 1;
-    const step = timed(work);
+    pendingSteps.push(label);
+    const step = timed(work, label);
     const run = queue.then(step, step);
     queue = run.catch(() => undefined);
+    return run;
+  };
+  /** The SEND queue: this page's own sends go out one at a time, in order. */
+  let sendChain: Promise<unknown> = Promise.resolve();
+  const sendSerial = <T>(work: () => Promise<T>): Promise<T> => {
+    const run = sendChain.then(work, work);
+    sendChain = run.catch(() => undefined);
     return run;
   };
 
@@ -399,15 +418,20 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   };
 
   /** Ranked: when `ref` may next act in `view`, and who is in the way. */
+  /** Relayed view intents that arrived and are not processed yet: they hold from arrival. */
+  const arrivals = new Map<object, { from: Ref; view: Ref | undefined; at: number }>();
   const rankedBlock = (config: SessionConfig, view: Ref, ref: Ref, at: number): { until: number; by: Ref } | null => {
     if (config.control.mode !== "ranked") return null;
     const idleMs = config.control.idleMs ?? 3000;
     const mine = rankOf(config, ref);
+    const sessionScope = config.control.scope === "session";
     let best: { until: number; by: Ref } | null = null;
-    for (const [other, last] of rankedActs(state, config, view)) {
-      if (other === ref || rankOf(config, other) <= mine || at - last >= idleMs) continue;
+    const consider = (other: Ref, last: number) => {
+      if (other === ref || rankOf(config, other) <= mine || at - last >= idleMs) return;
       if (!best || last + idleMs > best.until) best = { until: last + idleMs, by: other };
-    }
+    };
+    for (const [other, last] of rankedActs(state, config, view)) consider(other, last);
+    for (const a of arrivals.values()) if (sessionScope || a.view === view) consider(a.from, a.at);
     return best;
   };
 
@@ -620,12 +644,15 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const sendPresence = async (intent: Extract<Intent, { kind: "cursor" | "activity" }>): Promise<void> => {
     if (destroyed) return;
     const envelope: Envelope = { id: newId() };
-    const result = await evaluateIntent(host(), state, { from: self, envelope, intent, now: now() });
-    if (!result.decision.allow) return refusePresence(intent.kind, result.decision);
+    const checked = await serial(async () => (await evaluateIntent(host(), state, { from: self, envelope, intent, now: now() })).decision, `check own ${intent.kind}`);
+    if (!checked.allow) return refusePresence(intent.kind, checked);
     const sent = await send({ t: "intent", envelope, intent });
     if (!sent.allow) return refusePresence(intent.kind, sent);
     presenceRefused.delete(intent.kind);
-    commit(result);
+    await serial(async () => {
+      const result = await evaluateIntent(trustedHost(), state, { from: self, envelope, intent, now: now() });
+      if (result.decision.allow) commit(result);
+    }, `commit own ${intent.kind}`);
   };
 
   /** What a followed peer's visit or scroll just made this page do, so its echo is not re-sent. */
@@ -633,18 +660,20 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const followEchoMs = Math.max(0, options.followEchoMs ?? 1000);
 
   /** One send, run inside `serial`. Callers go through {@link sendIntent}. */
-  const runSend = async (intent: Intent, sendOptions: SendOptions = {}, internal = false): Promise<Decision> => {
+  type Prepared = { done: Decision } | { envelope: Envelope; view: Ref | undefined; isView: boolean; result: Result };
+  /** A send judged in the state queue: refused or skipped (`done`), or ready to go out. */
+  const prepareSend = async (intent: Intent, sendOptions: SendOptions, internal: boolean): Promise<Prepared> => {
       const isView = VIEW_KINDS.has(intent.kind);
       const view = sendOptions.view ?? (isView || intent.kind === "control" ? self : undefined);
       trace("send", { kind: intent.kind, view, ...(intent.kind === "field" ? { handle: intent.handle, value: typeof intent.value === "string" ? intent.value : stableJson(intent.value) } : {}), internal });
       // The host reporting what following just did to this page: allowed, not sent.
       if (!internal && view === self && now() < followEcho.visitUntil && intent.kind === "visit" && routeOf(intent.url) === followEcho.route) {
         trace("send skipped", { why: "the echo of a followed visit" });
-        return ALLOW_DECISION;
+        return { done: ALLOW_DECISION };
       }
       if (!internal && view === self && now() < followEcho.scrollUntil && intent.kind === "scroll") {
         trace("send skipped", { why: "the echo of a followed scroll" });
-        return ALLOW_DECISION;
+        return { done: ALLOW_DECISION };
       }
       // Not a navigation: this page is already on that route (a query or hash change, or
       // the same URL reported again). Sending it would bump the revision, and a host that
@@ -652,7 +681,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       // a visit storm that starves every field report queued behind it (MOIC, 0.64.0).
       if (intent.kind === "visit" && view === self && sendOptions.to === undefined && routeOf(intent.url) === state.participants[self]?.route) {
         trace("send skipped", { why: "already on that route" });
-        return ALLOW_DECISION;
+        return { done: ALLOW_DECISION };
       }
       const local = (reason: string, status = 403): Decision => {
         const decision = refuse(reason, status);
@@ -670,14 +699,14 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         appliedShared.delete(intent.handle);
         if (applied !== undefined && applied === stableJson(intent.value)) {
           trace("send skipped", { why: "the echo of a value just applied from a peer", handle: intent.handle });
-          return ALLOW_DECISION;
+          return { done: ALLOW_DECISION };
         }
         // Not an edit: the server already holds this value for the field. Sending it
         // again (a textarea's blur `change` repeats the last `input`) would only
         // restart a lower rank's hold on the other side.
         if (acceptedField.get(intent.handle) === stableJson(intent.value)) {
           trace("send skipped", { why: "unchanged: the server already holds this value", handle: intent.handle });
-          return ALLOW_DECISION;
+          return { done: ALLOW_DECISION };
         }
       }
 
@@ -689,12 +718,13 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         if (reason) {
           if (intent.kind === "field" && view === self) {
             activeFields.set(self, intent.handle);
-            if (presenceRouting === "server") await sendPresence({ kind: "activity", handle: intent.handle, active: true });
-            else await send({ t: "activity", view: self, handle: intent.handle, active: true });
+            // Sent outside the state queue (presence goes over the network).
+            if (presenceRouting === "server") void sendSerial(() => sendPresence({ kind: "activity", handle: intent.handle, active: true }));
+            else void send({ t: "activity", view: self, handle: intent.handle, active: true });
             changed();
           }
           trace("refused at the sender", { kind: intent.kind, reason });
-          return local(reason);
+          return { done: local(reason) };
         }
       }
 
@@ -709,34 +739,49 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         const { reason, status } = result.decision;
         trace("refused at the sender", { kind: intent.kind, reason, status, blockedUntil: (result.decision as { blockedUntil?: number }).blockedUntil ?? null });
         report({ reason, status, from: self, kind: intent.kind, stage: "sender" });
-        return result.decision;
+        return { done: result.decision };
       }
+      return { envelope, view, isView, result };
+  };
+
+  /** One send, run in the SEND queue. Callers go through {@link sendIntent}. */
+  const runSend = async (intent: Intent, sendOptions: SendOptions = {}, internal = false): Promise<Decision> => {
+      const prepared = await serial(() => prepareSend(intent, sendOptions, internal), `judge own ${intent.kind}`);
+      if ("done" in prepared) return prepared.done;
+      const { view, isView } = prepared;
+      let envelope = prepared.envelope;
       trace("posted", { kind: intent.kind, view, revision: envelope.revision, ...(intent.kind === "field" ? { handle: intent.handle } : {}) });
       let sent = await send({ t: "intent", envelope, intent });
       trace("result", { allow: sent.allow, reason: sent.allow ? null : sent.reason, status: sent.allow ? null : sent.status });
-      let committed = result;
       // Stale on this page's OWN view: the server committed a revision of it this browser
       // missed (a lost answer, a relay it never heard). The report describes the page as
       // it is now, so only the counter is behind: re-sync, take the server's revision and
       // send it again, once. A drive into another view is never retried: that page moved.
       if (!sent.allow && sent.reason === REASONS.stale && view === self && isView && transport.sync) {
-        await resyncNow();
-        const rebased: Envelope = { ...envelope, id: newId(), revision: state.participants[self]?.revision ?? 0 };
-        const again = await evaluateIntent(host(), state, { from: self, envelope: rebased, intent, now: now() });
-        if (!again.decision.allow) {
-          report({ reason: again.decision.reason, status: again.decision.status, from: self, kind: intent.kind, stage: "sender" });
-          return again.decision;
+        await resyncOutside();
+        const again = await serial(async () => {
+          const rebased: Envelope = { ...envelope, id: newId(), revision: state.participants[self]?.revision ?? 0 };
+          return { rebased, result: await evaluateIntent(host(), state, { from: self, envelope: rebased, intent, now: now() }) };
+        }, `judge own ${intent.kind} again`);
+        if (!again.result.decision.allow) {
+          report({ reason: again.result.decision.reason, status: again.result.decision.status, from: self, kind: intent.kind, stage: "sender" });
+          return again.result.decision;
         }
-        sent = await send({ t: "intent", envelope: rebased, intent });
-        committed = again;
+        envelope = again.rebased;
+        sent = await send({ t: "intent", envelope, intent });
       }
       if (!sent.allow) {
         report({ reason: sent.reason, status: sent.status, from: self, kind: intent.kind, stage: "sender" });
         return sent;
       }
-      commit(committed);
-      if (intent.kind === "field" && view === self) acceptedField.set(intent.handle, stableJson(intent.value));
-      return committed.decision;
+      // The server accepted it: commit on the state as it is NOW (frames received while it
+      // was in flight are already in it), with the trusted host, as a relayed intent is.
+      return serial(async () => {
+        const result = await evaluateIntent(trustedHost(), state, { from: self, envelope, intent, now: now() });
+        if (result.decision.allow) commit(result);
+        if (intent.kind === "field" && view === self) acceptedField.set(intent.handle, stableJson(intent.value));
+        return prepared.result.decision;
+      }, `commit own ${intent.kind}`);
   };
 
   // Coalescing (approved lab test 87, run 762): on a slow server every keystroke was
@@ -784,7 +829,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
 
   const sendIntent = (intent: Intent, sendOptions: SendOptions = {}, internal = false): Promise<Decision> => {
     const key = coalesceKey(intent, sendOptions);
-    if (key === null) return serial(() => runSend(intent, sendOptions, internal));
+    if (key === null) return sendSerial(() => runSend(intent, sendOptions, internal));
     const waiting = queuedSends.get(key);
     if (waiting) {
       waiting.intent = intent;
@@ -794,7 +839,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     }
     const entry = { intent, options: sendOptions, internal, done: Promise.resolve<Decision>(ALLOW_DECISION) };
     queuedSends.set(key, entry);
-    entry.done = serial(async () => {
+    entry.done = sendSerial(async () => {
       if (queuedSends.get(key) === entry) queuedSends.delete(key);
       const decision = await runSend(entry.intent, entry.options, entry.internal);
       afterSend(entry.intent, entry.options, decision);
@@ -890,7 +935,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     if (failure) report({ reason: failure, status: 403, from, kind: intent.kind, stage: "apply" });
   };
 
-  const receiveIntent = async (from: Ref, frame: Extract<CoworkFrame, { t: "intent" }>) => {
+  const receiveIntent = async (from: Ref, frame: Extract<CoworkFrame, { t: "intent" }>, arrivedAt: number = now()) => {
     const envelope: Envelope = { ...frame.envelope, from };
     const intent = frame.intent;
     // Server routing: the server identified the sender and already ran the whole
@@ -900,7 +945,8 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     // banner work) and keep only the page-side guards in applyToPage. Direct routing
     // has no server in between and keeps the full receiver pipeline.
     const evaluator = transport.routing === "server" ? trustedHost() : host();
-    const result = await evaluateIntent(evaluator, state, { from, envelope, intent, now: now() });
+    // Committed at its ARRIVAL time: the hold it starts runs idleMs from when it came in.
+    const result = await evaluateIntent(evaluator, state, { from, envelope, intent, now: arrivedAt });
     if (!result.decision.allow) {
       trace("refused at the receiver", { from, kind: (intent as { kind?: unknown }).kind, reason: result.decision.reason });
       report({ reason: result.decision.reason, status: result.decision.status, from, kind: String((intent as { kind?: unknown }).kind), stage: "receiver" });
@@ -1091,9 +1137,31 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       warnReceive("destroyed", `A frame from ${message.from} reached a co-work session that was already destroyed (session #${instance}): its transport kept delivering to it. A page that replaced its session must give the new one a transport the old one no longer holds.`);
       return Promise.resolve();
     }
-    trace("queued", { waiting: queued });
+    // The hold starts when a higher rank's frame ARRIVES, not when it is dequeued: a
+    // person must not type into a field someone above them is writing in meanwhile.
+    const arrivedAt = now();
+    const arrival = holdOnArrival(message, arrivedAt);
+    trace("queued", { waiting: queued, ahead: [...pendingSteps] });
     return serial(async () => {
-      trace("dequeued", { from: message.from });
+      trace("dequeued", { from: message.from, waitedMs: now() - arrivedAt });
+      try {
+        await receiveNow(message, arrivedAt);
+      } finally {
+        if (arrival !== null) arrivals.delete(arrival);
+      }
+    }, `receive ${(message.frame as { intent?: { kind?: unknown } })?.intent?.kind ?? (message.frame as { t?: unknown })?.t ?? "frame"} from ${message.from}`);
+  };
+  /** A server-relayed view intent from a peer: counted as an act from the moment it arrives. */
+  const holdOnArrival = (message: ReceivedFrame, at: number): object | null => {
+    if (transport.routing !== "server" || message.from === self) return null;
+    const frame = message.frame as { t?: unknown; envelope?: { view?: unknown }; intent?: { kind?: unknown } };
+    if (frame?.t !== "intent" || typeof frame.intent?.kind !== "string" || !VIEW_KINDS.has(frame.intent.kind)) return null;
+    const key = {};
+    arrivals.set(key, { from: message.from, view: typeof frame.envelope?.view === "string" ? frame.envelope.view : undefined, at });
+    changed();
+    return key;
+  };
+  const receiveNow = async (message: ReceivedFrame, arrivedAt: number, learned = false): Promise<void> => {
       if (destroyed) return;
       const from = message.from;
       const frame = readFrame(message.frame);
@@ -1104,21 +1172,24 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       if (from === self) return;
       if (!state.participants[from]) {
         // A server-relayed intent from a peer this browser has not heard of (a missed
-        // presence event): the server vouched for it, so learn the peer and re-sync.
+        // presence event): the server vouched for it. Learn where it is (the re-sync GET
+        // runs OUTSIDE the queue), then take this one frame again, at its arrival time.
         if (transport.routing !== "server" || frame.t !== "intent" || !isValidRef(from)) return;
-        const next = structuredClone(state);
-        next.participants[from] = { ref: from, route: "/", revision: 0, follows: null, joinedAt: now() };
-        state = next;
-        await resyncNow();
-        if (!state.participants[from]) {
+        if (learned) {
           warnReceive(`unknown|${from}`, `An intent from ${from} was dropped: the server's re-sync does not list ${from} in this session.`);
           return;
         }
+        trace("learning an unknown sender first", { from });
+        void resyncOutside().then(() => {
+          if (destroyed) return;
+          void serial(() => receiveNow(message, arrivedAt, true), `receive (after learning) from ${from}`);
+        });
+        return;
       }
       lastSeen.set(from, now());
       switch (frame.t) {
         case "intent":
-          await receiveIntent(from, frame);
+          await receiveIntent(from, frame, arrivedAt);
           return;
         case "cursor":
           cursors.set(from, {
@@ -1159,7 +1230,6 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
           return;
         }
       }
-    });
   };
 
   const onPresence = (event: PresenceEvent) =>
@@ -1210,7 +1280,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       } else if (event.type === "joining") add(event.peer);
       else await drop(event.peer.ref);
       // The server knows routes, revisions and follows a presence event does not carry.
-      if (event.type !== "leaving") await resyncNow();
+      if (event.type !== "leaving") void resyncOutside();
       changed();
     });
 
@@ -1286,13 +1356,16 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     }
   }
 
-  /** Re-sync inside the current serial task. */
-  async function resyncNow(): Promise<void> {
+  /** Re-sync: the GET outside the state queue, the merge inside it. Never await it from a queued step. */
+  async function resyncOutside(): Promise<void> {
     if (!transport.sync || destroyed) return;
     const sync = await transport.sync();
     if (!sync || destroyed) return;
-    await mergeSync(sync);
-    changed();
+    await serial(async () => {
+      if (destroyed) return;
+      await mergeSync(sync);
+      changed();
+    }, "merge re-sync");
   }
 
   // A transport built for someone else drops every intent from that person as "own".
@@ -1304,7 +1377,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const offPresence = transport.onPresence((event) => void onPresence(event));
   // At start, not only on an acknowledgement: laravel-echo never repeats a `here` that
   // fired before this transport attached (the channel is usually joined first).
-  void serial(resyncNow);
+  void resyncOutside();
   const heartbeatTimer = transport.heartbeat
     ? setInterval(() => { if (!destroyed) void transport.heartbeat!(); }, Math.max(1000, options.heartbeatMs ?? 30_000))
     : undefined;
@@ -1329,7 +1402,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       // A job that finds a newer position already sent does nothing, so a slow send
       // never queues stale positions behind it.
       queuedCursor = { route, ...cursor };
-      void serial(async () => {
+      void sendSerial(async () => {
         const latest = queuedCursor;
         queuedCursor = null;
         if (latest) await sendPresence({ kind: "cursor", ...latest });
@@ -1346,7 +1419,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   // broadcaster on the server, a full worker pool) held every receive behind it, so a
   // page received frames and applied none (a consumer, 0.65.1). Judged in the queue,
   // sent outside it, then judged again on the state as it is by then and committed.
-  const follow = async (target: Ref | null): Promise<Decision> => {
+  const follow = (target: Ref | null): Promise<Decision> => sendSerial(async () => {
     const first = await serial(async () => {
       const result = await evaluateFollow(host(), state, { from: self, target, now: now() });
       if (!result.decision.allow) {
@@ -1365,8 +1438,8 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       const result = await evaluateFollow(host(), state, { from: self, target, now: now() });
       if (result.decision.allow) commit(result);
       return result.decision;
-    });
-  };
+    }, "commit own follow");
+  });
 
   const session: CoworkSession = {
     getSnapshot() {
@@ -1427,11 +1500,20 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     const extra = typeof blockOption === "object" ? blockOption : {};
     const target = blockTarget();
     if (target) {
+      let lastBlockedTrace = 0;
       blocker = createInputBlocker({
         target,
         isBlocked: isBlockedNow,
         ...(extra.isUserEvent ? { isUserEvent: extra.isUserEvent } : {}),
-        ...(extra.onBlocked ? { onBlocked: extra.onBlocked } : {}),
+        onBlocked: (event) => {
+          // Swallowed on purpose: a held person's keys never land (the banner says why),
+          // and are not reported later either. Traced, so a trace shows where typing went.
+          if (now() - lastBlockedTrace > 500) {
+            lastBlockedTrace = now();
+            trace("input blocked while held", { type: event.type, by: session.getSnapshot().blocked?.by ?? null });
+          }
+          extra.onBlocked?.(event);
+        },
       });
     }
   }

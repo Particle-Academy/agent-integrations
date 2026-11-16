@@ -68,7 +68,8 @@ describe("transport deadlines", () => {
 
 describe("a session step that waits too long", () => {
   it("is warned once, so a stuck queue is never silent", async () => {
-    // A transport of the host's own whose re-sync never settles.
+    // The only host code left IN the state queue is the engine's host callbacks (a
+    // re-sync GET or a POST no longer runs in it): an `authorize` that never settles.
     const transport: PeerTransport = {
       routing: "server",
       send: async () => ({ allow: true }) as never,
@@ -77,7 +78,7 @@ describe("a session step that waits too long", () => {
     };
     const s = createCoworkSession({
       sessionId: "s", self: { ref: "a" }, transport,
-      config: { consent: "notify", control: { mode: "free" } }, authorize: () => true,
+      config: { consent: "notify", control: { mode: "free" } }, authorize: () => new Promise<boolean>(() => {}),
       root: document.getElementById("root")!, presenceRouting: "server",
     });
     sessions.push(s);
