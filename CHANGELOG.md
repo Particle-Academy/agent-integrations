@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.65.6] - 2026-11-16
+
 ### Fixed
 
 - **A held person's own visit report waits quietly.** On joining, a page's automatic
