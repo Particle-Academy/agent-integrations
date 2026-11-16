@@ -146,6 +146,10 @@ export type CoworkSessionOptions = {
   isDestructive?: (handle: string) => boolean;
   onAppMessage?: (message: CoworkAppMessage) => void;
   onRefused?: (refusal: CoworkRefusal) => void;
+  /** Warn when one queued step has waited this long (default 10000 ms). */
+  stuckAfterMs?: number;
+  /** The most an adapter call may take before it counts as failed (default 10000 ms). */
+  adapterTimeoutMs?: number;
   now?: () => number;
   idleAfterMs?: number;
   /**
@@ -282,8 +286,25 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   // (host callbacks may be), so without it two frames could each be judged
   // against the same stale state.
   let queue: Promise<unknown> = Promise.resolve();
+  // A step that never finishes holds every receive and send queued after it. It cannot be
+  // cancelled from here, but it must never be silent.
+  const stuckAfterMs = Math.max(1, options.stuckAfterMs ?? 10_000);
+  let queued = 0;
+  const timed = <T>(work: () => Promise<T>) => async (): Promise<T> => {
+    const timer = setTimeout(() => {
+      warnReceive("stuck", `A co-work step has been waiting over ${Math.round(stuckAfterMs / 1000)} s and ${Math.max(0, queued - 1)} queued after it (frames received, intents to send) wait too: a host call it awaits (the transport's fetch, an adapter method) is not settling.`);
+    }, stuckAfterMs);
+    try {
+      return await work();
+    } finally {
+      clearTimeout(timer);
+      queued -= 1;
+    }
+  };
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
-    const run = queue.then(work, work);
+    queued += 1;
+    const step = timed(work);
+    const run = queue.then(step, step);
     queue = run.catch(() => undefined);
     return run;
   };
@@ -740,6 +761,17 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   // Receiving
   // -------------------------------------------------------------------------
 
+  /** An adapter call that never settles must not hold the queue. */
+  const TIMED_OUT = { ok: false, timedOut: true } as const;
+  const adapterTimeoutMs = Math.max(1, options.adapterTimeoutMs ?? 10_000);
+  const adapterDeadline = <T, F>(act: () => MaybePromise<T>, onTimeout: F): Promise<T | F> =>
+    new Promise<T | F>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(onTimeout), adapterTimeoutMs);
+      Promise.resolve().then(act).then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error) => { clearTimeout(timer); reject(error); },
+      );
+    });
   const guardThenApply = async (intent: Intent, act: () => MaybePromise<unknown>): Promise<string | null> => {
     const adapter = options.adapter;
     if (!adapter) return null;
@@ -747,12 +779,13 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     const handle = "handle" in intent ? intent.handle : intent.kind === "scroll" ? intent.anchor : undefined;
     if (action && handle !== undefined && adapter.guard) {
       let verdict: unknown;
-      try { verdict = await adapter.guard(action, handle); } catch { verdict = null; }
+      try { verdict = await adapterDeadline(() => adapter.guard!(action, handle), null); } catch { verdict = null; }
       // A fence that cannot answer is closed.
       if (!verdict || typeof verdict !== "object" || (verdict as { ok?: unknown }).ok !== true) return "cowork.denied.guard";
     }
     try {
-      const result = (await act()) as { ok?: unknown } | undefined;
+      const result = (await adapterDeadline(act, TIMED_OUT)) as { ok?: unknown } | undefined;
+      if (result === TIMED_OUT) return "cowork.apply.timeout";
       if (result && typeof result === "object" && "ok" in result && result.ok === false) return "cowork.apply.failed";
     } catch {
       return "cowork.apply.failed";
@@ -766,7 +799,11 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
    */
   const applyToPage = async (from: Ref, intent: Intent): Promise<void> => {
     const adapter = options.adapter;
-    if (!adapter) return;
+    if (!adapter) {
+      const what = "handle" in intent ? `${intent.kind} on "${intent.handle}"` : intent.kind;
+      warnReceive("no-adapter", `${from}'s ${what} was not applied here: this session has no adapter. Pass one (createDomNavigationAgent, or your own) to createCoworkSession / useCoworkSession.`);
+      return;
+    }
     const dom = domRefusal(intent);
     if (dom) {
       report({ reason: dom, status: 403, from, kind: intent.kind, stage: "apply" });
@@ -785,6 +822,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         break;
       case "field":
         failure = await guardThenApply(intent, () => adapter.setField(intent.handle, intent.value));
+        if (!failure) verifyApplied(from, intent);
         break;
       case "focus":
         failure = await guardThenApply(intent, () => (adapter.focus ? adapter.focus(intent.handle) : adapter.scrollTo({ handle: intent.handle })));
@@ -861,6 +899,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       // A person who is held cannot type, so there is nothing of theirs to protect.
       if (isFocused(intent.handle) && !isBlockedNow()) {
         waitingShared.set(intent.handle, { from, intent });
+        warnReceive(`waiting|${intent.handle}`, `${from}'s value for "${intent.handle}" is waiting until this person leaves the field: they are in it and nobody holds them (a ranked hold applies it at once).`);
         return;
       }
       await applyShared(from, intent);
@@ -897,6 +936,32 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     return !!el && el.ownerDocument?.activeElement === el;
   };
   /** Apply through the same DOM masking and guard as a drive; remember it so its echo is not re-sent. */
+  /**
+   * After the adapter reported a field applied, check the page actually shows it, a
+   * moment later (a React-controlled field updates on its next render). An adapter that
+   * sets `.value` on a contentEditable reports ok and changes nothing; say so, once.
+   */
+  const lastApplied = new Map<string, string>();
+  function verifyApplied(from: Ref, intent: Extract<Intent, { kind: "field" }>): void {
+    if (typeof intent.value !== "string" && typeof intent.value !== "boolean") return;
+    const key = stableJson(intent.value);
+    lastApplied.set(intent.handle, key);
+    setTimeout(() => {
+      if (destroyed || lastApplied.get(intent.handle) !== key) return; // a newer value since
+      const el = elementFor(intent.handle);
+      if (!el) return;
+      const tag = el.tagName.toUpperCase();
+      const input = el as HTMLInputElement;
+      const editable = (el as HTMLElement).isContentEditable || el.getAttribute("contenteditable") === "true" || el.getAttribute("contenteditable") === "";
+      const shown: unknown = tag === "INPUT" && (input.type === "checkbox" || input.type === "radio") ? input.checked
+        : tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ? (el as HTMLInputElement).value
+        : editable ? (el.textContent ?? "") : undefined;
+      if (shown === undefined || stableJson(shown) === key) return;
+      const kind = editable ? "contenteditable" : tag.toLowerCase();
+      warnReceive(`unchanged|${intent.handle}`, `${from}'s value for "${intent.handle}" was reported applied by the adapter, but the field did not change (it is a ${kind}${editable ? ": write its text, not .value; createDomNavigationAgent's setField does" : ""}).`);
+    }, 300);
+  }
+
   async function applyShared(from: Ref, intent: Extract<Intent, { kind: "field" }>): Promise<void> {
     appliedShared.set(intent.handle, stableJson(intent.value));
     acceptedField.set(intent.handle, stableJson(intent.value));
@@ -1172,18 +1237,31 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   // The public surface
   // -------------------------------------------------------------------------
 
-  const follow = (target: Ref | null): Promise<Decision> =>
-    serial(async () => {
+  // The follow's network call runs OUTSIDE the queue: a /follow POST that hangs (a slow
+  // broadcaster on the server, a full worker pool) held every receive behind it, so a
+  // page received frames and applied none (a consumer, 0.65.1). Judged in the queue,
+  // sent outside it, then judged again on the state as it is by then and committed.
+  const follow = async (target: Ref | null): Promise<Decision> => {
+    const first = await serial(async () => {
       const result = await evaluateFollow(host(), state, { from: self, target, now: now() });
       if (!result.decision.allow) {
         report({ reason: result.decision.reason, status: result.decision.status, from: self, kind: "follow", stage: "sender" });
-        return result.decision;
       }
-      const sent = await send({ t: "follow", target });
-      if (!sent.allow) return sent;
-      commit(result);
       return result.decision;
     });
+    if (!first.allow) return first;
+    const sent = await send({ t: "follow", target });
+    if (!sent.allow) {
+      report({ reason: sent.reason, status: sent.status, from: self, kind: "follow", stage: "sender" });
+      return sent;
+    }
+    return serial(async () => {
+      if (destroyed) return sent;
+      const result = await evaluateFollow(host(), state, { from: self, target, now: now() });
+      if (result.decision.allow) commit(result);
+      return result.decision;
+    });
+  };
 
   const session: CoworkSession = {
     getSnapshot() {

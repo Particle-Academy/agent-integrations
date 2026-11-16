@@ -112,6 +112,25 @@ export interface PresenceChannelLike {
 const ALLOW: Decision = { allow: true };
 const CLOSED: Decision = { allow: false, reason: "cowork.transport.closed", status: 0 };
 const FAILED: Decision = { allow: false, reason: "cowork.transport.failed", status: 0 };
+const TIMEOUT: Decision = { allow: false, reason: "cowork.transport.timeout", status: 0 };
+
+/**
+ * Settle within `ms`, whatever `work` does: a request that never answers would otherwise
+ * hold the session's one queue, and everything received after it, forever.
+ */
+function withDeadline<T>(work: (signal: AbortSignal | undefined) => Promise<T>, ms: number, onTimeout: () => T): Promise<T> {
+  const controller = typeof AbortController === "undefined" ? undefined : new AbortController();
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      controller?.abort();
+      resolve(onTimeout());
+    }, ms);
+    work(controller?.signal).then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -427,6 +446,11 @@ type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export type ServerTransportOptions = {
   sessionId: string;
+  /**
+   * The most any request to the server may take before it counts as failed
+   * (`cowork.transport.timeout`). Default 10000 ms.
+   */
+  requestTimeoutMs?: number;
   /** Prefix in front of `/cowork/sessions/...`. Default "" (same origin). */
   endpoint?: string;
   /**
@@ -508,14 +532,21 @@ export function createServerTransport(options: ServerTransportOptions): PeerTran
   };
   options.channel.listen?.(".cowork.intent", onRelayed);
 
-  const post = async (path: string, body: Record<string, unknown>): Promise<Decision> => {
+  const requestTimeoutMs = Math.max(1, options.requestTimeoutMs ?? 10_000);
+  const post = (path: string, body: Record<string, unknown>): Promise<Decision> =>
+    withDeadline((signal) => postNow(path, body, signal), requestTimeoutMs, () => {
+      drop(`timeout|${path}`, `POST ${base}${path} did not answer within ${requestTimeoutMs} ms; it counts as failed (cowork.transport.timeout). Check the fetch passed to createServerTransport settles.`);
+      return TIMEOUT;
+    }).catch(() => FAILED);
+  const postNow = async (path: string, body: Record<string, unknown>, signal: AbortSignal | undefined): Promise<Decision> => {
     let response: Response;
     try {
       response = await options.fetch(`${base}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(body),
-      });
+        ...(signal ? { signal } : {}),
+      } as never);
     } catch {
       return FAILED;
     }
@@ -558,13 +589,18 @@ export function createServerTransport(options: ServerTransportOptions): PeerTran
     onPresence: (listener) => pipe.onPresence(listener),
     async sync() {
       if (!pipe.isOpen()) return null;
-      try {
-        const response = await options.fetch(base, { method: "GET", headers: { Accept: "application/json" } });
-        if (!response.ok) return null;
-        return readSync(await response.json());
-      } catch {
+      return withDeadline(async (signal) => {
+        try {
+          const response = await options.fetch(base, { method: "GET", headers: { Accept: "application/json" }, ...(signal ? { signal } : {}) } as never);
+          if (!response.ok) return null;
+          return readSync(await response.json());
+        } catch {
+          return null;
+        }
+      }, requestTimeoutMs, () => {
+        drop("timeout|sync", `The re-sync (GET ${base}) did not answer within ${requestTimeoutMs} ms; the session carries on without it. Check the fetch passed to createServerTransport settles.`);
         return null;
-      }
+      });
     },
     heartbeat: () => {
       if (!pipe.isOpen()) return Promise.resolve(CLOSED);

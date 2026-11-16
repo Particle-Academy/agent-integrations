@@ -11,9 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.65.2] - 2026-11-15
+## [0.65.2] - 2026-11-16
 
 ### Fixed
+
+- **A hanging request can no longer stop a page applying anything.** A consumer's
+  subject page received the admin's intents on its transport and never applied or held
+  one, with nothing on the console: its `POST /follow` never answered (a synchronous
+  broadcaster behind a rate-limited socket server, fixed server-side in fancy-cowork
+  0.4.2), and `follow()` waited for it INSIDE the session's one queue, so every receive
+  behind it waited too. Now:
+  - `follow()` sends outside the queue (judged before, committed after on the state as it
+    is then), so receives never wait on that call;
+  - every server-transport request has a deadline (`requestTimeoutMs`, default 10000):
+    one that never answers counts as `cowork.transport.timeout`, warned once;
+  - every adapter call has one too (`adapterTimeoutMs`, default 10000):
+    `cowork.apply.timeout`, warned;
+  - a queued step that has waited over `stuckAfterMs` (default 10000) is warned once,
+    so a stuck queue is never silent again.
+- **Three more silent apply paths warn once:** a session with no adapter cannot apply a
+  peer's field; an adapter whose `setField` reports ok but leaves the field unchanged (it
+  set `.value` on a contentEditable; createDomNavigationAgent's `setField` writes the
+  text); and a peer's value that waits for the person to leave the field.
 
 - **A presence list that lacks this page's own person is warned.** Under "View As" (two
   people, one Laravel account), Laravel's `/broadcasting/auth` keys a presence member by
