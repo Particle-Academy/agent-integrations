@@ -721,11 +721,24 @@ export type DomNavigationAgent = {
   call(method: DomNavigationMethod, args?: unknown[]): unknown;
 };
 
+/** Whether the browser lays this element out (display:none and detached ones have no boxes). */
+export function isRendered(el: Element): boolean {
+  const rects = (el as Element & { getClientRects?: () => { length: number } }).getClientRects?.();
+  return !!rects && rects.length > 0;
+}
+
+/**
+ * The element a handle names. Several can carry one (a page that keeps a hidden textarea
+ * variant of a contentEditable composer): the RENDERED one wins, else the first, so a value
+ * is never written into a hidden copy while the visible field stays empty.
+ */
+export function pickHandled(candidates: Element[]): Element | null {
+  if (candidates.length <= 1) return candidates[0] ?? null;
+  return candidates.find(isRendered) ?? candidates[0]!;
+}
+
 function findByAttribute(doc: Document, attr: string, value: string): Element | null {
-  for (const el of Array.from(doc.querySelectorAll(`[${attr}]`))) {
-    if (el.getAttribute(attr) === value) return el;
-  }
-  return null;
+  return pickHandled(Array.from(doc.querySelectorAll(`[${attr}]`)).filter((el) => el.getAttribute(attr) === value));
 }
 
 const num = (v: unknown) => (typeof v === "number" ? v : undefined);
@@ -735,6 +748,10 @@ export function createDomNavigationAgent(options: DomNavigationAgentOptions = {}
   const doc = () => options.document ?? document;
   const win = () => (doc().defaultView ?? window) as Window;
   const before = (action: "setField" | "click" | "submit") => options.beforeAction?.(action);
+  const findRendered = (handle: string): Element | null => {
+    const el = findByAttribute(doc(), "data-co-handle", handle);
+    return el && isRendered(el) ? el : null;
+  };
   const fence = makeFence(options);
 
   /**
@@ -753,7 +770,8 @@ export function createDomNavigationAgent(options: DomNavigationAgentOptions = {}
 
   const resolve = (handle: string): Element | null => {
     const hit = registry.get(handle);
-    if (hit && hit.isConnected) return hit;
+    // A described element, unless it is hidden and a rendered one now carries the handle.
+    if (hit && hit.isConnected && (isRendered(hit) || !findRendered(handle))) return hit;
     // Fallback: a real attribute handle the agent may use before describe().
     const d = doc();
     return (

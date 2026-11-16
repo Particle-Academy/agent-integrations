@@ -11,7 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.65.3] - 2026-11-16
+### Changed
+
+- **`debug` traces are one self-contained string per line**, primitives only
+  (`[cowork#2] apply decision from="user:1" handle="composer" ... element="DIV[contenteditable]"
+  handlesMatching=1 adapter="yes"`), so a console capture that keeps only the message text,
+  or a collapsed object preview, loses nothing. New steps:
+  - apply: `applied` / `not applied` with the element, the failure and the value read
+    back; `apply deferred` (the person is in the field and not held); `reverted by the
+    page`;
+  - send: `send` (kind, handle, value), every reason a report is skipped (the echo of a
+    followed visit or scroll, already on that route, the echo of a value just applied,
+    unchanged), `refused at the sender` (with `blockedUntil`), `posted` and `result`;
+  - `hold` now prints `msLeft`.
+
+### Fixed
+
+- **A field the page changes back right after we write it is warned.** For 3 s after a
+  peer's value is written, the field is watched; if something on the page puts other
+  text back (a React render from state that never saw the write), the console says so
+  once, with what the field changed to, instead of the value vanishing silently.
+- **When several elements carry one handle, the rendered one is used** (by
+  `createDomNavigationAgent` and the session), not the first in the document, and the
+  duplicate is warned once. A hidden copy of a field no longer swallows a peer's value.
+
 
 ### Added
 

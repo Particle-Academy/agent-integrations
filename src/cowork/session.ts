@@ -26,7 +26,7 @@
  * `authorize` or no `config` everything is refused.
  */
 import type { NavigationBridgeAdapter, NavigationGuardAction } from "../bridges/navigation";
-import { attributeHandle, isSensitive } from "../dom-navigation/agent";
+import { attributeHandle, isRendered, isSensitive, pickHandled } from "../dom-navigation/agent";
 import {
   createSessionState,
   evaluateFollow,
@@ -295,9 +295,24 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   // (host callbacks may be), so without it two frames could each be judged
   // against the same stale state.
   const instance = ++sessionInstances;
-  const trace = (step: string, data?: unknown): void => {
+  // One self-contained STRING per line, primitive values only: a console capture that
+  // keeps only the message text (or a collapsed object preview) still has all of it.
+  const flat = (v: unknown): string => {
+    if (v === null || v === undefined) return String(v);
+    if (typeof v === "string") return JSON.stringify(v.length > 80 ? `${v.slice(0, 80)}...` : v);
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    try { return JSON.stringify(v); } catch { return "[unserializable]"; }
+  };
+  const trace = (step: string, data?: Record<string, unknown> | null): void => {
     if (!options.debug || typeof console === "undefined") return;
-    console.log(`[cowork#${instance}] ${step}`, data === undefined ? "" : data);
+    const fields = data && typeof data === "object" ? Object.entries(data).map(([k, v]) => `${k}=${flat(v)}`).join(" ") : data === null ? "null" : "";
+    console.log(`[cowork#${instance}] ${step}${fields ? ` ${fields}` : ""}`);
+  };
+  /** A short, stable description of an element for traces: TAG#id[contenteditable](hidden). */
+  const describeEl = (el: Element | null): string => {
+    if (!el) return "none";
+    const editable = (el as HTMLElement).isContentEditable || el.getAttribute("contenteditable") === "true" || el.getAttribute("contenteditable") === "";
+    return `${el.tagName}${el.id ? `#${el.id}` : ""}${editable ? "[contenteditable]" : ""}${isRendered(el) ? "" : "(not rendered)"}`;
   };
   let queue: Promise<unknown> = Promise.resolve();
   // A step that never finishes holds every receive and send queued after it. It cannot be
@@ -526,10 +541,11 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const elementFor = (handle: string): Element | null => {
     const scope = root();
     if (!scope) return null;
-    for (const el of Array.from(scope.querySelectorAll("[data-co-handle], [name], [id]"))) {
-      if (attributeHandle(el) === handle) return el;
+    const matches = Array.from(scope.querySelectorAll("[data-co-handle], [name], [id]")).filter((el) => attributeHandle(el) === handle);
+    if (matches.length > 1) {
+      warnReceive(`duplicate|${handle}`, `${matches.length} elements carry the handle "${handle}" (${matches.map((el) => el.tagName.toLowerCase()).join(", ")}): the rendered one is used. Give each field its own handle, or keep only the one on screen in the DOM.`);
     }
-    return null;
+    return pickHandled(matches);
   };
 
   const withinSensitive = (el: Element): boolean => {
@@ -620,16 +636,22 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const runSend = async (intent: Intent, sendOptions: SendOptions = {}, internal = false): Promise<Decision> => {
       const isView = VIEW_KINDS.has(intent.kind);
       const view = sendOptions.view ?? (isView || intent.kind === "control" ? self : undefined);
+      trace("send", { kind: intent.kind, view, ...(intent.kind === "field" ? { handle: intent.handle, value: typeof intent.value === "string" ? intent.value : stableJson(intent.value) } : {}), internal });
       // The host reporting what following just did to this page: allowed, not sent.
       if (!internal && view === self && now() < followEcho.visitUntil && intent.kind === "visit" && routeOf(intent.url) === followEcho.route) {
+        trace("send skipped", { why: "the echo of a followed visit" });
         return ALLOW_DECISION;
       }
-      if (!internal && view === self && now() < followEcho.scrollUntil && intent.kind === "scroll") return ALLOW_DECISION;
+      if (!internal && view === self && now() < followEcho.scrollUntil && intent.kind === "scroll") {
+        trace("send skipped", { why: "the echo of a followed scroll" });
+        return ALLOW_DECISION;
+      }
       // Not a navigation: this page is already on that route (a query or hash change, or
       // the same URL reported again). Sending it would bump the revision, and a host that
       // reports from an effect keyed on the snapshot would then report again, forever:
       // a visit storm that starves every field report queued behind it (MOIC, 0.64.0).
       if (intent.kind === "visit" && view === self && sendOptions.to === undefined && routeOf(intent.url) === state.participants[self]?.route) {
+        trace("send skipped", { why: "already on that route" });
         return ALLOW_DECISION;
       }
       const local = (reason: string, status = 403): Decision => {
@@ -646,11 +668,17 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         waitingShared.delete(intent.handle);
         const applied = appliedShared.get(intent.handle);
         appliedShared.delete(intent.handle);
-        if (applied !== undefined && applied === stableJson(intent.value)) return ALLOW_DECISION;
+        if (applied !== undefined && applied === stableJson(intent.value)) {
+          trace("send skipped", { why: "the echo of a value just applied from a peer", handle: intent.handle });
+          return ALLOW_DECISION;
+        }
         // Not an edit: the server already holds this value for the field. Sending it
         // again (a textarea's blur `change` repeats the last `input`) would only
         // restart a lower rank's hold on the other side.
-        if (acceptedField.get(intent.handle) === stableJson(intent.value)) return ALLOW_DECISION;
+        if (acceptedField.get(intent.handle) === stableJson(intent.value)) {
+          trace("send skipped", { why: "unchanged: the server already holds this value", handle: intent.handle });
+          return ALLOW_DECISION;
+        }
       }
 
       // Masking happens HERE, before the pipeline and before the wire: a masked
@@ -665,6 +693,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
             else await send({ t: "activity", view: self, handle: intent.handle, active: true });
             changed();
           }
+          trace("refused at the sender", { kind: intent.kind, reason });
           return local(reason);
         }
       }
@@ -678,10 +707,13 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       const result = await evaluateIntent(host(), state, { from: self, envelope, intent, now: now() });
       if (!result.decision.allow) {
         const { reason, status } = result.decision;
+        trace("refused at the sender", { kind: intent.kind, reason, status, blockedUntil: (result.decision as { blockedUntil?: number }).blockedUntil ?? null });
         report({ reason, status, from: self, kind: intent.kind, stage: "sender" });
         return result.decision;
       }
+      trace("posted", { kind: intent.kind, view, revision: envelope.revision, ...(intent.kind === "field" ? { handle: intent.handle } : {}) });
       let sent = await send({ t: "intent", envelope, intent });
+      trace("result", { allow: sent.allow, reason: sent.allow ? null : sent.reason, status: sent.allow ? null : sent.status });
       let committed = result;
       // Stale on this page's OWN view: the server committed a revision of it this browser
       // missed (a lost answer, a relay it never heard). The report describes the page as
@@ -814,12 +846,14 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const applyToPage = async (from: Ref, intent: Intent): Promise<void> => {
     const adapter = options.adapter;
     if (!adapter) {
+      trace("not applied", { why: "no adapter", kind: intent.kind });
       const what = "handle" in intent ? `${intent.kind} on "${intent.handle}"` : intent.kind;
       warnReceive("no-adapter", `${from}'s ${what} was not applied here: this session has no adapter. Pass one (createDomNavigationAgent, or your own) to createCoworkSession / useCoworkSession.`);
       return;
     }
     const dom = domRefusal(intent);
     if (dom) {
+      trace("not applied", { why: dom, kind: intent.kind });
       report({ reason: dom, status: 403, from, kind: intent.kind, stage: "apply" });
       return;
     }
@@ -836,6 +870,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         break;
       case "field":
         failure = await guardThenApply(intent, () => adapter.setField(intent.handle, intent.value));
+        trace(failure ? "not applied" : "applied", { handle: intent.handle, element: describeEl(elementFor(intent.handle)), failure, readBack: readField(elementFor(intent.handle)) });
         if (!failure) verifyApplied(from, intent);
         break;
       case "focus":
@@ -876,7 +911,8 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     commit(result);
     const view = envelope.view;
     trace("committed", { from, kind: intent.kind, view, revision: envelope.revision });
-    trace("hold", session.getSnapshot().blocked);
+    const held = session.getSnapshot().blocked;
+    trace("hold", held ? { by: held.by, mode: held.mode, until: held.until ?? null, msLeft: held.until !== undefined ? held.until - now() : null } : null);
 
     // Server-routed presence: the same effect as the whispered frame, but the
     // sender is the one the SERVER stamped, so no socket stamp is needed.
@@ -907,9 +943,12 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       return;
     }
     if (intent.kind === "field") {
+      const scope = root();
       trace("apply decision", {
         from, handle: intent.handle, view, shared: sharesField(intent.handle), sameRoute: onSameRoute(from),
-        focused: isFocused(intent.handle), held: isBlockedNow(), element: elementFor(intent.handle)?.tagName ?? null,
+        focused: isFocused(intent.handle), held: isBlockedNow(), element: describeEl(elementFor(intent.handle)),
+        handlesMatching: scope ? Array.from(scope.querySelectorAll("[data-co-handle], [name], [id]")).filter((el) => attributeHandle(el) === intent.handle).length : 0,
+        adapter: options.adapter ? "yes" : "none",
       });
     }
     if (view === from && from !== self && intent.kind === "field" && !sharesField(intent.handle)) {
@@ -923,6 +962,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       // A person who is held cannot type, so there is nothing of theirs to protect.
       if (isFocused(intent.handle) && !isBlockedNow()) {
         waitingShared.set(intent.handle, { from, intent });
+        trace("apply deferred", { why: "the person is in the field and not held", handle: intent.handle });
         warnReceive(`waiting|${intent.handle}`, `${from}'s value for "${intent.handle}" is waiting until this person leaves the field: they are in it and nobody holds them (a ranked hold applies it at once).`);
         return;
       }
@@ -965,8 +1005,40 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
    * moment later (a React-controlled field updates on its next render). An adapter that
    * sets `.value` on a contentEditable reports ok and changes nothing; say so, once.
    */
+  /** What a field shows now: a checkbox's checked, a control's value, an editable's text. */
+  function readField(el: Element | null): unknown {
+    if (!el) return undefined;
+    const tag = el.tagName.toUpperCase();
+    const input = el as HTMLInputElement;
+    const editable = (el as HTMLElement).isContentEditable || el.getAttribute("contenteditable") === "true" || el.getAttribute("contenteditable") === "";
+    if (tag === "INPUT" && (input.type === "checkbox" || input.type === "radio")) return input.checked;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return (el as HTMLInputElement).value;
+    return editable ? (el.textContent ?? "") : undefined;
+  }
+
   const lastApplied = new Map<string, string>();
+  /**
+   * For 3 s after a peer's value is written, watch the field: a page that puts its own
+   * text back (a React render from state that never saw the write) undoes it with no
+   * error anywhere. Said once, with what the field changed to.
+   */
+  function watchForRevert(from: Ref, intent: Extract<Intent, { kind: "field" }>, el: Element): void {
+    if (typeof MutationObserver === "undefined") return;
+    const key = stableJson(intent.value);
+    const observer = new MutationObserver(() => {
+      if (destroyed || lastApplied.get(intent.handle) !== key) { observer.disconnect(); return; }
+      const now = readField(el);
+      if (now === undefined || stableJson(now) === key) return;
+      trace("reverted by the page", { handle: intent.handle, applied: typeof intent.value === "string" ? intent.value : key, now: typeof now === "string" ? now : stableJson(now) });
+      warnReceive(`reverted|${intent.handle}`, `${from}'s value for "${intent.handle}" was written, then the page changed the field back (it now shows ${JSON.stringify(typeof now === "string" ? now.slice(0, 60) : now)}). Something on the page re-renders the field from its own state: let its onInput (or onChange) update that state, or render the field uncontrolled.`);
+      observer.disconnect();
+    });
+    observer.observe(el, { characterData: true, childList: true, subtree: true, attributes: false });
+    setTimeout(() => observer.disconnect(), 3000);
+  }
   function verifyApplied(from: Ref, intent: Extract<Intent, { kind: "field" }>): void {
+    const target = elementFor(intent.handle);
+    if (target && (typeof intent.value === "string" || typeof intent.value === "boolean")) watchForRevert(from, intent, target);
     if (typeof intent.value !== "string" && typeof intent.value !== "boolean") return;
     const key = stableJson(intent.value);
     lastApplied.set(intent.handle, key);
