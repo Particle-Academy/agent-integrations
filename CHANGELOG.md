@@ -76,6 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `createDomNavigationAgent` and the session), not the first in the document, and the
   duplicate is warned once. A hidden copy of a field no longer swallows a peer's value.
 
+## [0.65.3] - 2026-11-16
 
 ### Added
 
@@ -98,6 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   different transport), a microtask after the commit. **Nothing to do.**
 - **A destroyed session that still gets a frame warns once**, naming the session.
 
+## [0.65.2] - 2026-11-16
 
 ### Fixed
 
