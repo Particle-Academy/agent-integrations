@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.65.2] - 2026-11-15
+
 ### Fixed
 
 - **A session follows its page onto a re-joined channel.** A consumer's receiver got the
