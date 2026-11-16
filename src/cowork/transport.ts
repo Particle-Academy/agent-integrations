@@ -40,6 +40,8 @@ export type PresenceEvent =
 
 export interface PeerTransport {
   readonly routing: Routing;
+  /** Whom this transport treats as its own sender (a server transport's `self`). */
+  readonly self?: Ref;
   /**
    * Hand a frame to the transport. Resolves to the SERVER's decision for an
    * intent in server routing; otherwise `{ allow: true }` once handed off, or
@@ -427,12 +429,40 @@ export function createServerTransport(options: ServerTransportOptions): PeerTran
   const pipe = plumb(options.channel, options.self, options.event ?? "cowork", (frame) => frame.t !== "intent");
   const base = `${options.endpoint ?? ""}/cowork/sessions/${encodeURIComponent(options.sessionId)}`;
 
+  // Every relayed intent this drops is warned once per reason: a drop here happens
+  // before the session sees anything, so without it a page that applies nothing logs
+  // nothing either (MOIC, 0.65.0).
+  const warned = new Set<string>();
+  const drop = (key: string, message: string) => {
+    if (warned.has(key) || typeof console === "undefined") return;
+    warned.add(key);
+    console.warn(`[cowork] ${message} This warning is shown once.`);
+  };
   const onRelayed = (payload: unknown) => {
-    if (!pipe.isOpen() || !isRecord(payload)) return;
+    if (!pipe.isOpen()) {
+      drop("closed", "A relayed intent was dropped: its server connection is closed (the session was destroyed). A new session needs a new transport.");
+      return;
+    }
+    if (!isRecord(payload)) {
+      drop("payload", `A relayed intent was dropped: its payload is not an object (got ${typeof payload}). Check the broadcaster sends the event data once-encoded.`);
+      return;
+    }
     const { from, intent, ...envelope } = payload;
-    if (!isRef(from) || from === options.self) return;
+    if (!isRef(from)) {
+      drop("from", "A relayed intent was dropped: it names no sender (`from`).");
+      return;
+    }
+    if (from === options.self) {
+      // Usually this page's own intent coming back (no socket exclusion): expected.
+      drop("own", `Relayed intents from ${from} are ignored as this page's own. If this page is not ${from}, the \`self\` its server connection was built with is wrong.`);
+      return;
+    }
     const frame = readFrame({ t: "intent", envelope, intent });
-    if (frame) pipe.frames.emit({ from, frame });
+    if (!frame) {
+      drop("intent", `A relayed intent from ${from} was dropped: it carries no intent object.`);
+      return;
+    }
+    pipe.frames.emit({ from, frame });
   };
   options.channel.listen?.(".cowork.intent", onRelayed);
 
@@ -460,6 +490,7 @@ export function createServerTransport(options: ServerTransportOptions): PeerTran
 
   return {
     routing: "server",
+    self: options.self,
     async send(frame) {
       if (!pipe.isOpen()) return CLOSED;
       if (frame.t === "intent") {

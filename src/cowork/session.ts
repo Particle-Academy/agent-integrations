@@ -526,6 +526,13 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   // -------------------------------------------------------------------------
 
   const warnRefusal = createRefusalWarner();
+  /** Every receive-path drop that is not a refusal: warned once per reason, like refusals. */
+  const receiveWarned = new Set<string>();
+  function warnReceive(key: string, message: string): void {
+    if (receiveWarned.has(key) || typeof console === "undefined") return;
+    receiveWarned.add(key);
+    console.warn(`[cowork] ${message} This warning is shown once.`);
+  }
   const report = (refusal: CoworkRefusal) => {
     if (!options.onRefused) {
       warnRefusal(refusal);
@@ -843,6 +850,11 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       await applyToPage(from, intent);
       return;
     }
+    if (view === from && from !== self && intent.kind === "field" && !sharesField(intent.handle)) {
+      warnReceive(`not-shared|${intent.handle}`, `${from}'s field "${intent.handle}" was not applied here: it is not in this page's sharedFields.`);
+    } else if (view === from && from !== self && intent.kind === "field" && !onSameRoute(from)) {
+      warnReceive(`route|${from}`, `${from}'s field "${intent.handle}" was not applied here: ${from} is on route ${state.participants[from]?.route ?? "?"} and this page on ${state.participants[self]?.route ?? "?"} (a shared field applies on the same route only).`);
+    }
     if (view === from && from !== self && intent.kind === "field" && sharesField(intent.handle) && onSameRoute(from)) {
       // A peer on this same page edited a shared document field: last writer wins,
       // except over a field the person is typing in, which waits for their blur.
@@ -917,7 +929,11 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       if (destroyed) return;
       const from = message.from;
       const frame = readFrame(message.frame);
-      if (!frame || from === self) return;
+      if (!frame) {
+        warnReceive("frame", `A frame from ${from} was dropped: it is not a co-work frame.`);
+        return;
+      }
+      if (from === self) return;
       if (!state.participants[from]) {
         // A server-relayed intent from a peer this browser has not heard of (a missed
         // presence event): the server vouched for it, so learn the peer and re-sync.
@@ -926,7 +942,10 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         next.participants[from] = { ref: from, route: "/", revision: 0, follows: null, joinedAt: now() };
         state = next;
         await resyncNow();
-        if (!state.participants[from]) return;
+        if (!state.participants[from]) {
+          warnReceive(`unknown|${from}`, `An intent from ${from} was dropped: the server's re-sync does not list ${from} in this session.`);
+          return;
+        }
       }
       lastSeen.set(from, now());
       switch (frame.t) {
@@ -1099,6 +1118,10 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     changed();
   }
 
+  // A transport built for someone else drops every intent from that person as "own".
+  if (transport.self !== undefined && transport.self !== self) {
+    warnReceive("transport-self", `This session is ${self} but its transport was created with self ${transport.self}: every intent relayed from ${transport.self} is dropped as this page's own. Create the transport with self ${self}.`);
+  }
   const offFrame = transport.onFrame((message) => void receive(message));
   const offPresence = transport.onPresence((event) => void onPresence(event));
   // At start, not only on an acknowledgement: laravel-echo never repeats a `here` that

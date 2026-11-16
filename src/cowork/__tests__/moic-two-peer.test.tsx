@@ -93,7 +93,8 @@ function moicServer() {
           const { intent: _i, socketId: _s, ...envelope } = body;
           for (const other of conns.values()) {
             if (other.ref === ref) continue;
-            for (const cb of other.listeners.get(".cowork.intent") ?? []) cb({ ...envelope, from: ref, intent });
+            // As fancy-cowork-php relays it: id, session, from, view/revision/to, at, intent.
+            for (const cb of other.listeners.get(".cowork.intent") ?? []) cb({ ...envelope, session: "s1", from: ref, at: Date.now(), intent });
           }
           return ok(202, { id: body.id });
         }
@@ -666,4 +667,40 @@ describe("MOIC's page, mirrored (0.64.0 live report: no field intents in one run
       expect(bobCalls).toContainEqual(["composer", finalText]);
     });
   }
+});
+
+describe("MOIC on 0.65.0 / fancy-cowork 0.4.1: Bob is not the starter, cursors are anchored", () => {
+  // Their report: the admin's field posts (202) and Bob's socket receives the relayed
+  // `cowork.intent` frames, yet Bob's page never applies the value, is never held and
+  // logs nothing. Bob's session has no `starter` (he is not the starter), and both pages
+  // now move ANCHORED cursors ({ anchor, fx, fy }) through the server at 10 Hz.
+  it("Bob, with no starter, commits the admin's relayed field among anchored cursors: held at once, value applied", async () => {
+    const { server, adminChannel, bobChannel } = moic();
+    const admin = peer(server, "user:1", adminChannel, { starter: "user:1", now: () => Date.now() });
+    const bob = peer(server, "user:4", bobChannel, { starter: undefined, now: () => Date.now() });
+    await settle();
+    await admin.session.follow("user:4");
+    await bob.session.follow("user:1");
+    await vi.advanceTimersByTimeAsync(4_000);
+    await settle();
+
+    // Both move anchored cursors while the admin types.
+    const text = "Hello Bob";
+    for (let i = 1; i <= text.length; i++) {
+      admin.session.moveCursor({ anchor: "composer", fx: 0.1 * (i % 10), fy: 0.5 });
+      bob.session.moveCursor({ anchor: "composer", fx: 0.5, fy: 0.05 * i });
+      void admin.session.reportField("composer", text.slice(0, i));
+      await vi.advanceTimersByTimeAsync(40);
+    }
+    await vi.advanceTimersByTimeAsync(400);
+    await settle();
+
+    expect(server.requests.filter((r) => r.from === "user:1" && (r.body.intent as { kind?: string })?.kind === "cursor").length).toBeGreaterThan(0);
+    expect(bob.refused).toEqual([]);
+    expect(bob.session.getSnapshot().blocked).toMatchObject({ by: "user:1", mode: "ranked" });
+    expect(bob.root.getAttribute("data-cowork-blocked")).toBe("ranked");
+    expect(bob.calls).toContainEqual(["composer", text]);
+    // And the admin's anchored cursor is shown on Bob's page.
+    expect(bob.session.getSnapshot().peers.find((p) => p.ref === "user:1")?.cursor).toMatchObject({ anchor: "composer" });
+  });
 });

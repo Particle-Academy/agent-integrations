@@ -15,6 +15,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Rebranded the display name to Fancy Dev Kit (README and package description). Package names, the npm scope, URLs and the `fancy-ui` MCP id are unchanged.
 
+### Fixed
+
+- **Every receive-path drop warns once on the console**, as refusals already do. MOIC
+  on 0.65.0: Bob's socket received the admin's relayed intents, yet his page applied
+  nothing, was never held and logged nothing, because each place a received intent can
+  be dropped returned silently. Now warned, once per reason:
+  - in the server transport: a closed transport, a payload that is not an object, no
+    sender, an intent from the transport's own `self` (if that is not this page's
+    person, the transport was built with the wrong `self`), no intent object;
+  - in the session: a frame that is not a co-work frame, a sender the server's re-sync
+    does not list, a shared field not in `sharedFields`, and a shared field from a peer
+    on another route (both routes named).
+- **A transport built for someone else is caught at once.** `createServerTransport`
+  exposes its `self`, and a session whose `self.ref` differs warns as it starts: such a
+  transport drops every intent relayed from the person it names as its own. **If you
+  see this warning, create the transport with the same ref as the session's `self`.**
+
 ## [0.65.0] - 2026-11-15
 
 ### Added
