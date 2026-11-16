@@ -376,7 +376,7 @@ just use the bundled `createNodeRelay()` factory from this package.
 |---|---|
 | Add a couple of demos to an existing Laravel app | **B (Laravel)** — no new infrastructure |
 | Demo site is static / no backend yet | **A (Node)** — `agent-integrations-relay` container |
-| Multiple Fancy UI demos across multiple sites | **A**, deployed once at a central origin |
+| Multiple Fancy Dev Kit demos across multiple sites | **A**, deployed once at a central origin |
 | Already running Rails/Django/etc. | **C** — port the Laravel reference |
 | Edge / serverless | **A** with `createNodeRelay` adapted to your runtime, or bring your own `RelayBroker` + `Store` |
 
