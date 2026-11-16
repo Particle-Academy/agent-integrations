@@ -660,6 +660,9 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   const followEchoMs = Math.max(0, options.followEchoMs ?? 1000);
 
   /** One send, run inside `serial`. Callers go through {@link sendIntent}. */
+  /** This page's own visit report, refused only because someone above it holds it. */
+  const heldOwnVisit = (intent: Intent, view: Ref | undefined, reason: string): boolean =>
+    intent.kind === "visit" && view === self && reason === REASONS.control;
   type Prepared = { done: Decision } | { envelope: Envelope; view: Ref | undefined; isView: boolean; result: Result };
   /** A send judged in the state queue: refused or skipped (`done`), or ready to go out. */
   const prepareSend = async (intent: Intent, sendOptions: SendOptions, internal: boolean): Promise<Prepared> => {
@@ -737,6 +740,12 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       const result = await evaluateIntent(host(), state, { from: self, envelope, intent, now: now() });
       if (!result.decision.allow) {
         const { reason, status } = result.decision;
+        if (heldOwnVisit(intent, view, reason)) {
+          // Where this page is, while someone above it acts: not an edit, nothing to warn
+          // about. It waits, and its latest route goes out once the hold ends (afterSend).
+          trace("send deferred while held", { kind: intent.kind, blockedUntil: (result.decision as { blockedUntil?: number }).blockedUntil ?? null });
+          return { done: result.decision };
+        }
         trace("refused at the sender", { kind: intent.kind, reason, status, blockedUntil: (result.decision as { blockedUntil?: number }).blockedUntil ?? null });
         report({ reason, status, from: self, kind: intent.kind, stage: "sender" });
         return { done: result.decision };
@@ -771,6 +780,10 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         sent = await send({ t: "intent", envelope, intent });
       }
       if (!sent.allow) {
+        if (heldOwnVisit(intent, view, sent.reason)) {
+          trace("send deferred while held", { kind: intent.kind, by: "server", blockedUntil: (sent as { blockedUntil?: number }).blockedUntil ?? null });
+          return sent;
+        }
         report({ reason: sent.reason, status: sent.status, from: self, kind: intent.kind, stage: "sender" });
         return sent;
       }
@@ -804,8 +817,9 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   // that field, once the hold or the window ends. A newer report replaces it.
   const heldFields = new Map<string, { intent: Intent; options: SendOptions; timer: ReturnType<typeof setTimeout> }>();
   const afterSend = (intent: Intent, sendOptions: SendOptions, decision: Decision): void => {
-    if (intent.kind !== "field" || sendOptions.to !== undefined || (sendOptions.view ?? self) !== self) return;
-    const key = intent.handle;
+    if ((intent.kind !== "field" && intent.kind !== "visit") || sendOptions.to !== undefined || (sendOptions.view ?? self) !== self) return;
+    // A held visit (where this page is) waits like a held field: its latest route goes once free.
+    const key = intent.kind === "visit" ? "\u0000visit" : intent.handle;
     const pending = heldFields.get(key);
     if (pending) clearTimeout(pending.timer);
     heldFields.delete(key);

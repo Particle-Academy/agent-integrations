@@ -125,3 +125,39 @@ describe("debug names what is queued ahead, and a held person's swallowed typing
     expect(lines.some((l) => l.includes("input blocked while held") && l.includes("keydown"))).toBe(true);
   });
 });
+
+describe("a held person's own visit report", () => {
+  it("is not sent or warned while held, and goes out (its latest route) once the hold ends", async () => {
+    vi.useRealTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const posts: Array<{ kind: string; url?: string }> = [];
+    const listeners = new Set<(p: unknown) => void>();
+    const channel: PresenceChannelLike = {
+      here() { return channel; }, joining() { return channel; }, leaving() { return channel; },
+      whisper() { return channel; }, listenForWhisper() { return channel; },
+      listen(_e, cb) { listeners.add(cb); return channel; }, stopListening() { return channel; },
+    };
+    const fetchFn = (async (url: string, init?: { method?: string; body?: string }) => {
+      if ((init?.method ?? "GET") === "GET") return { ok: true, status: 200, json: async () => syncBody };
+      if (String(url).endsWith("/intents")) posts.push(JSON.parse(String(init?.body)).intent);
+      return { ok: true, status: 202, json: async () => ({}) };
+    }) as never;
+    const s = createCoworkSession({
+      sessionId: "s1", self: { ref: "user:4" },
+      transport: createServerTransport({ sessionId: "s1", self: "user:4", channel, fetch: fetchFn }),
+      config: { consent: "notify", control: { mode: "ranked", scope: "session", rank: (r: string) => (r === "user:4" ? 1 : 2), idleMs: 300 } },
+      authorize: () => true, presenceRouting: "server", heartbeatMs: 60_000,
+    } as never);
+    sessions.push(s);
+    await new Promise((r) => setTimeout(r, 20));
+    for (const cb of listeners) cb(field("Hello")); // the admin acts: the subject is held (the server's idleMs, 3 s)
+    await new Promise((r) => setTimeout(r, 10));
+    void s.reportVisit("/dashboard");
+    void s.reportVisit("/dashboard/inbox");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(posts.filter((p) => p.kind === "visit")).toEqual([]);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("visit"))).toEqual([]);
+    await new Promise((r) => setTimeout(r, 3_300));
+    expect(posts.filter((p) => p.kind === "visit").map((p) => p.url)).toEqual(["/dashboard/inbox"]);
+  }, 10_000);
+});

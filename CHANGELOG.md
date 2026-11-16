@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A held person's own visit report waits quietly.** On joining, a page's automatic
+  `reportVisit` was refused `409 cowork.denied.control` when someone above it was
+  already acting, and warned. Reporting where the page is is not an edit: while held it
+  is no longer sent or warned, and its latest route goes out once the hold ends, the
+  way a held field report already is (`debug` traces `send deferred while held`).
+
 ## [0.65.5] - 2026-11-16
 
 ### Fixed
