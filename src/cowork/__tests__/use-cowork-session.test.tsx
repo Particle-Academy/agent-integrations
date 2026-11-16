@@ -47,6 +47,7 @@ describe("useCoworkSession", () => {
     expect(getByTestId("peers").querySelector('[data-ref="a"]')?.getAttribute("data-follows")).toBe("b");
 
     unmount();
+    await Promise.resolve(); // the hook closes the transport once nothing uses it (a microtask)
     expect(hub.peers().map((p) => p.ref)).toEqual(["b"]);
     other.close();
   });

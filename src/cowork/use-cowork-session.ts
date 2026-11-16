@@ -66,9 +66,32 @@ export function useCoworkSession(options: UseCoworkSessionOptions): CoworkSessio
     }
     channelKey = id;
   }
+  // The transport the live session uses, and whether the component is gone: a session
+  // must never close a transport the host will hand to the NEXT session (a useMemo'd
+  // transport survives a restart, and a closed one has dropped its relay listener). The
+  // hook closes a transport once no session uses it: on unmount, or when the session
+  // moved to another transport. StrictMode's double effects resolve to "still in use".
+  const inUse = useRef<PeerTransport | null>(null);
+  const unmounted = useRef(false);
+  useEffect(() => {
+    unmounted.current = false;
+    return () => { unmounted.current = true; };
+  }, []);
   useEffect(() => {
     const transport = latest.current.transport;
     if (!transport) return;
+    inUse.current = transport;
+    const kept: PeerTransport = {
+      get routing() { return transport.routing; },
+      ...(transport.self !== undefined ? { self: transport.self } : {}),
+      ...(transport.channel !== undefined ? { channel: transport.channel } : {}),
+      send: (frame) => transport.send(frame),
+      onFrame: (listener) => transport.onFrame(listener),
+      onPresence: (listener) => transport.onPresence(listener),
+      close: () => {},
+      ...(transport.sync ? { sync: () => transport.sync!() } : {}),
+      ...(transport.heartbeat ? { heartbeat: () => transport.heartbeat!() } : {}),
+    };
     const current = latest.current;
     const live = latest;
     const warnRefusal = createRefusalWarner();
@@ -79,7 +102,7 @@ export function useCoworkSession(options: UseCoworkSessionOptions): CoworkSessio
       get sharedFields() { return live.current.sharedFields; },
       get isDestructive() { return live.current.isDestructive; },
       get pendingMode() { return live.current.pendingMode; },
-      transport,
+      transport: kept,
       config: () => {
         const config = latest.current.config;
         return typeof config === "function" ? config() : config;
@@ -95,6 +118,13 @@ export function useCoworkSession(options: UseCoworkSessionOptions): CoworkSessio
     return () => {
       created.destroy();
       setSession((s) => (s === created ? null : s));
+      // After the commit: a restart has set the next transport by then; an unmount has not.
+      queueMicrotask(() => {
+        if (unmounted.current || inUse.current !== transport) {
+          if (inUse.current === transport) inUse.current = null;
+          transport.close();
+        }
+      });
     };
     // Recreate only for a new session, person or policy binding, the first transport, or a
     // transport on a NEW channel.

@@ -106,6 +106,9 @@ export type CoworkAppMessage = { from: Ref; topic: string; payload: unknown };
  * network, so without this it leaves no trace anywhere (MOIC, 0.64.0: a run with no
  * field intents at all, and nothing to say why). Internal; the hook uses it too.
  */
+/** Numbers each session in this page, for `debug` traces. */
+let sessionInstances = 0;
+
 export function createRefusalWarner(): (refusal: CoworkRefusal) => void {
   const warned = new Set<string>();
   return (refusal) => {
@@ -148,6 +151,12 @@ export type CoworkSessionOptions = {
   onRefused?: (refusal: CoworkRefusal) => void;
   /** Warn when one queued step has waited this long (default 10000 ms). */
   stuckAfterMs?: number;
+  /**
+   * Trace every receive step on the console (`[cowork#N] ...`, N numbering the sessions
+   * in this page): created and destroyed, frame in, queued and dequeued, committed or
+   * refused, the hold, and the apply decision. For diagnosing a page; leave off.
+   */
+  debug?: boolean;
   /** The most an adapter call may take before it counts as failed (default 10000 ms). */
   adapterTimeoutMs?: number;
   now?: () => number;
@@ -285,6 +294,11 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   // One queue for every state change, local or remote. The engine is async
   // (host callbacks may be), so without it two frames could each be judged
   // against the same stale state.
+  const instance = ++sessionInstances;
+  const trace = (step: string, data?: unknown): void => {
+    if (!options.debug || typeof console === "undefined") return;
+    console.log(`[cowork#${instance}] ${step}`, data === undefined ? "" : data);
+  };
   let queue: Promise<unknown> = Promise.resolve();
   // A step that never finishes holds every receive and send queued after it. It cannot be
   // cancelled from here, but it must never be silent.
@@ -853,6 +867,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     const evaluator = transport.routing === "server" ? trustedHost() : host();
     const result = await evaluateIntent(evaluator, state, { from, envelope, intent, now: now() });
     if (!result.decision.allow) {
+      trace("refused at the receiver", { from, kind: (intent as { kind?: unknown }).kind, reason: result.decision.reason });
       report({ reason: result.decision.reason, status: result.decision.status, from, kind: String((intent as { kind?: unknown }).kind), stage: "receiver" });
       return;
     }
@@ -860,6 +875,8 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     const followed = me?.follows === from;
     commit(result);
     const view = envelope.view;
+    trace("committed", { from, kind: intent.kind, view, revision: envelope.revision });
+    trace("hold", session.getSnapshot().blocked);
 
     // Server-routed presence: the same effect as the whispered frame, but the
     // sender is the one the SERVER stamped, so no socket stamp is needed.
@@ -885,8 +902,15 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     }
     if (view === self && from !== self) {
       // A drive into this browser's own view: the one place it is performed.
+      trace("apply: a drive into this page's own view", { from, kind: intent.kind });
       await applyToPage(from, intent);
       return;
+    }
+    if (intent.kind === "field") {
+      trace("apply decision", {
+        from, handle: intent.handle, view, shared: sharesField(intent.handle), sameRoute: onSameRoute(from),
+        focused: isFocused(intent.handle), held: isBlockedNow(), element: elementFor(intent.handle)?.tagName ?? null,
+      });
     }
     if (view === from && from !== self && intent.kind === "field" && !sharesField(intent.handle)) {
       warnReceive(`not-shared|${intent.handle}`, `${from}'s field "${intent.handle}" was not applied here: it is not in this page's sharedFields.`);
@@ -989,8 +1013,15 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     return { t: "hello", route: me?.route ?? "/", revision: me?.revision ?? 0, follows: me?.follows ?? null };
   };
 
-  const receive = (message: ReceivedFrame) =>
-    serial(async () => {
+  const receive = (message: ReceivedFrame) => {
+    trace("frame in", { from: message.from, t: (message.frame as { t?: unknown })?.t, kind: (message.frame as { intent?: { kind?: unknown } })?.intent?.kind });
+    if (destroyed) {
+      warnReceive("destroyed", `A frame from ${message.from} reached a co-work session that was already destroyed (session #${instance}): its transport kept delivering to it. A page that replaced its session must give the new one a transport the old one no longer holds.`);
+      return Promise.resolve();
+    }
+    trace("queued", { waiting: queued });
+    return serial(async () => {
+      trace("dequeued", { from: message.from });
       if (destroyed) return;
       const from = message.from;
       const frame = readFrame(message.frame);
@@ -1057,6 +1088,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         }
       }
     });
+  };
 
   const onPresence = (event: PresenceEvent) =>
     serial(async () => {
@@ -1195,6 +1227,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
   if (transport.self !== undefined && transport.self !== self) {
     warnReceive("transport-self", `This session is ${self} but its transport was created with self ${transport.self}: every intent relayed from ${transport.self} is dropped as this page's own. Create the transport with self ${self}.`);
   }
+  trace("created", { sessionId: options.sessionId, self, routing: transport.routing, transportSelf: transport.self ?? null, channel: (transport.channel as { name?: unknown } | undefined)?.name ?? null });
   const offFrame = transport.onFrame((message) => void receive(message));
   const offPresence = transport.onPresence((event) => void onPresence(event));
   // At start, not only on an acknowledgement: laravel-echo never repeats a `here` that
@@ -1301,6 +1334,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      trace("destroyed");
       clearTimeout(cursorTimer);
       for (const held of heldFields.values()) clearTimeout(held.timer);
       heldFields.clear();

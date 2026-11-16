@@ -11,7 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.65.2] - 2026-11-16
+### Added
+
+- **`debug: true`** on `createCoworkSession` / `useCoworkSession` traces every receive
+  step on the console as `[cowork#N] ...` (N numbers the sessions in the page): created
+  (session id, self, the transport's self and channel) and destroyed, frame in, queued
+  and dequeued, committed or refused at the receiver, the hold, and the apply decision
+  (shared, same route, focused, held, the element found). For diagnosing a page; leave
+  it off otherwise.
+
+### Fixed
+
+- **A re-created session keeps receiving on the transport the host kept.** When
+  `useCoworkSession` re-created its session (a new `sessionId`, `self.ref`, `authorize`
+  going from unset to set, a new channel, or React StrictMode's double effects in
+  development), the old session's `destroy()` CLOSED the transport, and a host that keeps
+  its transport in a `useMemo` handed that closed transport, its relay listener gone, to
+  the new session: frames arrived and nothing ran, silently. The hook now closes a
+  transport only once no session uses it (on unmount, or when the session moved to a
+  different transport), a microtask after the commit. **Nothing to do.**
+- **A destroyed session that still gets a frame warns once**, naming the session.
+
 
 ### Fixed
 
