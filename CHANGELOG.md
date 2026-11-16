@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A presence list that lacks this page's own person is warned.** Under "View As" (two
+  people, one Laravel account), Laravel's `/broadcasting/auth` keys a presence member by
+  the account, so Pusher merged both connections into one member carrying the admin's
+  info. Each page's presence then described the wrong people. The page now warns once,
+  names the fix (authorize co-work channels with fancy-cowork's `POST {prefix}/auth`,
+  which keys each member by its co-work ref) and keeps working: intents are attributed
+  by the server's `from`, never by the member id. Reproduced with laravel-echo 2.6.3
+  and pusher-js 8.6.0: the relayed field still applies and the person is still held.
+- **A dropped whisper is warned** (direct routing): no sender stamp from the socket
+  server, or a sender who is not a presence member.
+
 - **A session follows its page onto a re-joined channel.** A consumer's receiver got the
   admin's `cowork.intent` frames on its socket and ran nothing, not even 0.65.1's receive
   warnings, after its connection was re-established. Measured against laravel-echo 2.6.3

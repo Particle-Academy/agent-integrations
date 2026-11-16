@@ -1026,6 +1026,14 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       else presentRefs.delete(event.peer.ref);
       if (event.type === "here") {
         const present = new Set(event.peers.map((p) => p.ref));
+        // A presence list without this page's own person: its member id is shared with
+        // someone else (one account for two people, e.g. "View As", authorized by
+        // Laravel's /broadcasting/auth, which keys a member by the account), so the
+        // members describe the wrong people. Intents are unaffected (the server stamps
+        // their sender); presence and `online` are not.
+        if (event.peers.length > 0 && !present.has(self)) {
+          warnReceive("presence-self", `The presence channel lists ${[...present].join(", ")} but not this page's own person, ${self}: two connections share one presence member id, so presence (who is here, online) describes the wrong people. Authorize co-work channels with fancy-cowork's own POST {prefix}/auth, which keys each member by its co-work ref, not with Laravel's /broadcasting/auth, which keys it by the account.`);
+        }
         for (const peer of event.peers) add(peer);
         for (const ref of Object.keys(state.participants)) if (!present.has(ref)) await drop(ref);
         // Say where this browser is; everyone who has not heard from it answers in kind.

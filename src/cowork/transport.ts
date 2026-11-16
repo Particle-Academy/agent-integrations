@@ -341,12 +341,26 @@ function plumb(channel: PresenceChannelLike, self: Ref, event: string, accept: (
     presence.emit({ type: "leaving", peer });
   });
 
+  const whisperWarned = new Set<string>();
+  const dropWhisper = (key: string, message: string) => {
+    if (whisperWarned.has(key) || typeof console === "undefined") return;
+    whisperWarned.add(key);
+    console.warn(`[cowork] ${message} This warning is shown once.`);
+  };
   const onWhisper = (data: unknown, meta?: { userId?: string }) => {
     if (!open || !isRecord(data) || data.v !== WHISPER_VERSION) return;
     // The SERVER stamps userId on a presence whisper. No stamp, or a sender who
     // is not a current member, and the frame cannot be attributed: drop it.
     const from = meta?.userId;
-    if (!isRef(from) || from === self || !members.has(from)) return;
+    if (!isRef(from)) {
+      dropWhisper("no-sender", "A whisper was dropped: the socket server did not stamp its sender (Sockudo does not). Use presenceRouting \"server\" on such a server.");
+      return;
+    }
+    if (from === self) return;
+    if (!members.has(from)) {
+      dropWhisper(`unknown|${from}`, `A whisper from ${from} was dropped: ${from} is not a member of the presence channel (its member id may not be its co-work ref).`);
+      return;
+    }
     const frame = readFrame(data.frame);
     if (!frame || !accept(frame)) return;
     frames.emit({ from, frame });
