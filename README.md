@@ -9,10 +9,10 @@ Also ships the **agent UX surface**: a chat-and-tool-log panel, an on-canvas pre
 > v0.1 — focused on `@particle-academy/fancy-whiteboard` as the first bridged surface. The bridge layer is package-agnostic, so other fancy-* packages can register their own tool sets per session.
 
 <!-- fancy-agents-note:start -->
-> **For agents.** Every Fancy package, this one included, is listed on the
-> Fancy MCP catalog server at `https://ui.particle.academy/mcp` (streamable HTTP, no API key;
-> MCP id `fancy-ui`), with install commands and docs. How an agent installs
-> and uses this package is in [AGENTS.md](https://github.com/Particle-Academy/agent-integrations/blob/main/AGENTS.md).
+> **For agents.** This package is listed on the Fancy MCP catalog server at
+> `https://ui.particle.academy/mcp` (streamable HTTP, no API key; MCP id `fancy-ui`),
+> with install commands and docs, alongside the rest of the kit. How an agent
+> installs and uses this package is in [AGENTS.md](https://github.com/Particle-Academy/agent-integrations/blob/main/AGENTS.md).
 <!-- fancy-agents-note:end -->
 
 ## Install
