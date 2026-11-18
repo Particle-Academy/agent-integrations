@@ -38,6 +38,14 @@ needs `@particle-academy/fancy-template-ui` (an optional peer) only if you use i
   it, a staged op the surface would refuse waits for a person who can only
   reject it. Additive; nothing to do.
 
+
+### Changed
+
+- **Tested against react-fancy 6.29.0** (the dev dependency was `^5.26.0`).
+  fancy-template-ui, now a dev dependency for the `tpl_` bridge tests, needs
+  react-fancy 6.29 or later, so a strict `npm ci` refused the old pin. Dev only:
+  the package's runtime ranges and peers are unchanged; nothing to do.
+
 ## [0.66.0] - 2026-11-17
 
 ### Security
