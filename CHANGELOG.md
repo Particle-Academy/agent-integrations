@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI: the lab-certificate gate verifies against the lab's rotated key list.**
+  The lab's first signing key is retired: certificates it already issued still
+  verify, and nothing new it signs ever can. Consumers do nothing.
+
 - **Docs:** `AGENTS.md` added: the guide to using this package (install, its entries on the Fancy MCP catalog server, API essentials, traps), and it ships in the package. `CONTRIBUTING.md` added for the contributor notes, with `CLAUDE.md` as a symlink to it. The README points to the MCP server and to `AGENTS.md`. No code changed; nothing to do.
 
 ## [0.65.6] - 2026-11-16
@@ -407,7 +411,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The one-line text sanitiser the navigation bridge applies to page-supplied strings moved to an internal module (`src/bridges/text-safety.ts`) so the sign bridge uses the same one. No behaviour change; it is not exported.
-
 
 - **Co-work control blocks the person's input for real** (MOIC's ranked hand-back).
   While a higher-ranked peer is active on your view, or the baton is elsewhere,
