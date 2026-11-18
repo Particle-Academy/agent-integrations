@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ToolRegistry } from "../../mcp/tool-host";
 import { registerCmsBridge } from "../cms";
+import { registerDocBridge } from "../doc";
 import { resetAllUndoStacks } from "../../undo/undo-stack";
 import type { DocTree, StyledNode, StagePolicy } from "@particle-academy/fancy-doc-commons";
 import type { CmsOp } from "../cms";
@@ -128,5 +129,34 @@ describe("registerCmsBridge (on registerDocBridge)", () => {
     const clash = await call("cms_add", { type: "text", id: "hero" });
     expect(clash.isError).toBe(true);
     expect(tree().nodes.hero?.type).toBe("box");
+  });
+});
+
+describe("registerDocBridge check", () => {
+  beforeEach(() => resetAllUndoStacks());
+
+  function checked(stage: "auto" | "confirm") {
+    let tree: DocTree<{ id: string; type: string; parent: string | null; order: string; props: Record<string, unknown> }> = { nodes: {} };
+    const staged: string[] = [];
+    const host = new ToolRegistry();
+    registerDocBridge(host, {
+      surface: "chk",
+      adapter: { get: () => tree, set: (n) => { tree = n; } },
+      stagePolicy: () => stage,
+      onPending: (p) => staged.push(p.id),
+      check: (_t, op) => ((op as { t: string; node?: { type: string } }).node?.type === "forbidden" ? "forbidden blocks are refused" : null),
+    });
+    return { host, staged, tree: () => tree };
+  }
+
+  it.each(["auto", "confirm"] as const)("refuses before applying or staging (%s), with the reason", async (stage) => {
+    const { host, staged, tree } = checked(stage);
+    const r = await host.callTool("chk_add", { type: "forbidden" });
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r.content)).toContain("forbidden blocks are refused");
+    expect(Object.keys(tree().nodes)).toEqual([]);
+    expect(staged).toEqual([]);
+    const ok = await host.callTool("chk_add", { type: "fine" });
+    expect(ok.isError).toBeFalsy();
   });
 });

@@ -5,6 +5,8 @@ import { resetAllUndoStacks } from "../../undo/undo-stack";
 import type { DocTree, StyledNode } from "@particle-academy/fancy-doc-commons";
 import { registerDocBridge } from "../doc";
 import { registerCmsBridge } from "../cms";
+import { registerTemplateBridge } from "../template";
+import * as templateCore from "@particle-academy/fancy-template-ui/core";
 import { registerScreenDocBridge, type ScreenDocNode } from "../screen-doc";
 import { registerTuiBridge } from "../tui";
 import { MemoryHumanPlusEventStore } from "../../human-plus/events";
@@ -150,6 +152,36 @@ describe("registerCmsBridge — confirmBy", () => {
 
   it("confirmBy: 'agent' restores cms_confirm", () => {
     expect(names(setup("agent").host)).toContain("cms_confirm");
+  });
+});
+
+describe("registerTemplateBridge — always human, no opt-in", () => {
+  function setup() {
+    let state = templateCore.emptyState();
+    const host = new ToolRegistry();
+    const bridge = registerTemplateBridge(host, {
+      core: templateCore,
+      // An extra `confirmBy` is not part of the options and must change nothing.
+      ...({ confirmBy: "agent" } as object),
+      adapter: { get: () => state, set: (n) => { state = n; }, context: () => ({ kinds: [], fields: [], lists: [] }) },
+    });
+    return { host, bridge, state: () => state };
+  }
+
+  it("no tpl_confirm even when asked for one, and nothing an agent calls applies a staged op", async () => {
+    const { host, state } = setup();
+    expect(names(host).filter((n) => SELF_CONFIRM.test(n))).toEqual([]);
+    const staged = (await host.callTool("tpl_add", { type: "pageBreak" })).structuredContent as Record<string, unknown>;
+    expect(staged.staged).toBe(true);
+    await sweep(host, { id: staged.pendingId as string, type: "pageBreak", patch: { size: "a4" } });
+    expect(Object.keys(state().tree.nodes)).toEqual([]);
+  });
+
+  it("the host confirms it", async () => {
+    const { host, bridge, state } = setup();
+    const staged = (await host.callTool("tpl_add", { type: "pageBreak" })).structuredContent as Record<string, unknown>;
+    expect(bridge.confirm(staged.pendingId as string)).toBe(true);
+    expect(Object.keys(state().tree.nodes)).toHaveLength(1);
   });
 });
 

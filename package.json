@@ -287,6 +287,16 @@
         "default": "./dist/bridges-cms.cjs"
       }
     },
+    "./bridges/template": {
+      "import": {
+        "types": "./dist/bridges/template.d.ts",
+        "default": "./dist/bridges-template.js"
+      },
+      "require": {
+        "types": "./dist/bridges/template.d.cts",
+        "default": "./dist/bridges-template.cjs"
+      }
+    },
     "./bridges/tui": {
       "import": {
         "types": "./dist/bridges/tui.d.ts",
@@ -496,7 +506,8 @@
     "@particle-academy/fancy-slides": ">=0.13.0",
     "@particle-academy/fancy-whiteboard": ">=0.1.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@particle-academy/fancy-template-ui": ">=0.1.0 <2.0"
   },
   "peerDependenciesMeta": {
     "@particle-academy/fancy-whiteboard": {
@@ -531,6 +542,9 @@
     },
     "react-dom": {
       "optional": true
+    },
+    "@particle-academy/fancy-template-ui": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -543,6 +557,8 @@
     "@particle-academy/fancy-screens": "^0.7.0",
     "@particle-academy/fancy-sheets": "^0.9.0",
     "@particle-academy/fancy-slides": "^0.15.0",
+    "@particle-academy/fancy-template": "^0.5.0",
+    "@particle-academy/fancy-template-ui": "^0.1.0",
     "@particle-academy/fancy-whiteboard": "^0.2.0",
     "@particle-academy/react-fancy": "^5.26.0",
     "@testing-library/dom": "^10.4.1",

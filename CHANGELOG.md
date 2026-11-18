@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`registerTemplateBridge`** (`./bridges/template`, prefix `tpl_`): the
+  document builder (`@particle-academy/fancy-template-ui`) as an MCP surface,
+  built on `registerDocBridge`. Every mutation is staged and **only a person
+  applies it**: always-confirm, no confirm tool, and no option to add one
+  (`TEMPLATE_FORBIDDEN_TOOL_NAME`). An op the builder would refuse (removing a
+  required-once block, a second one, a signing kind inside a repeat, a field the
+  host did not offer, props that fail a kind's schema) is refused at staging,
+  with the reason. Tools: `tpl_describe`, `tpl_get`, `tpl_list`, `tpl_get_node`,
+  `tpl_add`, `tpl_update`, `tpl_remove`, `tpl_move`, `tpl_reject`,
+  `tpl_set_style`, `tpl_set_page`, `tpl_insert_field`, `tpl_list_kinds`,
+  `tpl_list_fields`, `tpl_get_page`, `tpl_inspect`, `tpl_pending`. Host strings
+  (field labels, samples, list and kind labels) reach the agent fenced as data
+  and on one line. The builder's logic comes from the host as `core`
+  (`import * as core from "@particle-academy/fancy-template-ui/core"`), so
+  fancy-template-ui is an optional peer, used for types only.
+- **`registerDocBridge` `check`**: an optional `(tree, op) => string | null` that
+  refuses an op before it is applied or staged, and tells the agent why. Without
+  it, a staged op the surface would refuse waits for a person who can only
+  reject it. Additive; nothing to do.
+
 ## [0.66.0] - 2026-11-17
 
 ### Security

@@ -262,6 +262,14 @@ export {
   type CmsOp,
   type CmsBridgeOptions,
 } from "./bridges/cms";
+// The document builder (fancy-template-ui). Every mutation staged; only a person confirms.
+export {
+  registerTemplateBridge,
+  TEMPLATE_FORBIDDEN_TOOL_NAME,
+  type TemplateAdapter,
+  type TemplateBridgeOptions,
+  type TemplateHostContext,
+} from "./bridges/template";
 // The CONTENT of one screen. Pairs with registerScreensBridge above, which moves
 // between screens and treats their contents as opaque.
 // Also available through agent-integrations/bridges/screen-doc, with DocAdapter.

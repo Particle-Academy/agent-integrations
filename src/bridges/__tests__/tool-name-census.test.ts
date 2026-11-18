@@ -27,6 +27,7 @@ import { registerScreenDocBridge } from "../screen-doc";
 import { registerScreensBridge } from "../screens";
 import { registerSheetsBridge } from "../sheets";
 import { registerSignBridge } from "../sign";
+import { registerTemplateBridge } from "../template";
 import { registerSlidesBridge } from "../slides";
 import { registerTerminalBridge } from "../terminal";
 import { registerTuiBridge } from "../tui";
@@ -87,6 +88,7 @@ const BRIDGES: Record<string, (host: ToolHost) => unknown> = {
   registerSheetsBridge: (h) => registerSheetsBridge(h, { adapter: anything() } as never),
   registerSignBridge: (h) => registerSignBridge(h, { adapter: anything() } as never),
   registerSlidesBridge: (h) => registerSlidesBridge(h, { adapter: anything() } as never),
+  registerTemplateBridge: (h) => registerTemplateBridge(h, { adapter: anything(), core: anything() } as never),
   registerTerminalBridge: (h) => registerTerminalBridge(h, { adapter: anything() } as never),
   registerTuiBridge: (h) =>
     registerTuiBridge(h, { registry: anything(), eventStore: anything(), appId: "census" } as never),

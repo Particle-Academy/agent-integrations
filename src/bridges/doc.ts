@@ -85,6 +85,12 @@ export interface DocBridgeOptions<N extends DocNode, TOp = TreeOp<N>> {
   confirmBy?: ConfirmBy;
   /** Summarize a node for describe/list. Default: id/type/parent + prop keys. */
   describeNode?: (node: N) => Record<string, unknown>;
+  /**
+   * Refuse an op before it is applied OR staged, with the reason the agent is
+   * told. Return null to allow. Without it, a staged op the surface would refuse
+   * waits for a person who can only reject it, and the agent learns nothing.
+   */
+  check?: (tree: DocTree<N>, op: TOp) => string | null;
 }
 
 /** A staged op awaiting confirmation, as the host sees it. */
@@ -171,6 +177,8 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
    * for three of the four canonical ops, and looked fine from the outside.
    */
   function submit(op: TOp, label: string, targetId?: string): { staged: boolean; id?: string; pendingId?: string } {
+    const refusal = options.check?.(adapter.get(), op) ?? null;
+    if (refusal !== null) throw new Error(refusal);
     if (stage(op) === "confirm") {
       const pendingId = `${surface}-pending-${(idSeq += 1)}`;
       pending.set(pendingId, { op, label, targetId });
