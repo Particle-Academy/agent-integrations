@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-11-18
+
+**What a consumer must do.** Nothing: both additions are new. `registerTemplateBridge`
+needs `@particle-academy/fancy-template-ui` (an optional peer) only if you use it.
+
 ### Added
 
 - **`registerTemplateBridge`** (`./bridges/template`, prefix `tpl_`): the
