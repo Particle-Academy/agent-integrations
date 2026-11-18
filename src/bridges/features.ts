@@ -1,7 +1,7 @@
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
 import type { JsonObject } from "../mcp/types";
-import type { Bridge } from "./types";
+import type { Bridge, ConfirmBy } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import type { AgentTarget } from "../presence/types";
 import { pushUndoEntry } from "../undo/undo-stack";
@@ -99,6 +99,13 @@ export type FeaturesBridgeOptions = {
    */
   pendingMode?: boolean;
   confirm?: (req: { action: string; subject: unknown; groupKey: string }) => Promise<boolean> | boolean;
+  /**
+   * Who may confirm a grant or revoke. Default `"human"`: only the host `confirm` hook
+   * can, and with no hook the write is refused; the tool takes no `confirm`
+   * argument. `"agent"` restores the pre-0.66 `confirm: true` argument, which
+   * lets the agent acknowledge its own staged write when no hook is wired.
+   */
+  confirmBy?: ConfirmBy;
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
@@ -122,6 +129,9 @@ export function registerFeaturesBridge(host: ToolHost, options: FeaturesBridgeOp
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const pendingMode = options.pendingMode ?? true;
+  const agentConfirms = (options.confirmBy ?? "human") === "agent";
+  const CONFIRM_ARG = agentConfirms ? { confirm: { type: "boolean" } } : {};
+  const CONFIRM_HINT = agentConfirms ? "pass confirm:true or wire a host confirm hook" : "the host's confirm hook asks the person";
   const featuresId = adapter.id ?? "features";
   const disposers: Array<() => void> = [];
   // The bridge id is also its registrant identity on the host: the same bridge
@@ -176,6 +186,7 @@ export function registerFeaturesBridge(host: ToolHost, options: FeaturesBridgeOp
       const ok = await options.confirm({ action, subject, groupKey });
       return ok ? null : errorResult(`Declined: ${action} ${groupKey} (human did not confirm).`);
     }
+    if (!agentConfirms) return errorResult(`${action} needs a person to confirm it (pendingMode), and this host wired no confirm hook, so it cannot be applied from here.`);
     if (!hasConfirmArg) {
       return errorResult(`${action} is staged (pendingMode). Re-call with confirm:true to apply, or wire a host confirm hook.`);
     }
@@ -280,8 +291,8 @@ export function registerFeaturesBridge(host: ToolHost, options: FeaturesBridgeOp
 
   reg(
     "features_grant",
-    "Grant a subject access by assigning it to a feature group. Staged in pendingMode — pass confirm:true or wire a host confirm hook.",
-    { subject: { description: "Opaque subject." }, group: { type: "string", description: "Feature group key." }, confirm: { type: "boolean" } },
+    `Grant a subject access by assigning it to a feature group. Staged in pendingMode: ${CONFIRM_HINT}.`,
+    { subject: { description: "Opaque subject." }, group: { type: "string", description: "Feature group key." }, ...CONFIRM_ARG },
     ["subject", "group"],
     async (args) => {
       const groupKey = str(args.group);
@@ -306,8 +317,8 @@ export function registerFeaturesBridge(host: ToolHost, options: FeaturesBridgeOp
 
   reg(
     "features_revoke",
-    "Revoke access by detaching a subject from a feature group. Staged in pendingMode — pass confirm:true or wire a host confirm hook.",
-    { subject: { description: "Opaque subject." }, group: { type: "string" }, confirm: { type: "boolean" } },
+    `Revoke access by detaching a subject from a feature group. Staged in pendingMode: ${CONFIRM_HINT}.`,
+    { subject: { description: "Opaque subject." }, group: { type: "string" }, ...CONFIRM_ARG },
     ["subject", "group"],
     async (args) => {
       const groupKey = str(args.group);

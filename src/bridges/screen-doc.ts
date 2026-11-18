@@ -32,8 +32,8 @@
  */
 import { textResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
-import type { Bridge } from "./types";
-import { registerDocBridge, type DocAdapter, type DocOpTool } from "./doc";
+import type { ConfirmBy } from "./types";
+import { registerDocBridge, type DocAdapter, type DocBridge, type DocOpTool } from "./doc";
 export type { DocAdapter } from "./doc";
 import {
   childrenOf,
@@ -74,10 +74,16 @@ export interface ScreenDocBridgeOptions {
   /** Auto-apply vs. confirm per op (trust-but-verify). Default: auto. */
   stagePolicy?: StagePolicy<ScreenDocOp>;
   onPending?: (staged: { id: string; op: ScreenDocOp; label: string }) => void;
+  /**
+   * Who confirms a staged op. Default `"human"`: no confirm tool for the agent;
+   * the host confirms through the returned bridge's `confirm(id)`. `"agent"`
+   * restores the agent-callable confirm tool (pre-0.66), as an explicit opt-in.
+   */
+  confirmBy?: ConfirmBy;
 }
 
 /** Register the screen-content bridge (prefix `screen_`) over a screen's `DocTree`. */
-export function registerScreenDocBridge(host: ToolHost, options: ScreenDocBridgeOptions): Bridge {
+export function registerScreenDocBridge(host: ToolHost, options: ScreenDocBridgeOptions): DocBridge<ScreenDocOp> {
   const { adapter } = options;
   const surface = options.surface ?? "screen";
 
@@ -130,6 +136,7 @@ export function registerScreenDocBridge(host: ToolHost, options: ScreenDocBridge
     agent: options.agent,
     stagePolicy: options.stagePolicy,
     onPending: options.onPending,
+    confirmBy: options.confirmBy,
     // Anything the AGENT adds is authored by definition — it chose or was given
     // the id — so it must not inherit the synthetic flag from its neighbours.
     makeNode: ({ id, type, parent, order }, props) => ({ id, type, parent, order, props }),
@@ -168,6 +175,7 @@ export function registerScreenDocBridge(host: ToolHost, options: ScreenDocBridge
   );
 
   return {
+    ...bridge,
     id: surface,
     title: "Screen content",
     dispose: () => {

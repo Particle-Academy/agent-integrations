@@ -54,8 +54,9 @@ describe("registerScreenDocBridge", () => {
     for (const v of [
       "screen_describe", "screen_get", "screen_list", "screen_get_node",
       "screen_add", "screen_update", "screen_remove", "screen_move",
-      "screen_set_text", "screen_addressable", "screen_confirm", "screen_reject",
+      "screen_set_text", "screen_addressable", "screen_reject",
     ]) expect(names).toContain(v);
+    expect(names).not.toContain("screen_confirm");
     expect(names).toContain("agent_undo");
   });
 
@@ -179,7 +180,7 @@ describe("registerScreenDocBridge", () => {
   it("stages a write when the host asks for confirmation, and applies nothing until confirmed", async () => {
     let tree = screenTree();
     const host = new ToolRegistry();
-    registerScreenDocBridge(host, {
+    const bridge = registerScreenDocBridge(host, {
       adapter: { get: () => tree, set: (n) => { tree = n; } },
       stagePolicy: (op) => (op.t === "remove" ? "confirm" : "auto"),
     });
@@ -194,7 +195,7 @@ describe("registerScreenDocBridge", () => {
     // a staged remove used to overwrite the latter with the former, which made
     // it unconfirmable.
     expect(staged.id).toBe("title");
-    await call("screen_confirm", { id: staged.pendingId as string });
+    bridge.confirm(staged.pendingId as string);
     expect(tree.nodes.title).toBeUndefined();
   });
 

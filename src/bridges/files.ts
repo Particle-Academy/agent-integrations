@@ -16,7 +16,7 @@ type FileSnapshotNode = FileEntry & { children?: FileSnapshotNode[] };
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
 import type { JsonObject } from "../mcp/types";
-import type { Bridge } from "./types";
+import type { Bridge, ConfirmBy } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import type { AgentTarget as FilesAgentTarget } from "../presence/types";
 import { pushUndoEntry } from "../undo/undo-stack";
@@ -80,6 +80,13 @@ export type FilesBridgeOptions = {
   pendingMode?: boolean;
   /** Host confirm hook for staged writes. Resolves true to proceed. */
   confirm?: (req: { action: string; path: string; label: string }) => Promise<boolean> | boolean;
+  /**
+   * Who may confirm a staged write. Default `"human"`: only the host `confirm` hook
+   * can, and with no hook the write is refused; the tool takes no `confirm`
+   * argument. `"agent"` restores the pre-0.66 `confirm: true` argument, which
+   * lets the agent acknowledge its own staged write when no hook is wired.
+   */
+  confirmBy?: ConfirmBy;
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
@@ -161,6 +168,7 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const pendingMode = options.pendingMode ?? true;
+  const agentConfirms = (options.confirmBy ?? "human") === "agent";
   const disposers: Array<() => void> = [];
   // The bridge id is also its registrant identity on the host: the same bridge
   // may re-register (a remount), a different one claiming a name is refused.
@@ -373,7 +381,9 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
       {
         parentPath: { type: "string", description: "Directory to create in; defaults to the current directory." },
         name: { type: "string", description: "The new folder's name. A leaf name — no separators." },
-        confirm: { type: "boolean", description: "Acknowledge a staged write when the host wired no confirm hook." },
+        ...(agentConfirms
+          ? { confirm: { type: "boolean", description: "Acknowledge a staged write when the host wired no confirm hook." } }
+          : {}),
       },
       ["name"],
       async (args) => {
@@ -389,6 +399,10 @@ export function registerFilesBridge(host: ToolHost, options: FilesBridgeOptions)
           if (options.confirm) {
             const ok = await options.confirm({ action: "files_create_folder", path: label, label });
             if (!ok) return errorResult(`Declined: create folder ${label} (human did not confirm).`);
+          } else if (!agentConfirms) {
+            return errorResult(
+              `Create folder ${label} needs a person to confirm it, and this host wired no confirm hook, so it cannot be created from here.`,
+            );
           } else if (args.confirm !== true) {
             return errorResult(
               `Staged: create folder ${label}. Re-call with confirm:true to proceed.`,

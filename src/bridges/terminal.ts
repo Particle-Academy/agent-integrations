@@ -1,7 +1,7 @@
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
 import type { CallToolResult, JsonObject } from "../mcp/types";
-import type { Bridge } from "./types";
+import type { Bridge, ConfirmBy } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
 import type { AgentTarget } from "../presence/types";
@@ -91,6 +91,13 @@ export type TerminalBridgeOptions = {
    * returned `bridge.confirm(id)` wired to a human control.
    */
   allowAgentConfirm?: boolean;
+  /**
+   * Who confirms a staged command: the option name every staging bridge takes.
+   * Default `"human"` (as above). `"agent"` exposes `terminal_confirm` /
+   * `terminal_reject`. When set, it wins over the older `allowAgentConfirm`,
+   * which stays as an alias.
+   */
+  confirmBy?: ConfirmBy;
   /**
    * Per-terminal authorization. Return false to hide a terminal id from this
    * agent entirely (it won't appear in `terminal_list` and can't be targeted).
@@ -365,7 +372,8 @@ export function registerTerminalBridge(host: ToolHost, options: TerminalBridgeOp
   // confirm its own staged command (that would defeat pendingMode). Hosts confirm
   // via the returned `bridge.confirm(id)` wired to a human control. Only expose
   // the agent-callable tools when a host explicitly opts in.
-  if (options.allowAgentConfirm) {
+  const confirmBy: ConfirmBy = options.confirmBy ?? (options.allowAgentConfirm ? "agent" : "human");
+  if (confirmBy === "agent") {
     reg(
       "terminal_confirm",
       "Confirm + execute a staged command by id (pendingMode).",

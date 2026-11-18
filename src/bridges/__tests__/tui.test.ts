@@ -21,6 +21,7 @@ describe("TUI bridge", () => {
     let calls = 0; const command = { name: "delete", policy: "confirm" as const, invoke: () => calls++ }; const surface = { id: "row", kind: "button", read: () => ({}), commands: [command] };
     const server = new MicroMcpServer({ info: { name: "test", version: "1" } }); const bridge = registerTuiBridge(server, { registry: { list: () => [surface], get: () => surface }, eventStore: new MemoryHumanPlusEventStore(), appId: "test" });
     await server.callTool("tui_action_invoke", { surfaceId: "row", command: "delete" }); expect(calls).toBe(0); const pending = bridge.pending()[0]!;
-    await server.callTool("tui_action_confirm", { id: pending.id }); expect(calls).toBe(1);
+    expect(server.listTools().map((t) => t.name)).not.toContain("tui_action_confirm");
+    await bridge.confirm(pending.id); expect(calls).toBe(1);
   });
 });

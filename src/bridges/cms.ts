@@ -11,8 +11,8 @@
  * reducer that handles them alongside the substrate tree ops.
  */
 import type { ToolHost } from "../mcp/tool-host";
-import type { Bridge } from "./types";
-import { registerDocBridge, type DocAdapter } from "./doc";
+import type { ConfirmBy } from "./types";
+import { registerDocBridge, type DocAdapter, type DocBridge } from "./doc";
 import {
   treeReducer,
   type DocReducer,
@@ -71,10 +71,16 @@ export interface CmsBridgeOptions {
   /** Auto-apply vs. confirm per op (trust-but-verify). Default: auto. */
   stagePolicy?: StagePolicy<CmsOp>;
   onPending?: (staged: { id: string; op: CmsOp; label: string }) => void;
+  /**
+   * Who confirms a staged op. Default `"human"`: no confirm tool for the agent;
+   * the host confirms through the returned bridge's `confirm(id)`. `"agent"`
+   * restores the agent-callable confirm tool (pre-0.66), as an explicit opt-in.
+   */
+  confirmBy?: ConfirmBy;
 }
 
 /** Register the CMS bridge (prefix `cms_`) over a `DocTree<StyledNode>`. */
-export function registerCmsBridge(host: ToolHost, options: CmsBridgeOptions): Bridge {
+export function registerCmsBridge(host: ToolHost, options: CmsBridgeOptions): DocBridge<CmsOp> {
   return registerDocBridge<StyledNode, CmsOp>(host, {
     adapter: options.adapter,
     surface: "cms",
@@ -82,6 +88,7 @@ export function registerCmsBridge(host: ToolHost, options: CmsBridgeOptions): Br
     reducer: cmsReducer(),
     stagePolicy: options.stagePolicy,
     onPending: options.onPending,
+    confirmBy: options.confirmBy,
     // New nodes get an empty base style so they satisfy StyledNode.
     makeNode: ({ id, type, parent, order }, props) => ({ id, type, parent, order, props, style: { base: {} } }),
     describeNode: (n) => ({ id: n.id, type: n.type, parent: n.parent, layout: n.layout }),

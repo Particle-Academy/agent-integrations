@@ -121,11 +121,11 @@ describe("registerCatalogBridge", () => {
     expect(got.prices).toHaveLength(1);
   });
 
-  it("stages catalog_delete_product in pendingMode until confirm:true", async () => {
+  it("confirmBy: 'agent' stages catalog_delete_product in pendingMode until confirm:true", async () => {
     resetAllUndoStacks();
     const host = new ToolRegistry();
     const { adapter, products } = makeAdapter();
-    registerCatalogBridge(host, { adapter }); // pendingMode defaults true
+    registerCatalogBridge(host, { adapter, confirmBy: "agent" }); // pendingMode defaults true
     const product = sc(await host.callTool("catalog_create_product", { name: "Doomed" }));
 
     const staged = await host.callTool("catalog_delete_product", { id: product.id });

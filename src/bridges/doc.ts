@@ -11,8 +11,9 @@
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
 import type { JsonObject } from "../mcp/types";
-import type { Bridge } from "./types";
+import type { Bridge, ConfirmBy } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
+import { emitActivity } from "../presence/registry";
 import type { AgentTarget } from "../presence/types";
 import { pushUndoEntry } from "../undo/undo-stack";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
@@ -74,19 +75,46 @@ export interface DocBridgeOptions<N extends DocNode, TOp = TreeOp<N>> {
   stagePolicy?: StagePolicy<TOp>;
   /** Fired when an op is staged pending human confirmation. */
   onPending?: (staged: { id: string; op: TOp; label: string }) => void;
+  /**
+   * Who confirms a staged op. Default `"human"`: no `<surface>_confirm` tool is
+   * registered, and the host confirms through the returned bridge's
+   * `confirm(id)` (wire it to the Accept button `onPending` shows).
+   * `"agent"` registers `<surface>_confirm`, so the agent that staged an op can
+   * apply it itself: the pre-0.66 behaviour, as an explicit opt-in.
+   */
+  confirmBy?: ConfirmBy;
   /** Summarize a node for describe/list. Default: id/type/parent + prop keys. */
   describeNode?: (node: N) => Record<string, unknown>;
 }
 
-/** Register the generic doc-surface bridge. Returns a {@link Bridge}. */
+/** A staged op awaiting confirmation, as the host sees it. */
+export interface DocPending<TOp> {
+  id: string;
+  op: TOp;
+  label: string;
+  targetId?: string;
+}
+
+/** The doc bridge, plus the host-side (human) confirm path. */
+export type DocBridge<TOp = unknown> = Bridge & {
+  /** Apply a staged op by its pending id. Wire to a human-only control. False if nothing was pending under that id. */
+  confirm: (id: string) => boolean;
+  /** Discard a staged op by its pending id. False if nothing was pending under that id. */
+  reject: (id: string) => boolean;
+  /** Ops currently awaiting confirmation, oldest first. */
+  pending: () => DocPending<TOp>[];
+};
+
+/** Register the generic doc-surface bridge. Returns a {@link DocBridge}. */
 export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
   host: ToolHost,
   options: DocBridgeOptions<N, TOp>,
-): Bridge {
+): DocBridge<TOp> {
   const { adapter, surface } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const reducer = (options.reducer ?? (treeReducer<N>() as unknown as DocReducer<DocTree<N>, TOp>));
   const stage = options.stagePolicy ?? (autoApply as StagePolicy<TOp>);
+  const confirmBy: ConfirmBy = options.confirmBy ?? "human";
   const makeNode =
     options.makeNode ?? (({ id, type, parent, order }, props) => ({ id, type, parent, order, props }) as N);
   const describeNode =
@@ -342,18 +370,28 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
     );
   }
 
+  /** Apply a staged op. Shared by the host path and the opt-in agent tool. */
+  function applyPending(id: string): { op: TOp; label: string; targetId?: string } | null {
+    const p = pending.get(id);
+    if (!p) return null;
+    pending.delete(id);
+    commit(p.op, p.label, p.targetId);
+    return p;
+  }
+
   // ── Staged-write confirm / reject ───────────────────────────────────────
-  reg(
+  // Confirm is the human's by default: an agent that could confirm its own
+  // staged op would make the staging meaningless. Reject stays an agent tool,
+  // because withdrawing your own proposal applies nothing.
+  if (confirmBy === "agent") reg(
     "confirm",
     "Apply a staged op. Pass the `pendingId` a staged mutation returned — not the node `id` it also returns.",
     { id: { type: "string", description: "The `pendingId` from a staged mutation." } },
     ["id"],
     (args) => {
       const id = String(args.id);
-      const p = pending.get(id);
+      const p = applyPending(id);
       if (!p) throw new Error(`No pending op ${id}`);
-      pending.delete(id);
-      commit(p.op, p.label, p.targetId);
       return { ok: true, applied: p.label, id: p.targetId, _text: `applied ${p.label}` };
     },
     true,
@@ -381,5 +419,23 @@ export function registerDocBridge<N extends DocNode, TOp = TreeOp<N>>(
       for (const d of disposers) d();
       pending.clear();
     },
+    confirm: (id: string) => {
+      const p = applyPending(id);
+      if (!p) return false;
+      // The op lands now, so this is when peers should see it, attributed to
+      // the agent whose op it is.
+      emitActivity({
+        agentId: agent.id,
+        agentName: agent.name,
+        agentColor: agent.color,
+        target: target(p.targetId),
+        action: `${surface}_confirm`,
+        timestamp: Date.now(),
+        meta: { applied: p.label, confirmedBy: "human" },
+      });
+      return true;
+    },
+    reject: (id: string) => pending.delete(id),
+    pending: () => [...pending.entries()].map(([id, p]) => ({ id, ...p })),
   };
 }

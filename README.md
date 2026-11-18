@@ -132,7 +132,7 @@ const bridge = registerContentReactionBridge(host, {
 
 Tools: `reaction_list`, `reaction_read` (value, counts, available reactions, mode), `reaction_toggle` (one key, by the component's rule: in single mode choosing a key replaces the active one) and `reaction_set` (the whole value). Writes broadcast an `AgentActivity` event (kind `"reaction"`, element = the content id) and push an undo entry. A refused, declined or no-op write does neither.
 
-Every comment on a page can register on the **same** host: the tools are registered once and take a `content` argument, optional while exactly one content is mounted (the form bridge's model). `dispose()` removes only that content. A reaction is posted as the human, so `pendingMode: true` stages writes behind a host `confirm` hook, or `confirm: true` on the call. It is off by default.
+Every comment on a page can register on the **same** host: the tools are registered once and take a `content` argument, optional while exactly one content is mounted (the form bridge's model). `dispose()` removes only that content. A reaction is posted as the human, so `pendingMode: true` stages writes behind a host `confirm` hook. It is off by default. With no hook, a staged write is refused: the agent's own `confirm: true` counts only when the host sets `confirmBy: "agent"`.
 
 ### Screens bridge: acknowledge after the host commits
 
@@ -932,6 +932,16 @@ to you:
   verbatim (an embedded CR runs a command; ANSI/OSC reach the terminal) — set
   `osc52={false}` on any agent-driveable `<Terminal>` and gate writes like runs.
   `{ terminals }` grants the agent every listed pane unless you pass `canAccess`.
+- **Only a person confirms a staged write (`confirmBy`, default `"human"`).** Every
+  bridge that stages writes takes `confirmBy: "human" | "agent"`. By default no
+  agent-callable tool or argument confirms anything: the doc, cms and screen-doc
+  bridges register no `<surface>_confirm`, the TUI bridge no `tui_action_confirm`,
+  the terminal bridge no `terminal_confirm`, and the catalog, features, files and
+  content-reaction bridges ignore `confirm: true` (with no host `confirm` hook, a
+  staged write is refused). The host confirms through the returned bridge's
+  `confirm(id)` (doc, cms, screen-doc, tui, terminal) or its own `confirm` hook.
+  `confirmBy: "agent"` restores agent self-confirm, for a host with its own
+  confirmation policy upstream.
 - **Files must be root-scoped by the host.** Pass `root` to `registerFilesBridge`
   for a fail-closed string guard, but a host over a real filesystem MUST also
   `realpath` to defeat symlink/junction escapes — the bridge can't (it runs in the

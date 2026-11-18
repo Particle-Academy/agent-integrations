@@ -9,12 +9,12 @@ import type { JsonObject } from "../../mcp/types";
 function setup(stagePolicy?: StagePolicy<CmsOp>) {
   let tree: DocTree<StyledNode> = { nodes: {} };
   const host = new ToolRegistry();
-  registerCmsBridge(host, { adapter: { get: () => tree, set: (n) => { tree = n; } }, stagePolicy });
+  const bridge = registerCmsBridge(host, { adapter: { get: () => tree, set: (n) => { tree = n; } }, stagePolicy });
   const call = async (name: string, args: JsonObject = {}) => {
     const r = await host.callTool(name, args);
     return { isError: r.isError, sc: (r.structuredContent ?? {}) as Record<string, unknown> };
   };
-  return { host, call, tree: () => tree };
+  return { host, bridge, call, tree: () => tree };
 }
 
 describe("registerCmsBridge (on registerDocBridge)", () => {
@@ -26,8 +26,10 @@ describe("registerCmsBridge (on registerDocBridge)", () => {
     for (const v of [
       "cms_describe", "cms_get", "cms_list", "cms_get_node",
       "cms_add", "cms_update", "cms_remove", "cms_move",
-      "cms_set_style", "cms_set_layout", "cms_confirm", "cms_reject",
+      "cms_set_style", "cms_set_layout", "cms_reject",
     ]) expect(names).toContain(v);
+    // Confirming is the person's, through the host (confirmBy defaults to "human").
+    expect(names).not.toContain("cms_confirm");
     expect(names).toContain("agent_undo");
     expect(names).toContain("agent_redo");
     expect(names).toContain("agent_history");
@@ -56,13 +58,13 @@ describe("registerCmsBridge (on registerDocBridge)", () => {
     expect(tree().nodes[child.sc.id as string]).toBeTruthy();
   });
 
-  it("stagePolicy 'confirm' stages ops until cms_confirm (and cms_reject discards)", async () => {
-    const { call, tree } = setup(() => "confirm");
+  it("stagePolicy 'confirm' stages ops until the host confirms (and cms_reject discards)", async () => {
+    const { bridge, call, tree } = setup(() => "confirm");
     const add = await call("cms_add", { type: "box" });
     expect(add.sc.staged).toBe(true);
     expect(Object.keys(tree().nodes).length).toBe(0); // nothing applied yet
 
-    await call("cms_confirm", { id: add.sc.pendingId as string });
+    bridge.confirm(add.sc.pendingId as string);
     expect(Object.keys(tree().nodes).length).toBe(1); // now applied
 
     const add2 = await call("cms_add", { type: "box" });
@@ -81,7 +83,7 @@ describe("registerCmsBridge (on registerDocBridge)", () => {
 
       let tree = seeded.tree();
       const host = new ToolRegistry();
-      registerCmsBridge(host, {
+      const bridge = registerCmsBridge(host, {
         adapter: { get: () => tree, set: (n) => { tree = n; } },
         stagePolicy: () => "confirm",
       });
@@ -100,8 +102,7 @@ describe("registerCmsBridge (on registerDocBridge)", () => {
       expect(staged.id).toBe(id);
       expect(staged.pendingId).toEqual(expect.stringContaining("cms-pending-"));
 
-      const confirmed = await call("cms_confirm", { id: staged.pendingId as string });
-      expect(confirmed.ok).toBe(true);
+      expect(bridge.confirm(staged.pendingId as string)).toBe(true);
     },
   );
 

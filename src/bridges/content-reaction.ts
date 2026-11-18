@@ -1,7 +1,7 @@
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
 import type { CallToolResult, JsonObject } from "../mcp/types";
-import type { Bridge } from "./types";
+import type { Bridge, ConfirmBy } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import { pushUndoEntry } from "../undo/undo-stack";
 import { ensureUndoToolsRegistered } from "../undo/undo-tools";
@@ -70,6 +70,13 @@ export type ContentReactionBridgeOptions = {
    */
   pendingMode?: boolean;
   confirm?: (req: ContentReactionConfirmRequest) => boolean | Promise<boolean>;
+  /**
+   * Who may confirm a write staged by pendingMode. Default `"human"`: only the host `confirm` hook
+   * can, and with no hook the write is refused; the tool takes no `confirm`
+   * argument. `"agent"` restores the pre-0.66 `confirm: true` argument, which
+   * lets the agent acknowledge its own staged write when no hook is wired.
+   */
+  confirmBy?: ConfirmBy;
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
@@ -102,7 +109,7 @@ const TOOL_DEFS: ToolDef[] = [
       "Toggle one reaction by key. In multi mode it turns that key on or off and leaves the others; in single mode choosing a key replaces the active one, and choosing the active one clears it.",
     properties: {
       key: { type: "string", description: "Reaction key (see reaction_read)." },
-      confirm: { type: "boolean", description: "Apply a write staged by pendingMode." },
+      confirm: { type: "boolean", description: "Ignored unless the host set confirmBy: \"agent\"." },
     },
     required: ["key"],
   },
@@ -112,7 +119,7 @@ const TOOL_DEFS: ToolDef[] = [
       "Replace the active reactions with `value`, an array of reaction keys. [] clears them. Single mode accepts at most one key.",
     properties: {
       value: { type: "array", items: { type: "string" } },
-      confirm: { type: "boolean", description: "Apply a write staged by pendingMode." },
+      confirm: { type: "boolean", description: "Ignored unless the host set confirmBy: \"agent\"." },
     },
     required: ["value"],
   },
@@ -211,6 +218,9 @@ export function registerContentReactionBridge(host: ToolHost, options: ContentRe
   }
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const pendingMode = options.pendingMode ?? false;
+  // The tools are shared by every content on the host, so the `confirm`
+  // argument stays in the schema; it is honoured only for an opted-in content.
+  const agentConfirms = (options.confirmBy ?? "human") === "agent";
   const bridgeId = `content-reaction:${contentId}`;
   const label = adapter.title ?? contentId;
 
@@ -224,6 +234,9 @@ export function registerContentReactionBridge(host: ToolHost, options: ContentRe
     if (options.confirm) {
       const ok = await options.confirm({ action, content: contentId, value, next });
       return ok ? null : errorResult(`Declined: ${action} on "${contentId}" (the human did not confirm). Nothing changed.`);
+    }
+    if (!agentConfirms) {
+      return errorResult(`${action} on "${contentId}" needs a person to confirm it (pendingMode), and this host wired no confirm hook. Nothing changed.`);
     }
     if (!confirmed) {
       return errorResult(`${action} is staged (pendingMode). Re-call with confirm:true to apply, or wire a host confirm hook.`);

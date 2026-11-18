@@ -91,7 +91,7 @@ function catalogHost(gate: Gate): ToolRegistry {
     }),
   };
   const host = new ToolRegistry();
-  registerCatalogBridge(host, { adapter });
+  registerCatalogBridge(host, { adapter, confirm: () => true });
   return host;
 }
 
@@ -184,7 +184,7 @@ function featuresHost(gate: Gate): ToolRegistry {
     listGroups: (subject) => [...groupsOf(subject)],
   };
   const host = new ToolRegistry();
-  registerFeaturesBridge(host, { adapter });
+  registerFeaturesBridge(host, { adapter, confirm: () => true });
   return host;
 }
 

@@ -26,6 +26,11 @@ cowork, mcp, relay-server, dom-navigation, components, ...).
   decides, sends, signs or confirms on the human's behalf;
   `AGENT_CHAT_FORBIDDEN_TOOL_NAME` and `SIGN_FORBIDDEN_TOOL_NAME` are the
   patterns a test holds every tool name against.
+- **No agent self-confirm by default.** Every bridge that stages writes takes
+  `confirmBy` (default `"human"`). `src/bridges/__tests__/confirm-by.test.ts`
+  holds closed tool lists, sweeps every registered tool with every yes-shaped
+  argument after staging, and checks the opt-in. A new staging bridge belongs
+  in that file.
 
 ## Changelog
 

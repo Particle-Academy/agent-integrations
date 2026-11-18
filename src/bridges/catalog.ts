@@ -1,7 +1,7 @@
 import { textResult, errorResult } from "../mcp/server";
 import type { ToolHost } from "../mcp/tool-host";
 import type { JsonObject } from "../mcp/types";
-import type { Bridge } from "./types";
+import type { Bridge, ConfirmBy } from "./types";
 import { wrapToolWithActivity } from "../presence/wrap-tool-with-activity";
 import type { AgentTarget } from "../presence/types";
 import { pushUndoEntry } from "../undo/undo-stack";
@@ -110,6 +110,13 @@ export type CatalogBridgeOptions = {
   pendingMode?: boolean;
   /** Host confirm hook for destructive ops (pendingMode). Resolves true to proceed. */
   confirm?: (req: { action: string; id: string; label: string }) => Promise<boolean> | boolean;
+  /**
+   * Who may confirm a destructive op. Default `"human"`: only the host `confirm` hook
+   * can, and with no hook the write is refused; the tool takes no `confirm`
+   * argument. `"agent"` restores the pre-0.66 `confirm: true` argument, which
+   * lets the agent acknowledge its own staged write when no hook is wired.
+   */
+  confirmBy?: ConfirmBy;
 };
 
 const DEFAULT_AGENT = { id: "agent", name: "Agent", color: "#a855f7" };
@@ -138,6 +145,10 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
   const { adapter } = options;
   const agent = { ...DEFAULT_AGENT, ...(options.agent ?? {}) };
   const pendingMode = options.pendingMode ?? true;
+  const agentConfirms = (options.confirmBy ?? "human") === "agent";
+  // The `confirm` argument exists only when the host opted the agent into it.
+  const CONFIRM_ARG = agentConfirms ? { confirm: { type: "boolean" } } : {};
+  const CONFIRM_HINT = agentConfirms ? "pass confirm:true or wire a host confirm hook" : "the host's confirm hook asks the person";
   const catalogId = adapter.id ?? "catalog";
   const disposers: Array<() => void> = [];
   // The bridge id is also its registrant identity on the host: the same bridge
@@ -193,7 +204,9 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
       const ok = await options.confirm({ action, id, label });
       return ok ? null : errorResult(`Declined: ${action} ${id} (human did not confirm).`);
     }
-    // No host confirm hook → require an explicit confirm:true arg as the staged ack.
+    // No host confirm hook. Only a host that opted in (confirmBy: "agent") lets
+    // the agent's own confirm:true stand in for the person.
+    if (!agentConfirms) return errorResult(`${action} needs a person to confirm it (pendingMode), and this host wired no confirm hook, so it cannot be applied from here.`);
     if (!hasConfirmArg) {
       return errorResult(`${action} is staged (pendingMode). Re-call with confirm:true to apply, or wire a host confirm hook.`);
     }
@@ -346,8 +359,8 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
 
   reg(
     "catalog_delete_product",
-    "Soft-delete a product (preserves financial history). Staged in pendingMode — pass confirm:true or wire a host confirm hook.",
-    { id: { type: "string" }, confirm: { type: "boolean" } },
+    `Soft-delete a product (preserves financial history). Staged in pendingMode: ${CONFIRM_HINT}.`,
+    { id: { type: "string" }, ...CONFIRM_ARG },
     ["id"],
     async (args) => {
       const id = str(args.id);
@@ -372,8 +385,8 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
 
   reg(
     "catalog_delete_price",
-    "Soft-delete a price (mirrors Stripe archiving). Staged in pendingMode — pass confirm:true or wire a host confirm hook.",
-    { id: { type: "string" }, confirm: { type: "boolean" } },
+    `Soft-delete a price (mirrors Stripe archiving). Staged in pendingMode: ${CONFIRM_HINT}.`,
+    { id: { type: "string" }, ...CONFIRM_ARG },
     ["id"],
     async (args) => {
       const id = str(args.id);

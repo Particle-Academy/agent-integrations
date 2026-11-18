@@ -135,12 +135,12 @@ describe("staged by default", () => {
     expect(res.isError).toBe(true);
   });
 
-  it("accepts an explicit confirm:true when the host wired no hook", async () => {
-    // The catalog bridge's convention: with no host hook, the agent's own
-    // acknowledgement is the staged step.
+  it("accepts an explicit confirm:true when the host wired no hook, only under confirmBy: 'agent'", async () => {
+    // The pre-0.66 convention, now an opt-in: with no host hook, the agent's
+    // own acknowledgement is the staged step.
     const host = new ToolRegistry();
     const createFolder = vi.fn();
-    registerFilesBridge(host, { adapter: makeAdapter({ createFolder }) });
+    registerFilesBridge(host, { adapter: makeAdapter({ createFolder }), confirmBy: "agent" });
 
     const res = await host.callTool("files_create_folder", {
       parentPath: "/root",

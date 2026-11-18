@@ -3,6 +3,7 @@ import { errorResult, textResult, type MicroMcpServer, type Transport } from "..
 import type { JsonObject, ToolCallContext } from "../mcp/types";
 import type { ToolHost } from "../mcp/tool-host";
 import type { HumanPlusActor, HumanPlusEventStore, HumanPlusPriority } from "../human-plus/events";
+import type { ConfirmBy } from "./types";
 
 export type TuiActionPolicy = "observe" | "execute" | "propose" | "confirm" | "human-only";
 export interface TuiSurfaceCommandLike { name: string; description?: string; policy?: TuiActionPolicy; inputSchema?: Record<string, unknown>; invoke(input?: Record<string, unknown>): unknown | Promise<unknown>; }
@@ -14,6 +15,15 @@ export interface TuiBridgeOptions {
   appId: string;
   sessionId?: string;
   actor?: HumanPlusActor;
+  /**
+   * Who confirms a `propose` / `confirm`-policy action. Default `"human"`: no
+   * `tui_action_confirm` tool; the host confirms through the returned bridge's
+   * `confirm(id)`. `"agent"` registers `tui_action_confirm` (pre-0.66), as an
+   * explicit opt-in.
+   */
+  confirmBy?: ConfirmBy;
+  /** Who the host path records as confirming. Default `{ kind: "human", id: "human" }`. */
+  human?: HumanPlusActor;
 }
 
 type Subscription = { consumerId: string; types?: string[]; surfaces?: string[] };
@@ -22,6 +32,8 @@ type PendingAction = { id: string; surfaceId: string; command: string; input: Re
 export function registerTuiBridge(host: ToolHost, options: TuiBridgeOptions) {
   const disposers: Array<() => void> = []; const subscriptions = new Map<unknown, Subscription>(); const pending = new Map<string, PendingAction>();
   const defaultActor = options.actor ?? { kind: "agent" as const, id: "agent", name: "Agent" };
+  const humanActor: HumanPlusActor = options.human ?? { kind: "human", id: "human" };
+  const confirmBy: ConfirmBy = options.confirmBy ?? "human";
   const serverCapabilities = (host as ToolHost & { capabilities?: { experimental?: Record<string, unknown> } }).capabilities;
   if (serverCapabilities) serverCapabilities.experimental = { ...serverCapabilities.experimental, "io.particle-academy/human-plus": { version: "1", push: true, durableCursor: true, stagedActions: true, wakesAgent: false } };
   const register = (name: string, description: string, properties: Record<string, unknown>, required: string[], handler: (args: JsonObject, context?: ToolCallContext) => unknown | Promise<unknown>) => {
@@ -49,11 +61,22 @@ export function registerTuiBridge(host: ToolHost, options: TuiBridgeOptions) {
     emitActivity({ agentId: defaultActor.id, agentName: defaultActor.name, target: { kind: "custom", elementId: surfaceId }, action: `tui_${commandName}`, timestamp: Date.now(), meta: { surfaceId } });
     return { executed: true, result };
   });
-  register("tui_action_confirm", "Confirm and execute a pending TUI action.", { id: { type: "string" } }, ["id"], async (args) => {
-    const id = String(args.id); const value = pending.get(id); if (!value) throw new Error(`Unknown pending action: ${id}`); const surface = options.registry.get(value.surfaceId); const command = surface?.commands?.find((x) => x.name === value.command); if (!command) throw new Error("Pending action target is no longer available");
-    pending.delete(id); const result = await command.invoke(value.input); await publish(value.surfaceId, "action.confirmed", { id, command: value.command, result }, { kind: "human", id: "human" }); return { executed: true, result };
-  });
-  register("tui_action_reject", "Reject a pending TUI action.", { id: { type: "string" } }, ["id"], async (args) => { const id = String(args.id); const value = pending.get(id); if (!value) throw new Error(`Unknown pending action: ${id}`); pending.delete(id); await publish(value.surfaceId, "action.rejected", { id, command: value.command }, { kind: "human", id: "human" }); return { rejected: true }; });
+  /** Execute a pending action. `actor` is who said yes: the human on the host path, the agent on the opt-in tool. */
+  const confirmPending = async (id: string, actor: HumanPlusActor) => {
+    const value = pending.get(id); if (!value) throw new Error(`Unknown pending action: ${id}`); const surface = options.registry.get(value.surfaceId); const command = surface?.commands?.find((x) => x.name === value.command); if (!command) throw new Error("Pending action target is no longer available");
+    pending.delete(id); const result = await command.invoke(value.input); await publish(value.surfaceId, "action.confirmed", { id, command: value.command, result }, actor); return { executed: true, result };
+  };
+  const rejectPending = async (id: string, actor: HumanPlusActor) => {
+    const value = pending.get(id); if (!value) throw new Error(`Unknown pending action: ${id}`); pending.delete(id); await publish(value.surfaceId, "action.rejected", { id, command: value.command }, actor); return { rejected: true };
+  };
+  // Confirming is the human's by default: an agent that could confirm its own
+  // proposal would make `propose` / `confirm` policies meaningless. The host
+  // confirms through the returned bridge's `confirm(id)`.
+  if (confirmBy === "agent") {
+    register("tui_action_confirm", "Confirm and execute a pending TUI action.", { id: { type: "string" } }, ["id"], (args) => confirmPending(String(args.id), defaultActor));
+  }
+  // Withdrawing a proposal applies nothing, so the agent keeps it, recorded as itself.
+  register("tui_action_reject", "Withdraw a pending TUI action. Executes nothing.", { id: { type: "string" } }, ["id"], (args) => rejectPending(String(args.id), defaultActor));
   register("human_plus_events_list", "Pull durable Human+ events for a consumer.", { consumerId: { type: "string" }, after: { type: "number" }, limit: { type: "number" }, unacknowledgedOnly: { type: "boolean" } }, ["consumerId"], (args) => options.eventStore.list({ consumerId: String(args.consumerId), after: typeof args.after === "number" ? args.after : undefined, limit: typeof args.limit === "number" ? args.limit : undefined, unacknowledgedOnly: args.unacknowledgedOnly === true }));
   register("human_plus_events_ack", "Acknowledge durable Human+ events.", { consumerId: { type: "string" }, eventIds: { type: "array", items: { type: "string" } }, disposition: { type: "string" } }, ["consumerId", "eventIds"], async (args) => { const ids = Array.isArray(args.eventIds) ? args.eventIds.map(String) : []; await options.eventStore.acknowledge(String(args.consumerId), ids, ["seen", "handled", "rejected", "ignored"].includes(String(args.disposition)) ? String(args.disposition) as any : "handled"); return { acknowledged: ids.length }; });
   register("human_plus_events_subscribe", "Push matching Human+ events on this MCP transport while retaining them in the inbox.", { consumerId: { type: "string" }, types: { type: "array" }, surfaces: { type: "array" } }, ["consumerId"], (args, context) => { if (!context?.transport) throw new Error("Subscriptions require an attached MCP transport"); subscriptions.set(context.transport, { consumerId: String(args.consumerId), types: Array.isArray(args.types) ? args.types.map(String) : undefined, surfaces: Array.isArray(args.surfaces) ? args.surfaces.map(String) : undefined }); return { subscribed: true, delivery: "at-least-once", wakesAgent: false }; });
@@ -67,5 +90,13 @@ export function registerTuiBridge(host: ToolHost, options: TuiBridgeOptions) {
       server.notify({ jsonrpc: "2.0", method: "notifications/human_plus/event", params: event as never }, transport as Transport);
     }
   });
-  return { id: "tui", title: "Fancy TUI", pending: () => [...pending.values()], dispose: () => { disposers.forEach((dispose) => dispose()); unsubscribeStore(); subscriptions.clear(); pending.clear(); } };
+  return {
+    id: "tui",
+    title: "Fancy TUI",
+    pending: () => [...pending.values()],
+    /** Execute a pending action as the human. Wire to a human-only control. */
+    confirm: (id: string) => confirmPending(id, humanActor),
+    /** Drop a pending action as the human. */
+    reject: (id: string) => rejectPending(id, humanActor),
+    dispose: () => { disposers.forEach((dispose) => dispose()); unsubscribeStore(); subscriptions.clear(); pending.clear(); } };
 }

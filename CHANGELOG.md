@@ -11,6 +11,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-11-17
+
+### Security
+
+- **BREAKING: an agent can no longer confirm its own staged write.** Every bridge
+  that stages writes registered or honoured an agent-callable "yes", so the agent
+  that proposed a change could also accept it and `pendingMode` had no person in
+  it. Each now takes `confirmBy: "human" | "agent"`, **default `"human"`**:
+  - `registerDocBridge`, `registerCmsBridge`, `registerScreenDocBridge`: no
+    `<surface>_confirm` tool (`cms_confirm`, `screen_confirm`). `<surface>_reject`
+    stays: withdrawing a proposal applies nothing.
+  - `registerTuiBridge`: no `tui_action_confirm`. `tui_action_reject` stays, and
+    is now recorded as the agent, not as `{ kind: "human" }`.
+  - `registerCatalogBridge`, `registerFeaturesBridge`, `registerFilesBridge`,
+    `registerContentReactionBridge`: `confirm: true` from the agent no longer
+    applies a staged write. With no host `confirm` hook, the write is refused.
+    Catalog, features and files drop `confirm` from the tool schema.
+
+  **Migration:** a host that relied on agent self-confirm passes
+  `confirmBy: "agent"` to that bridge, and nothing else changes. A host that
+  wants the person to confirm (the intended path) wires its Accept button to the
+  returned bridge's `confirm(id)` (doc, cms, screen-doc, tui) or passes a
+  `confirm` hook (catalog, features, files, content-reaction). Hosts already
+  using a `confirm` hook do nothing.
+
+  Owner ruling 2026-11-18 (q_b83ac35f): human-only default.
+
+### Added
+
+- **`DocBridge` host path.** `registerDocBridge` / `registerCmsBridge` /
+  `registerScreenDocBridge` return `confirm(id)`, `reject(id)` and `pending()`,
+  so the host applies a staged op from a human control. A confirmed op is
+  undoable and broadcasts activity when it lands.
+- **`registerTuiBridge` returns `confirm(id)` / `reject(id)`**, recorded as the
+  person (`options.human`, default `{ kind: "human", id: "human" }`).
+- **`registerTerminalBridge` takes `confirmBy`**, the shared option name. Its
+  default was already human-only; `allowAgentConfirm` stays as an alias.
+- **`ConfirmBy`** type, exported from the root.
+
 ### Changed
 
 - **CI: the lab-certificate gate verifies against the lab's rotated key list.**

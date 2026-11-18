@@ -72,6 +72,12 @@ Vendored source: `npx fancy-cli@latest add <slug>`.
   the token as a password.
 - **Terminal is staged by default** (`pendingMode: true`), and confirm / reject
   are not agent tools. Wire a human control to `bridge.confirm(id)`.
+- **An agent cannot confirm its own staged write** (`confirmBy`, default
+  `"human"`). The doc / cms / screen-doc / tui bridges register no confirm tool,
+  and catalog / features / files / content-reaction ignore `confirm: true`. Wire
+  the Accept button `onPending` shows to the returned `bridge.confirm(id)`, or
+  pass a host `confirm` hook. `confirmBy: "agent"` restores self-confirm, only for
+  a host that confirms upstream.
 - **Files must be root-scoped by the host.** Pass `root` to
   `registerFilesBridge`, and `realpath` on the host side as well.
 - **Passkeys, agent chat and sign bridges cannot act for the human** (no

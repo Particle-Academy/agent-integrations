@@ -285,10 +285,10 @@ describe("registerContentReactionBridge", () => {
       expect(state.value).toEqual(["like"]);
     });
 
-    it("on, without a confirm hook: staged until confirm:true", async () => {
+    it("on, without a confirm hook, confirmBy: 'agent': staged until confirm:true", async () => {
       const host = new ToolRegistry();
       const { adapter, state } = makeContent("c1");
-      mount(host, adapter, { pendingMode: true });
+      mount(host, adapter, { pendingMode: true, confirmBy: "agent" });
       const staged = await call(host, "reaction_toggle", { key: "like" });
       expect(staged.isError).toBe(true);
       expect(staged.text).toContain("confirm:true");

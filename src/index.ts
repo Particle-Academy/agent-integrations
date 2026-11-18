@@ -59,7 +59,7 @@ export { MCP_PROTOCOL_VERSION } from "./mcp/types";
 // The root barrel stays core-only: MCP, presence, undo, sharing, sheets,
 // forms, code, charts, scene, screens — none of which depend on optional
 // peers.
-export type { Bridge, BridgeFactory } from "./bridges/types";
+export type { Bridge, BridgeFactory, ConfirmBy } from "./bridges/types";
 export {
   registerFormBridge,
   type FormBridgeAdapter,
@@ -251,7 +251,9 @@ export {
 export {
   registerDocBridge,
   type DocAdapter,
+  type DocBridge,
   type DocBridgeOptions,
+  type DocPending,
   type DocOpTool,
 } from "./bridges/doc";
 export {

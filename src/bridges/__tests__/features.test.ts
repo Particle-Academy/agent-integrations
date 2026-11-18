@@ -79,15 +79,15 @@ describe("registerFeaturesBridge", () => {
     resetAllUndoStacks();
     const host = new ToolRegistry();
     const { adapter, assignments } = makeAdapter();
-    registerFeaturesBridge(host, { adapter });
+    registerFeaturesBridge(host, { adapter, confirm: () => true });
     const subject = { id: "user-7" };
 
     // Before: no access.
     const before = await host.callTool("features_check", { feature: "advanced-reports", subject });
     expect(sc(before).allowed).toBe(false);
 
-    // Grant via the "pro" group (confirmed).
-    await host.callTool("features_grant", { subject, group: "pro", confirm: true });
+    // Grant via the "pro" group (the host hook confirms).
+    await host.callTool("features_grant", { subject, group: "pro" });
     expect(assignments.get("user-7")?.has("pro")).toBe(true);
 
     const after = await host.callTool("features_check", { feature: "advanced-reports", subject });
@@ -97,7 +97,7 @@ describe("registerFeaturesBridge", () => {
     expect(sc(list).enabled).toContain("export");
   });
 
-  it("stages features_grant in pendingMode until confirm:true", async () => {
+  it("refuses features_grant in pendingMode when no person can confirm it", async () => {
     resetAllUndoStacks();
     const host = new ToolRegistry();
     const { adapter, assignments } = makeAdapter();
@@ -106,7 +106,7 @@ describe("registerFeaturesBridge", () => {
 
     const staged = await host.callTool("features_grant", { subject, group: "pro" });
     expect(staged.isError).toBe(true);
-    expect(text(staged)).toContain("staged");
+    expect(text(staged)).toContain("needs a person to confirm it");
     expect(assignments.get("user-9")).toBeUndefined();
   });
 
@@ -114,11 +114,11 @@ describe("registerFeaturesBridge", () => {
     resetAllUndoStacks();
     const host = new ToolRegistry();
     const { adapter, assignments } = makeAdapter();
-    registerFeaturesBridge(host, { adapter });
+    registerFeaturesBridge(host, { adapter, confirm: () => true });
     const subject = "user-3";
 
-    await host.callTool("features_grant", { subject, group: "pro", confirm: true });
-    await host.callTool("features_revoke", { subject, group: "pro", confirm: true });
+    await host.callTool("features_grant", { subject, group: "pro" });
+    await host.callTool("features_revoke", { subject, group: "pro" });
     expect(assignments.get("user-3")?.has("pro")).toBe(false);
 
     await host.callTool("agent_undo", {});
