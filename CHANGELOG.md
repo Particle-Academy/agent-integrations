@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI: re-pin org third-party allowlist to 2614224
+
 ## [0.67.0] - 2026-11-18
 
 **What a consumer must do.** Nothing: both additions are new. `registerTemplateBridge`
