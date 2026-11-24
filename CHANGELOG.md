@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Co-work: a peer no longer keeps a stale cursor after a socket reconnect.** A
+  Pusher-protocol socket server keeps no history, so a cursor move or masked-field
+  activity published while a socket was down reached nobody. After the reconnect
+  the page re-authorized its channel and re-synced the session, but never re-sent
+  its presence, so the peer showed the old position until the next move (lab test
+  87, Laravel host, runs 1287 and 1300). A session now re-publishes its latest
+  cursor and activity state once when its presence channel is acknowledged again
+  (laravel-echo and fancy-query/socket both re-fire `here` on a reconnect) and when
+  a member is added (a peer whose socket came back). Only the latest is sent, never
+  the history, and in both `server` and `direct` presence routing. Peers treat a
+  re-sent frame as idempotent: a cursor, activity or `hello` identical to what they
+  already hold changes nothing, so it neither wakes an idle peer nor counts as a new
+  move or activity event. Membership after a reconnect was already corrected from the
+  channel's `here` list (missed `member_added` / `member_removed`); a test now holds
+  that. Nothing to do as a consumer; one extra presence frame per reconnect or join,
+  and only when this page has published a cursor or activity.
+
 ## [0.68.0] - 2026-11-24
 
 **What a consumer must do.** Nothing, unless you compared `MCP_PROTOCOL_VERSION`

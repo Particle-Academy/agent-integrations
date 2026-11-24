@@ -655,6 +655,21 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     }, `commit own ${intent.kind}`);
   };
 
+  /**
+   * This page's own presence as last published: the position and the activity state a
+   * peer should be showing. A Pusher-protocol socket server keeps no history, so a frame
+   * published while a socket was down reaches nobody; after a reconnect this is re-sent,
+   * once, and never anything older (lab test 87, runs 1287 and 1300).
+   */
+  let lastCursorSent: ({ route: string } & CoworkCursor) | null = null;
+  let lastActivitySent: { handle: string; active: boolean } | null = null;
+  /** Sent outside the state queue (presence goes over the network). */
+  function publishActivity(handle: string, active: boolean): void {
+    lastActivitySent = { handle, active };
+    if (presenceRouting === "server") void sendSerial(() => sendPresence({ kind: "activity", handle, active }));
+    else void send({ t: "activity", view: self, handle, active });
+  }
+
   /** What a followed peer's visit or scroll just made this page do, so its echo is not re-sent. */
   const followEcho = { route: null as string | null, visitUntil: 0, scrollUntil: 0 };
   const followEchoMs = Math.max(0, options.followEchoMs ?? 1000);
@@ -721,9 +736,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
         if (reason) {
           if (intent.kind === "field" && view === self) {
             activeFields.set(self, intent.handle);
-            // Sent outside the state queue (presence goes over the network).
-            if (presenceRouting === "server") void sendSerial(() => sendPresence({ kind: "activity", handle: intent.handle, active: true }));
-            else void send({ t: "activity", view: self, handle: intent.handle, active: true });
+            publishActivity(intent.handle, true);
             changed();
           }
           trace("refused at the sender", { kind: intent.kind, reason });
@@ -1175,6 +1188,31 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     changed();
     return key;
   };
+  /** A cursor or activity, whispered or server-routed, identical to what this page already holds for `from`. */
+  const unchangedPresence = (from: Ref, frame: CoworkFrame): boolean => {
+    const presence = frame.t === "intent" ? frame.intent : frame;
+    const kind = frame.t === "intent" ? frame.intent.kind : frame.t;
+    if (kind === "cursor") {
+      const held = cursors.get(from);
+      const c = presence as { route?: unknown; anchor?: unknown; fx?: unknown; fy?: unknown; x?: unknown; y?: unknown };
+      if (!held || held.route !== c.route) return false;
+      const was = held.cursor as { anchor?: string; fx?: number; fy?: number; x?: number; y?: number };
+      return c.anchor !== undefined
+        ? was.anchor === c.anchor && was.fx === c.fx && was.fy === c.fy
+        : was.anchor === undefined && was.x === c.x && was.y === c.y;
+    }
+    if (kind === "activity") {
+      const a = presence as { handle?: unknown; active?: unknown; view?: unknown };
+      if (frame.t === "activity" && a.view !== from) return false;
+      return activeFields.has(from) && activeFields.get(from) === (a.active === true ? a.handle : null);
+    }
+    if (frame.t === "hello") {
+      // Direct routing re-announces itself on every `here`, so a reconnect repeats it.
+      const p = state.participants[from];
+      return heardHello.has(from) && !!p && p.route === routeOf(frame.route) && p.revision === frame.revision && p.follows === frame.follows;
+    }
+    return false;
+  };
   const receiveNow = async (message: ReceivedFrame, arrivedAt: number, learned = false): Promise<void> => {
       if (destroyed) return;
       const from = message.from;
@@ -1198,6 +1236,13 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
           if (destroyed) return;
           void serial(() => receiveNow(message, arrivedAt, true), `receive (after learning) from ${from}`);
         });
+        return;
+      }
+      // A peer re-publishes its presence after a reconnect. A frame that changes nothing
+      // this page shows is not a new move or a new activity event: it neither wakes an
+      // idle peer nor commits a presence intent again.
+      if (unchangedPresence(from, frame)) {
+        trace("presence unchanged", { from, t: frame.t });
         return;
       }
       lastSeen.set(from, now());
@@ -1296,7 +1341,16 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       // The server knows routes, revisions and follows a presence event does not carry.
       if (event.type !== "leaving") void resyncOutside();
       changed();
+      // A second `here` is a re-acknowledgement (the socket reconnected); a member added
+      // may be a peer whose socket did. Membership itself is already corrected above,
+      // from the `here` list; what nobody re-sends is this page's latest presence.
+      if (event.type === "here") acknowledgements += 1;
+      if (event.type === "here" ? acknowledgements > 1 : event.type === "joining" && event.peer.ref !== self) {
+        republishPresence(event.type === "here" ? "re-acknowledged" : `member added: ${event.peer.ref}`);
+      }
     });
+  /** How many times this page's presence channel has acknowledged it (`here`). */
+  let acknowledgements = 0;
 
   // -------------------------------------------------------------------------
   // Re-sync from the server (server routing)
@@ -1411,6 +1465,7 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
     pendingCursor = null;
     lastCursorAt = Date.now();
     const route = state.participants[self]?.route ?? "/";
+    lastCursorSent = { route, ...cursor };
     if (presenceRouting === "server") {
       // Coalesced: while a cursor send waits in the queue, a newer position replaces it.
       // A job that finds a newer position already sent does nothing, so a slow send
@@ -1423,6 +1478,35 @@ export function createCoworkSession(options: CoworkSessionOptions): CoworkSessio
       });
     }
     else void send({ t: "cursor", route, ...cursor });
+  };
+
+  /**
+   * Re-publish this page's latest cursor and activity state, once: after this page's
+   * channel is acknowledged again (a reconnect re-fires `here`, in laravel-echo and
+   * fancy-query/socket alike) and when a member is added (a peer whose socket came
+   * back, or who just arrived). Either side may have missed the last frame while a
+   * socket was down. Only the latest is sent, never a history, and triggers that land
+   * before it goes out share one re-publish. A newer cursor already on its way makes the
+   * cursor half unnecessary. Peers treat an unchanged frame as a no-op (receiveNow).
+   */
+  let republishQueued = false;
+  const republishPresence = (why: string): void => {
+    if (destroyed || republishQueued || (!lastCursorSent && !lastActivitySent)) return;
+    republishQueued = true;
+    void sendSerial(async () => {
+      republishQueued = false;
+      if (destroyed) return;
+      const cursor = pendingCursor || queuedCursor ? null : lastCursorSent;
+      const activity = lastActivitySent;
+      trace("re-publish presence", { why, cursor, activity });
+      if (presenceRouting === "server") {
+        if (cursor) await sendPresence({ kind: "cursor", ...cursor });
+        if (activity) await sendPresence({ kind: "activity", ...activity });
+      } else {
+        if (cursor) await send({ t: "cursor", ...cursor });
+        if (activity) await send({ t: "activity", view: self, ...activity });
+      }
+    });
   };
 
   // -------------------------------------------------------------------------
