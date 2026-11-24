@@ -188,7 +188,8 @@ export function registerScreensBridge(
       if (!adapter.listKinds) return errorResult("Host did not register a kind catalog. Cannot create screens dynamically.");
       const kinds = adapter.listKinds();
       const text = kinds.map((k) => `${k.kind}${k.label ? ` — ${k.label}` : ""}${k.description ? ` (${k.description})` : ""}`).join("\n");
-      return textResult(text || "(no kinds registered)", kinds);
+      // structuredContent must be a JSON object (MCP 2025-06-18+), so the rows ride under a key.
+      return textResult(text || "(no kinds registered)", { kinds });
     },
     false,
   );

@@ -231,7 +231,8 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
           priceCount: (await adapter.prices.forProduct(p.id)).length,
         })),
       );
-      return textResult(JSON.stringify(list, null, 2), list);
+      // structuredContent must be a JSON object (MCP 2025-06-18+), so the rows ride under a key.
+      return textResult(JSON.stringify(list, null, 2), { products: list });
     },
     false,
   );
@@ -271,7 +272,8 @@ export function registerCatalogBridge(host: ToolHost, options: CatalogBridgeOpti
         active: p.active ?? true,
         externalId: p.externalId ?? null,
       }));
-      return textResult(JSON.stringify(list, null, 2), list);
+      // structuredContent must be a JSON object (MCP 2025-06-18+), so the rows ride under a key.
+      return textResult(JSON.stringify(list, null, 2), { prices: list });
     },
     false,
   );

@@ -420,7 +420,8 @@ export function registerFlowBridge(
       status: n.data?.status ?? "idle",
     }));
     const text = items.map((i) => `${i.kind} ${i.id}: "${i.label}" @(${i.x},${i.y}) [${i.status}]`).join("\n") || "(empty graph)";
-    return textResult(text, items);
+    // structuredContent must be a JSON object (MCP 2025-06-18+), so the rows ride under a key.
+    return textResult(text, { nodes: items });
   });
 
   reg(
@@ -459,7 +460,8 @@ export function registerFlowBridge(
           configFields: (k.configSchema ?? []).map((f: any) => ({ key: f.key, type: f.type, label: f.label, required: !!f.required })),
         }));
         const text = all.map((k: any) => `${k.category}/${k.name}: ${k.label}${k.description ? " — " + k.description : ""}`).join("\n");
-        return textResult(text || "(no kinds registered)", all);
+        // structuredContent must be a JSON object (MCP 2025-06-18+), so the rows ride under a key.
+        return textResult(text || "(no kinds registered)", { kinds: all });
       } catch (e) {
         return errorResult(`fancy-flow registry not available: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -500,7 +502,7 @@ export function registerFlowBridge(
       from: `${e.source}${e.sourceHandle ? `:${e.sourceHandle}` : ""}`,
       to: `${e.target}${e.targetHandle ? `:${e.targetHandle}` : ""}`,
     }));
-    return textResult(items.map((i) => `${i.id}: ${i.from} → ${i.to}`).join("\n") || "(no edges)", items);
+    return textResult(items.map((i) => `${i.id}: ${i.from} → ${i.to}`).join("\n") || "(no edges)", { edges: items });
   });
 
   // ───────────── Node CRUD ─────────────

@@ -36,15 +36,18 @@ export function registerTuiBridge(host: ToolHost, options: TuiBridgeOptions) {
   const confirmBy: ConfirmBy = options.confirmBy ?? "human";
   const serverCapabilities = (host as ToolHost & { capabilities?: { experimental?: Record<string, unknown> } }).capabilities;
   if (serverCapabilities) serverCapabilities.experimental = { ...serverCapabilities.experimental, "io.particle-academy/human-plus": { version: "1", push: true, durableCursor: true, stagedActions: true, wakesAgent: false } };
-  const register = (name: string, description: string, properties: Record<string, unknown>, required: string[], handler: (args: JsonObject, context?: ToolCallContext) => unknown | Promise<unknown>) => {
+  // structuredContent must be a JSON object (MCP 2025-06-18+): a handler that
+  // returns rows has them wrapped under `listKey`, or `items` as a guard. The
+  // text keeps the handler's own value.
+  const register = (name: string, description: string, properties: Record<string, unknown>, required: string[], handler: (args: JsonObject, context?: ToolCallContext) => unknown | Promise<unknown>, listKey = "items") => {
     disposers.push(host.registerTool({ name, description, inputSchema: { type: "object", properties: properties as never, required } }, async (args, context) => {
-      try { const result = await handler(args, context); return textResult(typeof result === "string" ? result : JSON.stringify(result), result); }
+      try { const result = await handler(args, context); return textResult(typeof result === "string" ? result : JSON.stringify(result), Array.isArray(result) ? { [listKey]: result } : result); }
       catch (error) { return errorResult(error instanceof Error ? error.message : String(error)); }
     }, { owner: "tui" }));
   };
   const publish = async (surfaceId: string, type: string, payload: unknown, actor = defaultActor, priority: HumanPlusPriority = "normal") => options.eventStore.append({ appId: options.appId, sessionId: options.sessionId, surfaceId, type, payload, actor, priority });
 
-  register("tui_surfaces_list", "List addressable Fancy TUI surfaces and commands.", {}, [], () => options.registry.list().map((surface) => ({ id: surface.id, kind: surface.kind, label: surface.label, commands: surface.commands?.map((command) => ({ name: command.name, description: command.description, policy: command.policy ?? "execute", inputSchema: command.inputSchema })) ?? [] })));
+  register("tui_surfaces_list", "List addressable Fancy TUI surfaces and commands.", {}, [], () => options.registry.list().map((surface) => ({ id: surface.id, kind: surface.kind, label: surface.label, commands: surface.commands?.map((command) => ({ name: command.name, description: command.description, policy: command.policy ?? "execute", inputSchema: command.inputSchema })) ?? [] })), "surfaces");
   register("tui_surface_read", "Read a Fancy TUI surface by stable id.", { id: { type: "string" } }, ["id"], (args) => {
     const surface = options.registry.get(String(args.id)); if (!surface) throw new Error(`Unknown TUI surface: ${String(args.id)}`); return { id: surface.id, kind: surface.kind, state: surface.read() };
   });

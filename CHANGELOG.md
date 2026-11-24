@@ -20,6 +20,12 @@ error-shape fixes below reach it too, under every revision, because 2025-06-18
 already specifies both of them; the old behaviour was a deviation, not a
 per-revision difference.
 
+Separately, ten list tools now return `structuredContent` as an object (see
+below). If your code reads `structuredContent` from one of them, read the named
+key instead (`result.structuredContent.nodes`, not `result.structuredContent`).
+**An agent or client that reads only the text content is unaffected**: the
+text of every one of these tools is byte-for-byte what it was.
+
 ### Added
 
 - `MCP_PROTOCOL_VERSIONS` (exported from the root and `./mcp`): the revisions
@@ -54,6 +60,37 @@ per-revision difference.
   `rpcError(...)`-shaped one. **Do:** if you read `error` off a `tools/call`
   reply to detect a failed handler, read `result.isError`. Handlers that already
   return `errorResult(...)` are unaffected.
+- **BREAKING: ten list tools return `structuredContent` as an object, not an
+  array** (CC-fancy-0064). MCP types `structuredContent` as a JSON object, and a
+  client that validates it rejected these results. Each now wraps the SAME rows
+  under one key; the rows and the text content are unchanged.
+
+  | Tool | Was | Now | Do |
+  |---|---|---|---|
+  | `screens_list_kinds` | `[{ kind, label?, ... }]` | `{ kinds: [...] }` | read `.kinds` |
+  | `slide_list` | `[{ id, layout, elementCount, title }]` | `{ slides: [...] }` | read `.slides` |
+  | `catalog_list_products` | `[{ id, name, active, lookupKey, priceCount }]` | `{ products: [...] }` | read `.products` |
+  | `catalog_list_prices` | `[{ id, productId, currency, ... }]` | `{ prices: [...] }` | read `.prices` |
+  | `artboard_list_pieces` | `[{ sectionId, title, pieces }]` | `{ sections: [...] }` | read `.sections` |
+  | `flow_list_nodes` | `[{ id, kind, label, x, y, status }]` | `{ nodes: [...] }` | read `.nodes` |
+  | `flow_list_node_kinds` | `[{ name, category, label, ... }]` | `{ kinds: [...] }` | read `.kinds` |
+  | `flow_list_edges` | `[{ id, from, to }]` | `{ edges: [...] }` | read `.edges` |
+  | `whiteboard_list_items` | `[{ id, kind, summary }]` | `{ items: [...] }` | read `.items` |
+  | `tui_surfaces_list` | `[{ id, kind, label, commands }]` | `{ surfaces: [...] }` | read `.surfaces` |
+
+  `artboard_list_pieces` uses `sections`, not `pieces`, because each row is a
+  section carrying its own `pieces` array. **Do:** read the key in the table
+  instead of the bare result, e.g. `result.structuredContent.nodes` for
+  `result.structuredContent`. An agent reading only the text content needs no
+  change.
+- **The git bridge wraps an array result as `{ items }`.** Its adapter results
+  are typed `unknown` and were sent as `structuredContent` as-is, so an adapter
+  returning a list (from `status`, `log`, `diff`, `reviews`, `checks`,
+  `propose` or `applyProposal`) produced an array. An object result passes
+  through unchanged, and the text content is unchanged. **Do:** nothing, unless
+  your adapter returns an array and you read `structuredContent`: read `.items`.
+- The TUI bridge's tool wrapper applies the same guard: a handler that returns
+  an array is sent as `{ items }` (`{ surfaces }` for `tui_surfaces_list`).
 - CI: re-pin org third-party allowlist to 2614224
 
 ## [0.67.0] - 2026-11-18

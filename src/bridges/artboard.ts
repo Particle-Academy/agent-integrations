@@ -194,7 +194,8 @@ export function registerArtboardBridge(
       }
       summary.push({ sectionId: s.id, title: s.title, pieces });
     }
-    return textResult(lines.join("\n") || "(empty board)", summary);
+    // structuredContent must be a JSON object (MCP 2025-06-18+), so the rows ride under a key.
+    return textResult(lines.join("\n") || "(empty board)", { sections: summary });
   });
 
   // ───────────── Piece tools ─────────────

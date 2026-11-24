@@ -904,7 +904,7 @@ onViewChange((path) => void live.current.reportVisit(path)); // a same-origin pa
 | Tool | Purpose |
 |---|---|
 | `whiteboard_get_state` | Full snapshot |
-| `whiteboard_list_items` | Summary of every item |
+| `whiteboard_list_items` | Summary of every item (`structuredContent`: `{ items: [...] }`) |
 | `whiteboard_get_item` | Detail by id |
 | `whiteboard_add_sticky` / `_update_sticky` | Sticky CRUD |
 | `whiteboard_add_shape` / `_update_shape` | Full shape kit (rect, rounded-rect, ellipse, diamond, triangle, line, arrow, text) |

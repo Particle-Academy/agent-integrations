@@ -28,6 +28,15 @@ export type GitBridgeOptions = {
   allowApply?: boolean;
 };
 
+/**
+ * An adapter's result is typed `unknown` and goes out as `structuredContent`,
+ * which MCP (2025-06-18+) requires to be a JSON object. A list is wrapped as
+ * `{ items }` rather than sent as-is; anything else passes through unchanged.
+ */
+function asStructured(result: unknown): any {
+  return Array.isArray(result) ? { items: result } : result;
+}
+
 export function registerGitBridge(host: ToolHost, options: GitBridgeOptions): Bridge {
   const agent = { id: "agent", name: "Agent", color: "#a855f7", ...(options.agent ?? {}) };
   const disposers: Array<() => void> = [];
@@ -68,32 +77,32 @@ export function registerGitBridge(host: ToolHost, options: GitBridgeOptions): Br
 
   reg("git_status", "Read normalized working-tree and branch status.", {}, [], async () => {
     const result = await options.adapter.status();
-    return textResult(JSON.stringify(result, null, 2), result as any);
+    return textResult(JSON.stringify(result, null, 2), asStructured(result));
   });
   reg("git_log", "Read normalized commit history.", {
     ref: { type: "string" }, limit: { type: "number" }, skip: { type: "number" },
   }, [], async (args) => {
     const result = await options.adapter.log(args as any);
-    return textResult(JSON.stringify(result, null, 2), result as any);
+    return textResult(JSON.stringify(result, null, 2), asStructured(result));
   });
   reg("git_diff", "Read a normalized Git diff.", {
     from: { type: "string" }, to: { type: "string" }, staged: { type: "boolean" },
     paths: { type: "array", items: { type: "string" } },
   }, [], async (args) => {
     const result = await options.adapter.diff(args as any);
-    return textResult(JSON.stringify(result, null, 2), result as any);
+    return textResult(JSON.stringify(result, null, 2), asStructured(result));
   });
   if (options.adapter.reviews) reg("git_reviews_list", "List normalized pull/merge requests.", {
     state: { type: "string" }, cursor: { type: "string" }, limit: { type: "number" },
   }, [], async (args) => {
     const result = await options.adapter.reviews!(args as any);
-    return textResult(JSON.stringify(result, null, 2), result as any);
+    return textResult(JSON.stringify(result, null, 2), asStructured(result));
   });
   if (options.adapter.checks) reg("git_checks", "Read checks or pipeline summaries for a revision.", {
     revision: { type: "string" },
   }, ["revision"], async (args) => {
     const result = await options.adapter.checks!(String(args.revision));
-    return textResult(JSON.stringify(result, null, 2), result as any);
+    return textResult(JSON.stringify(result, null, 2), asStructured(result));
   });
 
   const mutation = (name: string, description: string, properties: Record<string, unknown>, required: string[]) =>
@@ -102,9 +111,9 @@ export function registerGitBridge(host: ToolHost, options: GitBridgeOptions): Br
       if (args.apply === true) {
         if (!options.allowApply || !options.adapter.applyProposal) return errorResult("This host requires human confirmation before applying Git writes.");
         const result = await options.adapter.applyProposal(proposal);
-        return textResult(`Applied: ${proposal.summary}`, result as any);
+        return textResult(`Applied: ${proposal.summary}`, asStructured(result));
       }
-      return textResult(`Proposed: ${proposal.summary}`, proposal as any);
+      return textResult(`Proposed: ${proposal.summary}`, asStructured(proposal));
     }, true);
 
   mutation("git_stage", "Propose staging paths.", { paths: { type: "array", items: { type: "string" } }, apply: { type: "boolean" } }, ["paths"]);

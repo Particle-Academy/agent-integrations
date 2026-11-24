@@ -96,7 +96,7 @@ describe("registerCatalogBridge", () => {
     expect(products.has(id)).toBe(true);
 
     const listed = await host.callTool("catalog_list_products", {});
-    const list = sc(listed) as Array<{ id: string; name: string; priceCount: number }>;
+    const list = (sc(listed) as { products: Array<{ id: string; name: string; priceCount: number }> }).products;
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({ id, name: "Pro Plan", priceCount: 0 });
   });

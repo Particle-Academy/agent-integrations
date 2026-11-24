@@ -161,7 +161,7 @@ export function registerWhiteboardBridge(
     for (const c of adapter.getConnectors()) {
       items.push({ id: c.id, kind: "connector", summary: `from=${JSON.stringify(c.from)} to=${JSON.stringify(c.to)}` });
     }
-    return textResult(items.map((i) => `${i.kind} ${i.id}: ${i.summary}`).join("\n") || "(empty board)", items);
+    return textResult(items.map((i) => `${i.kind} ${i.id}: ${i.summary}`).join("\n") || "(empty board)", { items });
   });
 
   reg(

@@ -193,7 +193,8 @@ export function registerSlidesBridge(host: ToolHost, options: SlidesBridgeOption
                 elementCount: s.elements.length,
                 title: (s.metadata?.title as string | undefined) ?? firstTextContent(s),
             }));
-            return textResult(JSON.stringify(list, null, 2), list);
+            // structuredContent must be a JSON object (MCP 2025-06-18+), so the rows ride under a key.
+            return textResult(JSON.stringify(list, null, 2), { slides: list });
         },
         false,
     );
