@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-11-24
+
 ### Fixed
 
 - **Co-work: a peer no longer keeps a stale cursor after a socket reconnect.** A
@@ -29,8 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   channel's `here` list (missed `member_added` / `member_removed`); a test now holds
   that. Nothing to do as a consumer; one extra presence frame per reconnect or join,
   and only when this page has published a cursor or activity.
-
-## [0.68.0] - 2026-11-24
 
 **What a consumer must do.** Nothing, unless you compared `MCP_PROTOCOL_VERSION`
 with a literal, relied on `-32601` for an unknown tool, or relied on a throwing
