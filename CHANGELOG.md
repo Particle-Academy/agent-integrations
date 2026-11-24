@@ -20,7 +20,7 @@ error-shape fixes below reach it too, under every revision, because 2025-06-18
 already specifies both of them; the old behaviour was a deviation, not a
 per-revision difference.
 
-Separately, ten list tools and the shared undo tool `agent_history` now return
+Separately, eleven list tools and the shared undo tool `agent_history` now return
 `structuredContent` as an object (see below). If your code reads `structuredContent` from one of them, read the named
 key instead (`result.structuredContent.nodes`, not `result.structuredContent`).
 **An agent or client that reads only the text content is unaffected**: the
@@ -60,7 +60,7 @@ text of every one of these tools is byte-for-byte what it was.
   `rpcError(...)`-shaped one. **Do:** if you read `error` off a `tools/call`
   reply to detect a failed handler, read `result.isError`. Handlers that already
   return `errorResult(...)` are unaffected.
-- **BREAKING: ten list tools return `structuredContent` as an object, not an
+- **BREAKING: eleven list tools return `structuredContent` as an object, not an
   array** (CC-fancy-0064). MCP types `structuredContent` as a JSON object, and a
   client that validates it rejected these results. Each now wraps the SAME rows
   under one key; the rows and the text content are unchanged.
