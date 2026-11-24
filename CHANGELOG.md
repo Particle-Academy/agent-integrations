@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-11-24
+
 **What a consumer must do.** Nothing, unless you compared `MCP_PROTOCOL_VERSION`
 with a literal, relied on `-32601` for an unknown tool, or relied on a throwing
 tool handler producing a JSON-RPC protocol error. A client that asks for
