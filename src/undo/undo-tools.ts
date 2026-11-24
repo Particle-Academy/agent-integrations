@@ -96,7 +96,9 @@ export function registerUndoTools(host: ToolHost, options: UndoToolsOptions = {}
       async (args) => {
         const history = readHistory(agentOf(args)).map(serialize);
         const text = history.map((e) => `${new Date(e.timestamp).toISOString()} ${e.bridgeId} ${e.action}: ${e.label}`).join("\n");
-        return textResult(text || "(empty)", history);
+        // structuredContent must be a JSON object (MCP types it so), so the rows
+        // travel under `history` rather than as a bare array.
+        return textResult(text || "(empty)", { history });
       },
       { owner: UNDO_TOOLS_OWNER },
     ),

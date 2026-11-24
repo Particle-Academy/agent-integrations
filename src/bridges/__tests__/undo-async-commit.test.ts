@@ -113,7 +113,7 @@ async function createPrice(host: ToolRegistry, productId: string): Promise<strin
 /** Leaves only the action under test on the agent's undo stack. */
 async function onlyOnStack(host: ToolRegistry, act: () => Promise<void>): Promise<void> {
   await act();
-  const history = (await host.callTool("agent_history", {})).structuredContent as unknown[];
+  const history = ((await host.callTool("agent_history", {})).structuredContent as { history: unknown[] }).history;
   expect(history).toHaveLength(1);
 }
 
@@ -284,7 +284,7 @@ cases.push({
 // ─── the contract ─────────────────────────────────────────────────────────
 
 async function history(host: ToolRegistry): Promise<unknown[]> {
-  return (await host.callTool("agent_history", {})).structuredContent as unknown[];
+  return ((await host.callTool("agent_history", {})).structuredContent as { history: unknown[] }).history;
 }
 
 describe.each(cases)("$name undo/redo against an async host", (c) => {

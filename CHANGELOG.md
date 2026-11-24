@@ -20,8 +20,8 @@ error-shape fixes below reach it too, under every revision, because 2025-06-18
 already specifies both of them; the old behaviour was a deviation, not a
 per-revision difference.
 
-Separately, ten list tools now return `structuredContent` as an object (see
-below). If your code reads `structuredContent` from one of them, read the named
+Separately, ten list tools and the shared undo tool `agent_history` now return
+`structuredContent` as an object (see below). If your code reads `structuredContent` from one of them, read the named
 key instead (`result.structuredContent.nodes`, not `result.structuredContent`).
 **An agent or client that reads only the text content is unaffected**: the
 text of every one of these tools is byte-for-byte what it was.
@@ -77,6 +77,12 @@ text of every one of these tools is byte-for-byte what it was.
   | `flow_list_edges` | `[{ id, from, to }]` | `{ edges: [...] }` | read `.edges` |
   | `whiteboard_list_items` | `[{ id, kind, summary }]` | `{ items: [...] }` | read `.items` |
   | `tui_surfaces_list` | `[{ id, kind, label, commands }]` | `{ surfaces: [...] }` | read `.surfaces` |
+  | `agent_history` | `[{ timestamp, bridgeId, action, label }]` | `{ history: [...] }` | read `result.history` |
+
+  `agent_history` (CC-fancy-0067) is the shared undo tool every undo-staging
+  bridge registers, so it appears on every such server; its text content is
+  unchanged. Every tool in the package now returns an object, and
+  `structured-content-shape.test.ts` holds that with no exceptions.
 
   `artboard_list_pieces` uses `sections`, not `pieces`, because each row is a
   section carrying its own `pieces` array. **Do:** read the key in the table

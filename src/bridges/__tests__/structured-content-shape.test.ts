@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ToolRegistry, type ToolHost } from "../../mcp/tool-host";
 import type { CallToolResult } from "../../mcp/types";
-import { resetAllUndoStacks } from "../../undo/undo-stack";
+import { pushUndoEntry, resetAllUndoStacks } from "../../undo/undo-stack";
+import { registerUndoTools } from "../../undo/undo-tools";
 import { registerAgentChatBridge } from "../agent-chat";
 import { registerArtboardBridge } from "../artboard";
 import { registerCatalogBridge } from "../catalog";
@@ -131,15 +132,6 @@ const LIST_TOOLS: Record<string, string> = {
   tui_surfaces_list: "surfaces",
 };
 
-/**
- * Tools that still return an array, named so the gap is visible rather than
- * silently skipped. `agent_history` (src/undo/undo-tools.ts, registered by
- * every bridge that stages undo) has the same defect but is outside the scope
- * of CC-fancy-0064. A test below fails once it is fixed, so this list can only
- * shrink on purpose.
- */
-const KNOWN_ARRAY_TOOLS = new Set(["agent_history"]);
-
 /** What the client receives: the value after a JSON round trip. */
 function onTheWire(value: unknown): unknown {
   const text = JSON.stringify(value);
@@ -196,17 +188,19 @@ describe("structuredContent is a JSON object on every bridge", () => {
   it("no tool returns an array, or any non-object, as structuredContent", async () => {
     const seen = await sweepOnce();
     const offenders = [...seen]
-      .filter(([tool, wire]) => !KNOWN_ARRAY_TOOLS.has(tool.split(":")[1]) && !isJsonObject(wire))
+      .filter(([, wire]) => !isJsonObject(wire))
       .map(([tool, wire]) => `${tool} -> ${Array.isArray(wire) ? "array" : wire === null ? "null" : typeof wire}`);
     expect(offenders).toEqual([]);
   });
 
-  it("every known exception is still an array, so a fix must remove it from the list", async () => {
+  it("reaches agent_history, the shared undo tool, as { history }", async () => {
     const seen = await sweepOnce();
-    for (const tool of KNOWN_ARRAY_TOOLS) {
-      const shapes = [...seen].filter(([k]) => k.split(":")[1] === tool).map(([, wire]) => Array.isArray(wire));
-      expect(shapes.length, `${tool} was not reached`).toBeGreaterThan(0);
-      expect(shapes.every(Boolean), `${tool} no longer returns an array: drop it from KNOWN_ARRAY_TOOLS`).toBe(true);
+    const shapes = [...seen].filter(([k]) => k.split(":")[1] === "agent_history").map(([, wire]) => wire);
+    expect(shapes.length, "agent_history was not reached").toBeGreaterThan(0);
+    for (const wire of shapes) {
+      expect(isJsonObject(wire)).toBe(true);
+      expect(Object.keys(wire as object)).toEqual(["history"]);
+      expect(Array.isArray((wire as { history: unknown }).history)).toBe(true);
     }
   });
 
@@ -227,6 +221,37 @@ describe("structuredContent is a JSON object on every bridge", () => {
       })
       .map(([tool, key]) => `${tool} should be { ${key}: [...] }`);
     expect(wrong).toEqual([]);
+  });
+});
+
+describe("agent_history wraps its rows as { history }", () => {
+  beforeEach(() => resetAllUndoStacks());
+
+  it("returns the same rows under history, with the text content unchanged", async () => {
+    const host = new ToolRegistry();
+    registerUndoTools(host);
+    const noop = () => {};
+    pushUndoEntry("agent", { timestamp: 0, bridgeId: "whiteboard", action: "add", label: "Added n1", undo: noop, redo: noop });
+    pushUndoEntry("agent", { timestamp: 1000, bridgeId: "grid", action: "paint", label: "Painted A1", undo: noop, redo: noop });
+    const r = await host.callTool("agent_history", {});
+    expect(r.structuredContent).toEqual({
+      history: [
+        { timestamp: 0, bridgeId: "whiteboard", action: "add", label: "Added n1" },
+        { timestamp: 1000, bridgeId: "grid", action: "paint", label: "Painted A1" },
+      ],
+    });
+    expect(r.content?.[0]).toEqual({
+      type: "text",
+      text: ["1970-01-01T00:00:00.000Z whiteboard add: Added n1", "1970-01-01T00:00:01.000Z grid paint: Painted A1"].join("\n"),
+    });
+  });
+
+  it("an empty stack is { history: [] } and the text is (empty)", async () => {
+    const host = new ToolRegistry();
+    registerUndoTools(host);
+    const r = await host.callTool("agent_history", {});
+    expect(r.structuredContent).toEqual({ history: [] });
+    expect(r.content?.[0]).toEqual({ type: "text", text: "(empty)" });
   });
 });
 
