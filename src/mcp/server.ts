@@ -12,7 +12,7 @@ import {
   JSONRPC_INTERNAL_ERROR,
   JSONRPC_INVALID_PARAMS,
   JSONRPC_METHOD_NOT_FOUND,
-  MCP_PROTOCOL_VERSION,
+  MCP_PROTOCOL_VERSIONS,
 } from "./types";
 import { ToolRegistry } from "./tool-host";
 
@@ -29,9 +29,9 @@ export type McpServerOptions = {
    * list, and answers the first entry otherwise — the spec's rule, which leaves
    * the client to decide whether it can live with the answer.
    *
-   * Defaults to `[MCP_PROTOCOL_VERSION]`: one revision, answered whatever the
-   * client asks, which is exactly what this server did before the option
-   * existed. Only list a revision the tools you register are correct under.
+   * Defaults to {@link MCP_PROTOCOL_VERSIONS}: 2025-11-25, 2025-06-18 and
+   * 2024-11-05. A list passed here REPLACES the default; it is never merged
+   * with it. Only list a revision the tools you register are correct under.
    */
   protocolVersions?: readonly string[];
 };
@@ -80,7 +80,7 @@ export class MicroMcpServer extends ToolRegistry {
       // mistake, rather than in a handshake nobody is watching.
       throw new Error("MicroMcpServer: protocolVersions is empty — a server must speak at least one protocol revision.");
     }
-    this.protocolVersions = options.protocolVersions ? [...options.protocolVersions] : [MCP_PROTOCOL_VERSION];
+    this.protocolVersions = options.protocolVersions ? [...options.protocolVersions] : [...MCP_PROTOCOL_VERSIONS];
   }
 
   attach(transport: Transport): () => void {
@@ -152,10 +152,18 @@ export class MicroMcpServer extends ToolRegistry {
         }
         const tool = this.tools.get(name);
         if (!tool) {
-          throw rpcError(JSONRPC_METHOD_NOT_FOUND, this.missingToolMessage(name));
+          // A protocol error, and -32602 rather than -32601: the method exists,
+          // its `name` argument is what is wrong (MCP 2025-11-25, tools/Error Handling).
+          throw rpcError(JSONRPC_INVALID_PARAMS, this.missingToolMessage(name));
         }
-        const result = await tool.handler(args, { transport });
-        return result satisfies CallToolResult;
+        try {
+          const result = await tool.handler(args, { transport });
+          return result satisfies CallToolResult;
+        } catch (err) {
+          // A tool that ran and failed is a tool EXECUTION error: a result with
+          // isError, so the model sees the message and can correct itself.
+          return errorResult(errorText(err));
+        }
       }
 
       case "ping":
@@ -235,6 +243,14 @@ export function textResult(text: string, structured?: any): CallToolResult {
 
 export function errorResult(text: string): CallToolResult {
   return { content: [{ type: "text", text }], isError: true };
+}
+
+function errorText(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object" && "message" in err && typeof (err as { message: unknown }).message === "string") {
+    return (err as { message: string }).message;
+  }
+  return String(err);
 }
 
 // Internal helper so the JsonRpcId import isn't dropped by tsup

@@ -155,4 +155,13 @@ export type RegisteredTool = {
   owner?: string;
 };
 
-export const MCP_PROTOCOL_VERSION = "2025-06-18";
+/** The newest MCP revision this server speaks; the first entry of {@link MCP_PROTOCOL_VERSIONS}. */
+export const MCP_PROTOCOL_VERSION = "2025-11-25";
+
+/**
+ * Every revision `MicroMcpServer` speaks by default, NEWEST FIRST.
+ *
+ * 2025-03-26 is deliberately absent: it requires servers to accept JSON-RPC
+ * batches, and the stdio transport does not.
+ */
+export const MCP_PROTOCOL_VERSIONS: readonly string[] = Object.freeze([MCP_PROTOCOL_VERSION, "2025-06-18", "2024-11-05"]);

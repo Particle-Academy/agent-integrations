@@ -43,7 +43,7 @@ export {
   type HumanPlusDisposition,
 } from "./human-plus/events";
 export { registerTuiBridge, type TuiBridgeOptions, type TuiSurfaceRegistryLike } from "./bridges/tui";
-export { MCP_PROTOCOL_VERSION } from "./mcp/types";
+export { MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSIONS } from "./mcp/types";
 
 // Bridges
 //

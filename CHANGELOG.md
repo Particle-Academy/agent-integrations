@@ -11,8 +11,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**What a consumer must do.** Nothing, unless you compared `MCP_PROTOCOL_VERSION`
+with a literal, relied on `-32601` for an unknown tool, or relied on a throwing
+tool handler producing a JSON-RPC protocol error. A client that asks for
+2025-06-18 gets exactly the handshake it got before (`protocolVersion`
+2025-06-18, same capabilities, same tools, same successful results). The two
+error-shape fixes below reach it too, under every revision, because 2025-06-18
+already specifies both of them; the old behaviour was a deviation, not a
+per-revision difference.
+
+### Added
+
+- `MCP_PROTOCOL_VERSIONS` (exported from the root and `./mcp`): the revisions
+  `MicroMcpServer` speaks by default, newest first.
+
 ### Changed
 
+- **BREAKING (default only): `MicroMcpServer` negotiates the protocol revision
+  by default.** The default `protocolVersions` was `["2025-06-18"]`, so every
+  client was answered 2025-06-18 whatever it asked for. It is now
+  `["2025-11-25", "2025-06-18", "2024-11-05"]`: a requested revision in that
+  list is echoed, and anything else (including no version) is answered
+  2025-11-25, the spec's rule. 2025-03-26 is deliberately not offered, because
+  it requires servers to accept JSON-RPC batches and the stdio transport does
+  not. A host that passes `protocolVersions` keeps exactly its own list; it is
+  never merged with the default. **Do:** nothing, unless you want the old
+  single-revision behaviour, in which case pass `protocolVersions: ["2025-06-18"]`.
+- **BREAKING: `MCP_PROTOCOL_VERSION` is now `"2025-11-25"`** (was
+  `"2025-06-18"`). It names the newest revision spoken. **Do:** if you compared
+  it with `"2025-06-18"` or sent it as the version a 2025-06-18-only peer must
+  accept, use the literal or `MCP_PROTOCOL_VERSIONS` instead.
+- **BREAKING: an unknown tool in `tools/call` returns JSON-RPC error `-32602`**
+  (invalid params), not `-32601`, as the MCP spec requires: the method exists,
+  its `name` is what is wrong. The message is unchanged, including the
+  "was withdrawn" wording for a tool whose surface unmounted. **Do:** if you
+  matched `-32601` for this case, match `-32602`.
+- **BREAKING: a tool handler that throws now returns a result with
+  `isError: true`** and the thrown message as its text content, instead of a
+  JSON-RPC protocol error. That is a tool execution error in the spec's terms,
+  which the model sees and can correct; clients may hide a protocol error from
+  it entirely. This applies to every thrown value, including an
+  `rpcError(...)`-shaped one. **Do:** if you read `error` off a `tools/call`
+  reply to detect a failed handler, read `result.isError`. Handlers that already
+  return `errorResult(...)` are unaffected.
 - CI: re-pin org third-party allowlist to 2614224
 
 ## [0.67.0] - 2026-11-18
