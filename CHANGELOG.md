@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`registerGraphBridge` (`/bridges/graph`, also in the root barrel), for
+  `@particle-academy/fancy-graph` views (CC-fancy-0062).** Opt-in and view-only:
+  no tool exists until the host calls it, and no tool can change the app's
+  nodes or links. Agents read the graph (`graph_get_state`, a bounded and
+  filterable `graph_list_nodes`, `graph_get_node` with its links in a stable
+  order) and move the view (`graph_select`, `graph_focus`,
+  `graph_step_focus` along links by screen direction or next / previous,
+  `graph_fly_to`, `graph_fit`, `graph_search`). Labels and link kinds come back
+  on one line and capped; every list size is a configurable limit. The bridge
+  imports neither fancy-graph nor three and adds no dependency or peer: hosts
+  pass fancy-graph's `GraphData` and view handle straight through. Nothing to do
+  unless you want it.
+
 ## [0.68.0] - 2026-11-24
 
 ### Fixed

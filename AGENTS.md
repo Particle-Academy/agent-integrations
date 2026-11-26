@@ -50,8 +50,14 @@ Vendored source: `npx fancy-cli@latest add <slug>`.
 - **Bridges** live on subpaths: `/bridges/whiteboard`, `/bridges/flow`,
   `/bridges/sheets`, `/bridges/forms`, `/bridges/code`, `/bridges/charts`,
   `/bridges/screens`, `/bridges/terminal`, `/bridges/files`, `/bridges/passkeys`,
-  `/bridges/sign`, `/bridges/agent-chat`, and more (see `exports` in
-  `package.json`).
+  `/bridges/sign`, `/bridges/agent-chat`, `/bridges/graph`, and more (see
+  `exports` in `package.json`).
+- **`registerGraphBridge`** (`/bridges/graph`) is view-only over a fancy-graph
+  view: wire `getGraph` to the same `{ nodes, links }` the view renders,
+  `getSelected` / `setSelected` (and optionally `getFocused` / `setFocused`,
+  `getSearch` / `setSearch`) to its controlled props, and `stepFocus`, `flyTo`
+  and `fit` to its handle. It has no data setters by design; graph writes belong
+  to the app's own tools.
 - **UI:** `AgentPanel`, `AgentCursor`, `AgentActivityHighlight`,
   `<ConnectorButtons>` (per-client "Add to Claude / Cursor / VS Code"), and
   `writeMcpbBundle()` from `/connectors/build` (Node, build time). Guides are in

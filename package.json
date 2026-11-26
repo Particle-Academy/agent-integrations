@@ -177,6 +177,16 @@
         "default": "./dist/bridges-map.cjs"
       }
     },
+    "./bridges/graph": {
+      "import": {
+        "types": "./dist/bridges/graph.d.ts",
+        "default": "./dist/bridges-graph.js"
+      },
+      "require": {
+        "types": "./dist/bridges/graph.d.cts",
+        "default": "./dist/bridges-graph.cjs"
+      }
+    },
     "./bridges/git": {
       "import": {
         "types": "./dist/bridges/git.d.ts",

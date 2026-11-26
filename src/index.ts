@@ -134,6 +134,12 @@ export {
   type MapBridgeOptions,
 } from "./bridges/map";
 export {
+  registerGraphBridge,
+  type GraphBridgeAdapter,
+  type GraphBridgeLimits,
+  type GraphBridgeOptions,
+} from "./bridges/graph";
+export {
   registerGitBridge,
   type GitBridgeAdapter,
   type GitBridgeOptions,

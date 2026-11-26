@@ -19,6 +19,7 @@ import { registerFilesBridge } from "../files";
 import { registerFlowBridge } from "../flow";
 import { registerFormBridge } from "../forms";
 import { registerGitBridge } from "../git";
+import { registerGraphBridge } from "../graph";
 import { registerGridBridge } from "../grid";
 import { registerMapBridge } from "../map";
 import { registerNavigationBridge } from "../navigation";
@@ -100,6 +101,7 @@ const BRIDGES: Record<string, (host: ToolHost) => unknown> = {
   registerFlowBridge: (h) => registerFlowBridge(h, { adapter: rows() } as never),
   registerFormBridge: (h) => registerFormBridge(h, { adapter: rows() } as never),
   registerGitBridge: (h) => registerGitBridge(h, { adapter: rows() } as never),
+  registerGraphBridge: (h) => registerGraphBridge(h, { adapter: rows() } as never),
   registerGridBridge: (h) => registerGridBridge(h, { adapter: rows() } as never),
   registerMapBridge: (h) => registerMapBridge(h, { adapter: rows() } as never),
   registerNavigationBridge: (h) => registerNavigationBridge(h, { adapter: rows() } as never),
