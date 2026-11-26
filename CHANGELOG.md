@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-11-26
+
 ### Added
 
 - **`registerGraphBridge` (`/bridges/graph`, also in the root barrel), for
